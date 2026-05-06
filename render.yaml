@@ -20,6 +20,8 @@ services:
         sync: false
       - key: GROQ_STT_MODEL
         value: whisper-large-v3-turbo
+      - key: MINIAPP_URL
+        value: https://plan-api-b6nk.onrender.com
       - key: DATABASE_URL
         sync: false
 
