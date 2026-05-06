@@ -7,6 +7,7 @@ services:
     env: node
     region: frankfurt
     plan: free
+    rootDir: Projects/telegram-day-planner
     buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: npm run start:bot
     healthCheckPath: /health
@@ -19,6 +20,8 @@ services:
         sync: false
       - key: GROQ_STT_MODEL
         value: whisper-large-v3-turbo
+      - key: MINIAPP_URL
+        value: https://plan-api-b6nk.onrender.com
       - key: DATABASE_URL
         sync: false
 
@@ -27,6 +30,7 @@ services:
     env: node
     region: frankfurt
     plan: free
+    rootDir: Projects/telegram-day-planner
     buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: npm run start:api
     healthCheckPath: /health
