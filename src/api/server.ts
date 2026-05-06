@@ -5,19 +5,23 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { CreateTaskSchema, UpdateTaskSchema, UpdateSettingsSchema, TaskStatusEnum } from '../shared/schemas.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const db = new PrismaClient();
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({
+  logger: true,
+  bodyLimit: 1024 * 256, // 256KB max body
+});
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 // CORS
 fastify.register(fastifyCors, { origin: true });
 
-// Static files
+// Static files — works both in dev (src/) and prod (dist/)
 const publicDir = path.join(__dirname, '../../public');
 fastify.register(fastifyStatic, {
   root: publicDir,
@@ -70,7 +74,6 @@ async function authMiddleware(request: any, reply: any) {
     return reply.status(401).send({ error: 'Invalid init data' });
   }
 
-  // Get or create DB user
   let dbUser = await db.user.findUnique({
     where: { telegramId: String(user.id) },
     include: { settings: true },
@@ -98,11 +101,26 @@ async function authMiddleware(request: any, reply: any) {
 // Health
 fastify.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
 
+// Global error handler
+fastify.setErrorHandler(async (error, request, reply) => {
+  request.log.error(error);
+
+  // Prisma record-not-found
+  if (error.message?.includes('Record to update not found') ||
+      error.message?.includes('Record to delete does not exist')) {
+    return reply.status(404).send({ error: 'Not found' });
+  }
+
+  return reply.status(error.statusCode || 500).send({
+    error: error.message || 'Internal server error',
+  });
+});
+
 // API routes with /api prefix
 fastify.register(async (app) => {
   app.addHook('preHandler', authMiddleware);
 
-
+  // GET /api/me
   app.get('/me', async (request: any) => {
     const { user } = request;
     return {
@@ -117,33 +135,43 @@ fastify.register(async (app) => {
   // GET /api/tasks
   app.get('/tasks', async (request: any) => {
     const { user } = request;
-    const tasks = await db.task.findMany({
+    return db.task.findMany({
       where: { userId: user.id, deletedAt: null },
       include: { project: true },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
     });
-    return tasks;
   });
 
   // GET /api/tasks/:id
-  app.get('/tasks/:id', async (request: any) => {
+  app.get('/tasks/:id', async (request: any, reply: any) => {
     const { user } = request;
     const task = await db.task.findFirst({
-      where: { id: request.params.id, userId: user.id },
+      where: { id: request.params.id, userId: user.id, deletedAt: null },
       include: { project: true, notes: true },
     });
-    if (!task) return { error: 'Not found' };
+    if (!task) return reply.status(404).send({ error: 'Not found' });
     return task;
   });
 
-  // POST /api/tasks
-  app.post('/tasks', async (request: any) => {
+  // POST /api/tasks — validated with Zod
+  app.post('/tasks', async (request: any, reply: any) => {
     const { user } = request;
-    const data = request.body;
+    const parsed = CreateTaskSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid data', details: parsed.error.flatten() });
+    }
+
+    const data = parsed.data;
     const task = await db.task.create({
       data: {
-        ...data,
         userId: user.id,
+        title: data.title,
+        description: data.description || null,
+        status: data.status || 'inbox',
+        priority: data.priority || 'medium',
+        energyLevel: data.energyLevel || 'medium',
+        projectId: data.projectId || null,
+        estimatedMinutes: data.estimatedMinutes || null,
         scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
         deadlineAt: data.deadlineAt ? new Date(data.deadlineAt) : null,
       },
@@ -152,69 +180,101 @@ fastify.register(async (app) => {
     return task;
   });
 
-  // PATCH /api/tasks/:id
-  app.patch('/tasks/:id', async (request: any) => {
+  // PATCH /api/tasks/:id — validated with Zod
+  app.patch('/tasks/:id', async (request: any, reply: any) => {
     const { user } = request;
-    const data = request.body;
+    const parsed = UpdateTaskSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid data', details: parsed.error.flatten() });
+    }
+
+    const data = parsed.data;
+    const updateData: any = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.priority !== undefined) updateData.priority = data.priority;
+    if (data.energyLevel !== undefined) updateData.energyLevel = data.energyLevel;
+    if (data.projectId !== undefined) updateData.projectId = data.projectId;
+    if (data.estimatedMinutes !== undefined) updateData.estimatedMinutes = data.estimatedMinutes;
+    if (data.scheduledFor !== undefined) updateData.scheduledFor = data.scheduledFor ? new Date(data.scheduledFor) : null;
+    if (data.deadlineAt !== undefined) updateData.deadlineAt = data.deadlineAt ? new Date(data.deadlineAt) : null;
+
+    // Verify ownership first
+    const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id, deletedAt: null } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
     const task = await db.task.update({
-      where: { id: request.params.id, userId: user.id },
-      data: {
-        ...data,
-        scheduledFor: data.scheduledFor !== undefined ? (data.scheduledFor ? new Date(data.scheduledFor) : null) : undefined,
-        deadlineAt: data.deadlineAt !== undefined ? (data.deadlineAt ? new Date(data.deadlineAt) : null) : undefined,
-      },
+      where: { id: request.params.id },
+      data: updateData,
       include: { project: true },
     });
     return task;
   });
 
   // POST /api/tasks/:id/complete
-  app.post('/tasks/:id/complete', async (request: any) => {
+  app.post('/tasks/:id/complete', async (request: any, reply: any) => {
     const { user } = request;
+
+    const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id, deletedAt: null } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
     const task = await db.task.update({
-      where: { id: request.params.id, userId: user.id },
+      where: { id: request.params.id },
       data: { status: 'done', completedAt: new Date() },
     });
 
-    // Delete if setting enabled
     const settings = await db.userSettings.findUnique({ where: { userId: user.id } });
     if (settings?.deleteTaskOnDone) {
-      await db.task.update({
-        where: { id: task.id },
-        data: { deletedAt: new Date() },
-      });
+      await db.task.update({ where: { id: task.id }, data: { deletedAt: new Date() } });
     }
 
     return task;
   });
 
   // POST /api/tasks/:id/reopen
-  app.post('/tasks/:id/reopen', async (request: any) => {
+  app.post('/tasks/:id/reopen', async (request: any, reply: any) => {
     const { user } = request;
+
+    const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
     return db.task.update({
-      where: { id: request.params.id, userId: user.id },
-      data: { status: 'inbox', completedAt: null },
+      where: { id: request.params.id },
+      data: { status: 'inbox', completedAt: null, deletedAt: null },
     });
   });
 
   // POST /api/tasks/:id/reschedule
-  app.post('/tasks/:id/reschedule', async (request: any) => {
+  app.post('/tasks/:id/reschedule', async (request: any, reply: any) => {
     const { user } = request;
-    const { status, scheduledFor } = request.body;
+    const body = request.body || {};
+    const status = TaskStatusEnum.safeParse(body.status);
+    if (!status.success) {
+      return reply.status(400).send({ error: 'Invalid status' });
+    }
+
+    const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id, deletedAt: null } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
     return db.task.update({
-      where: { id: request.params.id, userId: user.id },
+      where: { id: request.params.id },
       data: {
-        status,
-        scheduledFor: scheduledFor ? new Date(scheduledFor) : null,
+        status: status.data,
+        scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : null,
       },
     });
   });
 
-  // DELETE /api/tasks/:id
-  app.delete('/tasks/:id', async (request: any) => {
+  // DELETE /api/tasks/:id (soft delete)
+  app.delete('/tasks/:id', async (request: any, reply: any) => {
     const { user } = request;
+
+    const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id, deletedAt: null } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
     await db.task.update({
-      where: { id: request.params.id, userId: user.id },
+      where: { id: request.params.id },
       data: { deletedAt: new Date() },
     });
     return { success: true };
@@ -235,13 +295,18 @@ fastify.register(async (app) => {
     return db.userSettings.findUnique({ where: { userId: user.id } });
   });
 
-  // PATCH /api/settings
-  app.patch('/settings', async (request: any) => {
+  // PATCH /api/settings — validated with Zod
+  app.patch('/settings', async (request: any, reply: any) => {
     const { user } = request;
+    const parsed = UpdateSettingsSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid data', details: parsed.error.flatten() });
+    }
+
     return db.userSettings.upsert({
       where: { userId: user.id },
-      create: { userId: user.id, ...request.body },
-      update: request.body,
+      create: { userId: user.id, ...parsed.data },
+      update: parsed.data,
     });
   });
 
@@ -268,6 +333,17 @@ fastify.register(async (app) => {
     });
   });
 }, { prefix: '/api' });
+
+// ============ GRACEFUL SHUTDOWN ============
+const shutdown = async (signal: string) => {
+  fastify.log.info(`Received ${signal}, shutting down...`);
+  await fastify.close();
+  await db.$disconnect();
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ============ START ============
 const PORT = Number(process.env.PORT) || 3000;

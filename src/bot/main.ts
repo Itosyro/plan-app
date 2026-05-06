@@ -49,7 +49,7 @@ bot.start();
 
 // Health check server (for Render)
 import * as http from 'http';
-const healthPort = Number(process.env.HEALTH_PORT) || 8080;
+const healthPort = Number(process.env.PORT) || Number(process.env.HEALTH_PORT) || 8080;
 http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -62,3 +62,14 @@ http.createServer((req, res) => {
   console.log(`Health check on port ${healthPort}`);
 });
 console.log('Bot started!');
+
+// Graceful shutdown
+const shutdown = async (signal: string) => {
+  console.log(`Received ${signal}, shutting down...`);
+  bot.stop();
+  await db.$disconnect();
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
