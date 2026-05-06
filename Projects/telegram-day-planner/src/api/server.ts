@@ -90,18 +90,30 @@ fastify.get('/health', async () => ({ status: 'ok', time: new Date().toISOString
 // Serve index.html at /
 fastify.get('/', async (request: any, reply: any) => {
   const indexPath = path.join(PUBLIC_DIR, 'index.html');
-  const content = fs.readFileSync(indexPath);
-  reply.raw.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  reply.raw.end(content);
+  try {
+    const content = await fs.promises.readFile(indexPath);
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    return reply.send(content);
+  } catch (err) {
+    console.error('Failed to read index.html:', err);
+    reply.header('Content-Type', 'text/plain');
+    return reply.status(500).send('Internal Server Error');
+  }
 });
 
 // SPA fallback — all non-API routes serve index.html
 fastify.setNotFoundHandler(async (request: any, reply: any) => {
   if (request.url.startsWith('/api/')) return;
   const indexPath = path.join(PUBLIC_DIR, 'index.html');
-  const content = fs.readFileSync(indexPath);
-  reply.raw.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  reply.raw.end(content);
+  try {
+    const content = await fs.promises.readFile(indexPath);
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    return reply.send(content);
+  } catch (err) {
+    console.error('Failed to read index.html:', err);
+    reply.header('Content-Type', 'text/plain');
+    return reply.status(500).send('Internal Server Error');
+  }
 });
 
 // Auth middleware wrapper
