@@ -31,6 +31,15 @@ bot.catch((err) => {
     console.error('Bot error:', err);
 });
 console.log('Starting PLAN bot...');
+// Graceful shutdown — let Render kill old instance before starting new polling
+const graceful = () => {
+    console.log('SIGTERM received, stopping bot...');
+    bot.stop();
+    db.$disconnect();
+    process.exit(0);
+};
+process.on('SIGTERM', graceful);
+process.on('SIGINT', graceful);
 bot.start();
 // Health check server (for Render)
 import * as http from 'http';
