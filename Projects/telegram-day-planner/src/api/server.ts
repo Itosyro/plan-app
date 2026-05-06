@@ -1,11 +1,12 @@
 import Fastify from 'fastify';
-import fastifyStatic from '@fastify/static';
+import fs from 'fs';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.join(__dirname, '../public');
 
 const db = new PrismaClient();
 const fastify = Fastify({ logger: true });
@@ -86,17 +87,21 @@ async function authMiddleware(request: any, reply: any) {
 // Health
 fastify.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
 
-// Serve static files from public/
-fastify.register(fastifyStatic, {
-  root: path.join(__dirname, '../../public'),
-  prefix: '/',
+// Serve index.html at /
+fastify.get('/', async (request: any, reply: any) => {
+  const indexPath = path.join(PUBLIC_DIR, 'index.html');
+  const content = fs.readFileSync(indexPath, 'utf-8');
+  reply.header('Content-Type', 'text/html; charset=utf-8');
+  return reply.send(content);
 });
 
-// SPA fallback — all other routes serve index.html
+// SPA fallback — all non-API routes serve index.html
 fastify.setNotFoundHandler(async (request: any, reply: any) => {
-  // Skip API routes — let Fastify return 404
   if (request.url.startsWith('/api/')) return;
-  await reply.sendFile('index.html');
+  const indexPath = path.join(PUBLIC_DIR, 'index.html');
+  const content = fs.readFileSync(indexPath, 'utf-8');
+  reply.header('Content-Type', 'text/html; charset=utf-8');
+  return reply.send(content);
 });
 
 // Auth middleware wrapper
