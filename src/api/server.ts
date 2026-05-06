@@ -1,11 +1,28 @@
 import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
+import fastifyCors from '@fastify/cors';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const db = new PrismaClient();
 const fastify = Fastify({ logger: true });
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+
+// CORS
+fastify.register(fastifyCors, { origin: true });
+
+// Static files
+const publicDir = path.join(__dirname, '../../public');
+fastify.register(fastifyStatic, {
+  root: publicDir,
+  prefix: '/',
+});
 
 // ============ AUTH ============
 interface InitDataUser {
@@ -81,11 +98,11 @@ async function authMiddleware(request: any, reply: any) {
 // Health
 fastify.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
 
-// Auth middleware wrapper
+// API routes with /api prefix
 fastify.register(async (app) => {
   app.addHook('preHandler', authMiddleware);
 
-  // GET /api/me
+
   app.get('/me', async (request: any) => {
     const { user } = request;
     return {
@@ -250,7 +267,7 @@ fastify.register(async (app) => {
       orderBy: { title: 'asc' },
     });
   });
-});
+}, { prefix: '/api' });
 
 // ============ START ============
 const PORT = Number(process.env.PORT) || 3000;
