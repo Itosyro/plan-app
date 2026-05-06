@@ -1,0 +1,87 @@
+# SmartKeyRouter Configuration
+# IMPORTANT: API keys are NEVER stored here — only env var names via {env: "VAR_NAME"}
+
+keyrouter:
+
+  # --- Global Settings ---
+  global:
+    log_file: "keyrouter.log"
+    log_level: "INFO"                  # DEBUG / INFO / WARNING
+    max_retries_per_key: 1             # Retry count before switching keys
+    backoff_strategy: "exponential"    # exponential / fixed
+    backoff_base_seconds: 1            # Base delay for exponential backoff
+    respect_retry_after_header: true   # Honor Retry-After from 429 responses
+    context_overflow_strategy: "truncate_middle"
+                                       # truncate_middle / truncate_oldest / error
+
+  # --- Providers (order = priority: lower number = higher priority) ---
+  providers:
+
+    - name: "openrouter_free"
+      provider_type: "openrouter"
+      priority: 1                      # 1 = highest priority
+      enabled: true
+
+      keys:
+        - env: "OPENROUTER_KEY_1"
+        - env: "OPENROUTER_KEY_2"
+        - env: "OPENROUTER_KEY_3"
+      key_strategy: "round_robin"      # round_robin / random / sequential
+
+      models:
+        - id: "deepseek/deepseek-chat-v3-0324:free"
+          context_limit: 65536
+          priority: 1
+        - id: "qwen/qwen3-235b-a22b:free"
+          context_limit: 40960
+          priority: 2
+        - id: "mistralai/mistral-7b-instruct:free"
+          context_limit: 32768
+          priority: 3
+
+    - name: "qwen_official"
+      provider_type: "qwen"
+      priority: 2
+      enabled: true
+
+      keys:
+        - env: "QWEN_API_KEY_1"
+        - env: "QWEN_API_KEY_2"
+      key_strategy: "round_robin"
+
+      models:
+        - id: "qwen-max"
+          context_limit: 131072
+          priority: 1
+        - id: "qwen-plus"
+          context_limit: 131072
+          priority: 2
+
+    - name: "allama_cloud"
+      provider_type: "generic_openai"  # Allama Cloud is OpenAI-compatible
+      priority: 3
+      enabled: true
+
+      base_url: "https://api.llama-api.com"   # Allama Cloud endpoint
+      keys:
+        - env: "ALLAMA_CLOUD_KEY_1"
+      key_strategy: "round_robin"
+
+      models:
+        - id: "MiniMax-Text-01"
+          context_limit: 1000000
+          priority: 1
+
+    # --- Template for new providers ---
+    # - name: "new_provider"
+    #   provider_type: "generic_openai"
+    #   priority: 4
+    #   enabled: false
+    #   base_url: "https://api.example.com/v1"
+    #   keys:
+    #     - env: "NEW_PROVIDER_KEY_1"
+    #   key_strategy: "round_robin"
+    #   models:
+    #     - id: "model-name"
+    #       context_limit: 32768
+    #       priority: 1
