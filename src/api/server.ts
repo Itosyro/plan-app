@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import { CreateTaskSchema, UpdateTaskSchema, UpdateSettingsSchema, TaskStatusEnum } from '../shared/schemas.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -346,12 +347,24 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ============ START ============
-const PORT = Number(process.env.PORT) || 3000;
-
-fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
-  if (err) {
-    console.error('Server error:', err);
-    process.exit(1);
+async function start() {
+  // Run DB migrations on startup (needed for first deploy)
+  try {
+    console.log('Running prisma db push...');
+    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+    console.log('DB schema synced.');
+  } catch (e) {
+    console.error('prisma db push failed, continuing anyway:', (e as Error).message);
   }
-  console.log(`API server running on ${address}`);
-});
+
+  const PORT = Number(process.env.PORT) || 3000;
+  fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
+    if (err) {
+      console.error('Server error:', err);
+      process.exit(1);
+    }
+    console.log(`API server running on ${address}`);
+  });
+}
+
+start();
