@@ -705,6 +705,11 @@
     .modal-btn:active { transform: scale(0.98); }
     .modal-btn.primary { background: var(--green-light); color: var(--green); }
     .modal-btn.danger { background: var(--red-light); color: var(--red); }
+    .remind-option {
+      padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border);
+      background: var(--bg-card); font-size: 13px; cursor: pointer; transition: all 0.2s;
+    }
+    .remind-option:active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .modal-btn.secondary { background: var(--bg-muted); color: var(--text-secondary); }
 
     /* === ADD TASK MODAL === */
@@ -1004,6 +1009,25 @@
         <span class="modal-label">Создано</span>
         <span class="modal-value" id="modal-date">--</span>
       </div>
+      <!-- Reminder section -->
+      <div class="modal-field" id="modal-reminder-section">
+        <span class="modal-label">🔔 Напоминание</span>
+        <span class="modal-value" id="modal-reminder-value" style="cursor:pointer;color:var(--primary)">Не установлено</span>
+      </div>
+      <div id="reminder-picker" style="display:none;margin-bottom:16px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="remind-option" data-minutes="15">15 мин</button>
+          <button class="remind-option" data-minutes="30">30 мин</button>
+          <button class="remind-option" data-minutes="60">1 час</button>
+          <button class="remind-option" data-minutes="120">2 часа</button>
+          <button class="remind-option" data-minutes="1440">Завтра 9:00</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="datetime-local" id="reminder-datetime" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px">
+          <button class="modal-btn primary" id="reminder-set-custom" style="padding:8px 16px;font-size:13px">Установить</button>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <button class="modal-btn primary" id="modal-complete">Завершить</button>
         <button class="modal-btn secondary" id="modal-tomorrow">На завтра</button>
@@ -1537,6 +1561,65 @@
         modal.classList.remove('open');
         renderListView();
         showToast('Задача удалена');
+      };
+
+      // Reminder section
+      const reminderPicker = document.getElementById('reminder-picker');
+      const reminderValue = document.getElementById('modal-reminder-value');
+      reminderPicker.style.display = 'none';
+
+      // Load existing reminders for this task
+      try {
+        const reminders = await api('/reminders');
+        const taskReminder = (reminders || []).find(r => r.taskId === taskId && r.isEnabled);
+        if (taskReminder) {
+          const dt = new Date(taskReminder.scheduledTime);
+          reminderValue.textContent = dt.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        } else {
+          reminderValue.textContent = 'Установить';
+        }
+      } catch (e) {
+        reminderValue.textContent = 'Установить';
+      }
+
+      reminderValue.onclick = () => {
+        reminderPicker.style.display = reminderPicker.style.display === 'none' ? 'block' : 'none';
+      };
+
+      // Quick reminder buttons
+      document.querySelectorAll('.remind-option').forEach(btn => {
+        btn.onclick = async () => {
+          const mins = parseInt(btn.dataset.minutes);
+          let scheduledTime;
+          if (mins === 1440) {
+            scheduledTime = new Date();
+            scheduledTime.setDate(scheduledTime.getDate() + 1);
+            scheduledTime.setHours(9, 0, 0, 0);
+          } else {
+            scheduledTime = new Date(Date.now() + mins * 60 * 1000);
+          }
+          await api('/reminders', {
+            method: 'POST',
+            body: JSON.stringify({ taskId, scheduledTime: scheduledTime.toISOString() })
+          });
+          reminderPicker.style.display = 'none';
+          reminderValue.textContent = scheduledTime.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          showToast('Напоминание установлено');
+        };
+      });
+
+      // Custom datetime reminder
+      document.getElementById('reminder-set-custom').onclick = async () => {
+        const dt = document.getElementById('reminder-datetime').value;
+        if (!dt) return;
+        const scheduledTime = new Date(dt);
+        await api('/reminders', {
+          method: 'POST',
+          body: JSON.stringify({ taskId, scheduledTime: scheduledTime.toISOString() })
+        });
+        reminderPicker.style.display = 'none';
+        reminderValue.textContent = scheduledTime.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        showToast('Напоминание установлено');
       };
 
       modal.classList.add('open');

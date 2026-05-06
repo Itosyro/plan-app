@@ -58,3 +58,9 @@ Projects/smartkey-router/
 
 # Keep skills (they're public skills anyway)
 !.hermes/
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+

@@ -333,6 +333,53 @@ fastify.register(async (app) => {
       orderBy: { title: 'asc' },
     });
   });
+
+  // ============ REMINDERS ============
+
+  // GET /api/reminders
+  app.get('/reminders', async (request: any) => {
+    const { user } = request;
+    return db.reminder.findMany({
+      where: { userId: user.id, isEnabled: true },
+      include: { task: true },
+      orderBy: { scheduledTime: 'asc' },
+    });
+  });
+
+  // POST /api/reminders
+  app.post('/reminders', async (request: any, reply: any) => {
+    const { user } = request;
+    const body = request.body || {};
+
+    if (!body.taskId || !body.scheduledTime) {
+      return reply.status(400).send({ error: 'taskId and scheduledTime are required' });
+    }
+
+    // Verify task ownership
+    const task = await db.task.findFirst({ where: { id: body.taskId, userId: user.id, deletedAt: null } });
+    if (!task) return reply.status(404).send({ error: 'Task not found' });
+
+    return db.reminder.create({
+      data: {
+        userId: user.id,
+        taskId: body.taskId,
+        type: body.type || 'scheduled',
+        scheduledTime: new Date(body.scheduledTime),
+        isEnabled: true,
+      },
+      include: { task: true },
+    });
+  });
+
+  // DELETE /api/reminders/:id
+  app.delete('/reminders/:id', async (request: any, reply: any) => {
+    const { user } = request;
+    const existing = await db.reminder.findFirst({ where: { id: request.params.id, userId: user.id } });
+    if (!existing) return reply.status(404).send({ error: 'Not found' });
+
+    await db.reminder.delete({ where: { id: request.params.id } });
+    return { success: true };
+  });
 }, { prefix: '/api' });
 
 // ============ GRACEFUL SHUTDOWN ============
