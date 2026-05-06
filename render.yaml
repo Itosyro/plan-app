@@ -1,12 +1,41 @@
 # render.yaml — PLAN Deploy Configuration
 # https://render.com/docs/yaml-spec
 
+databases:
+  - name: plan-db
+    plan: free
+    region: oregon
+    databaseName: plan_db
+    user: plan_user
+    postgresMajorVersion: 16
+
 services:
-  # === Bot Service ===
+  # === API Service (serves Mini App + REST API) ===
+  - type: web
+    name: plan-api
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install --include=dev && npx prisma generate && npx prisma db push && npm run build
+    startCommand: npm run start:api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: plan-db
+          property: connectionString
+      - key: PORT
+        value: 3000
+
+  # === Bot Service (Telegram polling) ===
   - type: web
     name: plan-bot
     env: node
-    region: frankfurt
+    region: oregon
     plan: free
     buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: npm run start:bot
@@ -21,25 +50,11 @@ services:
       - key: GROQ_STT_MODEL
         value: whisper-large-v3-turbo
       - key: MINIAPP_URL
-        value: https://plan-api-b6nk.onrender.com
+        fromService:
+          name: plan-api
+          type: web
+          property: host
       - key: DATABASE_URL
-        sync: false
-
-  # === API Service ===
-  - type: web
-    name: plan-api
-    env: node
-    region: frankfurt
-    plan: free
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    startCommand: npm run start:api
-    healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: PORT
-        value: 3000
+        fromDatabase:
+          name: plan-db
+          property: connectionString

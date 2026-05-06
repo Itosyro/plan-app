@@ -55,6 +55,15 @@ Telegram Mini App для планирования дня. Пользовател
 5. Fetch к Groq API мог висеть бесконечно — добавлены AbortController timeouts
 6. Бот не слушал PORT от Render — фикс для healthcheck
 7. Нет graceful shutdown — PrismaClient connections утекали
+8. @fastify/cors@11 и @fastify/static@9 требовали Fastify 5.x — даунгрейд до @8 и @7
+9. prisma в devDependencies — Render удалял после build, не мог запустить db push. Перенесён в dependencies
+
+### Деплой на Render
+- PostgreSQL: `plan-db` (Oregon, free tier, Postgres 16)
+- API: https://plan-api-pn29.onrender.com (Node.js, Fastify, статика + REST)
+- Bot: https://plan-bot-rvnq.onrender.com (Node.js, grammy long polling)
+- DB миграция: автоматически при старте API через `execSync('npx prisma db push')`
+- MINIAPP_URL бота указывает на API сервис
 
 ---
 

@@ -40,12 +40,13 @@
 - [x] Bot PORT fix for Render deployment
 
 ## Phase 5: Deploy
-- [ ] Получить от пользователя: TELEGRAM_BOT_TOKEN, GROQ_API_KEY, Render API Key
-- [ ] Настроить PostgreSQL на Render
-- [ ] prisma db push
-- [ ] Deploy API service
-- [ ] Deploy Bot service
-- [ ] Установить MINIAPP_URL на URL API сервиса
+- [x] Получить от пользователя: TELEGRAM_BOT_TOKEN, GROQ_API_KEY, Render API Key
+- [x] Настроить PostgreSQL на Render (Oregon, free tier)
+- [x] prisma db push (автоматически при старте сервера)
+- [x] Deploy API service → https://plan-api-pn29.onrender.com
+- [x] Deploy Bot service → https://plan-bot-rvnq.onrender.com
+- [x] Установить MINIAPP_URL на URL API сервиса
+- [x] Fastify plugin compatibility fix (@fastify/cors@8, @fastify/static@7 для Fastify 4.x)
 - [ ] Проверить работу бота в Telegram
 
 ## Phase 6: Polish (будущее)
