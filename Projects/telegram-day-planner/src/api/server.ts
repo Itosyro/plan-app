@@ -90,18 +90,18 @@ fastify.get('/health', async () => ({ status: 'ok', time: new Date().toISOString
 // Serve index.html at /
 fastify.get('/', async (request: any, reply: any) => {
   const indexPath = path.join(PUBLIC_DIR, 'index.html');
-  const content = fs.readFileSync(indexPath, 'utf-8');
-  reply.header('Content-Type', 'text/html; charset=utf-8');
-  return reply.send(content);
+  const content = fs.readFileSync(indexPath);
+  reply.raw.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  reply.raw.end(content);
 });
 
 // SPA fallback — all non-API routes serve index.html
 fastify.setNotFoundHandler(async (request: any, reply: any) => {
   if (request.url.startsWith('/api/')) return;
   const indexPath = path.join(PUBLIC_DIR, 'index.html');
-  const content = fs.readFileSync(indexPath, 'utf-8');
-  reply.header('Content-Type', 'text/html; charset=utf-8');
-  return reply.send(content);
+  const content = fs.readFileSync(indexPath);
+  reply.raw.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  reply.raw.end(content);
 });
 
 // Auth middleware wrapper
