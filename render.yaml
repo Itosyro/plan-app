@@ -21,9 +21,7 @@ services:
       - key: GROQ_STT_MODEL
         value: whisper-large-v3-turbo
       - key: DATABASE_URL
-        fromDatabase:
-          name: plan-db
-          property: connectionString
+        sync: false
 
   # === API Service ===
   - type: web
@@ -40,15 +38,6 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: plan-db
-          property: connectionString
+        sync: false
       - key: PORT
         value: 3000
-
-  # === PostgreSQL Database ===
-  - type: psql
-    name: plan-db
-    plan: free
-    region: frankfurt
-    ipAllowList: []
