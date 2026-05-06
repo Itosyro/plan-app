@@ -1,1 +1,1 @@
-export { } from './server.js';
+export { validateInitData } from './auth.js';

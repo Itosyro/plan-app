@@ -1,7 +1,12 @@
-import { Context } from 'grammy';
+import { Context, InlineKeyboard } from 'grammy';
 import { PrismaClient } from '@prisma/client';
 import { AiService } from '../ai/service.js';
 import { formatSummary } from './format.js';
+import { createLogger } from '../shared/logger.js';
+import { parseRelativeDate, todayStart, tomorrowStart } from '../shared/date-utils.js';
+import { MAX_VOICE_DURATION_SECONDS } from '../shared/constants.js';
+
+const log = createLogger('message-handler');
 
 interface BotConfig {
   miniAppUrl: string;
@@ -16,18 +21,12 @@ export class MessageHandler {
     private config: BotConfig
   ) {}
 
-  async processInput(
-    ctx: Context,
-    sourceType: 'text' | 'voice' | 'audio',
-    content: string
-  ) {
+  async processInput(ctx: Context, sourceType: 'text' | 'voice' | 'audio', content: string) {
     const telegramId = String(ctx.from?.id);
 
     try {
-      // Get or create user
       const user = await this.getOrCreateUser(telegramId, ctx.from);
 
-      // Create inbox entry
       const inboxEntry = await this.db.inboxEntry.create({
         data: {
           userId: user.id,
@@ -40,40 +39,40 @@ export class MessageHandler {
 
       let transcriptText = content;
 
-      // Transcribe if voice/audio
       if (sourceType === 'voice' || sourceType === 'audio') {
+        log.info({ inboxEntryId: inboxEntry.id, sourceType }, 'Starting transcription');
+
         await this.db.inboxEntry.update({
           where: { id: inboxEntry.id },
           data: { processingStatus: 'transcribing' },
         });
 
         try {
-          // Get file info and construct URL
           const file = await ctx.api.getFile(content);
-          // Note: In production, store bot token securely and construct URL
-          const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken || ''}/${file.file_path}`;
+          const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
+
           transcriptText = await this.transcribe(fileUrl);
+          log.info({ inboxEntryId: inboxEntry.id, transcriptLength: transcriptText.length }, 'Transcription complete');
         } catch (err) {
-          console.error('Transcription error:', err);
+          log.error({ err, inboxEntryId: inboxEntry.id }, 'Transcription failed');
           await this.db.inboxEntry.update({
             where: { id: inboxEntry.id },
-            data: { processingStatus: 'failed', errorMessage: 'Transcription failed' },
+            data: { processingStatus: 'failed', errorMessage: String(err) },
           });
-          await ctx.reply('❌ Не удалось распознать голос. Попробуйте ещё раз.');
+          await ctx.reply('❌ Не удалось распознать голос. Попробуйте ещё раз или напишите текстом.');
           return;
         }
       }
 
-      // Parse with AI
       await this.db.inboxEntry.update({
         where: { id: inboxEntry.id },
         data: { transcriptText, processingStatus: 'parsing' },
       });
 
       try {
+        log.info({ inboxEntryId: inboxEntry.id }, 'Starting AI parsing');
         const result = await this.ai.parseInput(transcriptText);
 
-        // Save AI run
         await this.db.aiRun.create({
           data: {
             userId: user.id,
@@ -87,7 +86,6 @@ export class MessageHandler {
           },
         });
 
-        // Create entities
         await this.createEntities(user.id, inboxEntry.id, result);
 
         await this.db.inboxEntry.update({
@@ -95,34 +93,48 @@ export class MessageHandler {
           data: { processingStatus: 'saved' },
         });
 
-        // Send summary
         const summary = formatSummary(result);
-        const keyboard = {
-          inline_keyboard: [
-            [{ text: '📋 Открыть планер', web_app: { url: this.config.miniAppUrl } }],
-          ],
-        };
+        const keyboard = new InlineKeyboard().webApp('📋 Открыть планер', this.config.miniAppUrl);
 
         await ctx.reply(summary, { reply_markup: keyboard, parse_mode: 'Markdown' });
 
+        log.info({
+          inboxEntryId: inboxEntry.id,
+          tasks: result.extractedTasks?.length || 0,
+          notes: result.extractedNotes?.length || 0,
+        }, 'Processing complete');
       } catch (err) {
-        console.error('Parsing error:', err);
+        log.error({ err, inboxEntryId: inboxEntry.id }, 'AI parsing failed');
+
+        await this.db.aiRun.create({
+          data: {
+            userId: user.id,
+            inboxEntryId: inboxEntry.id,
+            type: 'parse_input',
+            model: 'llama-3.3-70b-versatile',
+            promptVersion: 'v1',
+            inputText: transcriptText,
+            status: 'failed',
+            errorMessage: String(err),
+          },
+        });
+
         await this.db.inboxEntry.update({
           where: { id: inboxEntry.id },
-          data: { processingStatus: 'failed', errorMessage: 'Parsing failed' },
+          data: { processingStatus: 'failed', errorMessage: 'AI parsing failed' },
         });
-        await ctx.reply('❌ Не удалось разобрать сообщение. Попробуйте ещё раз.');
-      }
 
+        await ctx.reply('❌ Не удалось разобрать сообщение. Попробуйте переформулировать.');
+      }
     } catch (err) {
-      console.error('Message handling error:', err);
+      log.error({ err }, 'Message handling error');
       await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
     }
   }
 
   private async transcribe(fileUrl: string): Promise<string> {
     const response = await fetch(fileUrl);
-    if (!response.ok) throw new Error('Failed to download audio');
+    if (!response.ok) throw new Error(`Failed to download audio: ${response.status}`);
 
     const audioBuffer = await response.arrayBuffer();
     const formData = new FormData();
@@ -141,7 +153,7 @@ export class MessageHandler {
       throw new Error(`STT error: ${result.status} - ${error}`);
     }
 
-    const data = await result.json();
+    const data = await result.json() as { text?: string };
     return data.text || '';
   }
 
@@ -152,10 +164,10 @@ export class MessageHandler {
       user = await this.db.user.create({
         data: {
           telegramId,
-          username: from.username,
-          firstName: from.first_name,
-          lastName: from.last_name,
-          languageCode: from.language_code,
+          username: from?.username,
+          firstName: from?.first_name,
+          lastName: from?.last_name,
+          languageCode: from?.language_code,
           settings: { create: {} },
         },
       });
@@ -165,27 +177,32 @@ export class MessageHandler {
   }
 
   private async createEntities(userId: string, inboxEntryId: string, result: any) {
-    // Create projects
     const projectMap = new Map<string, string>();
     for (const proj of result.extractedProjects || []) {
-      const project = await this.db.project.create({
-        data: { userId, title: proj.title, color: proj.color || null },
+      const existing = await this.db.project.findFirst({
+        where: { userId, title: { equals: proj.title, mode: 'insensitive' } },
       });
-      projectMap.set(proj.title.toLowerCase(), project.id);
+      if (existing) {
+        projectMap.set(proj.title.toLowerCase(), existing.id);
+      } else {
+        const project = await this.db.project.create({
+          data: { userId, title: proj.title, color: proj.color || null },
+        });
+        projectMap.set(proj.title.toLowerCase(), project.id);
+      }
     }
 
-    // Create tasks
     for (const task of result.extractedTasks || []) {
       if (task.isMaybeTask) continue;
 
       const status = this.mapStatus(task.statusSuggestion);
-      const scheduledFor = task.dueLabel ? this.parseRelativeDate(task.dueLabel) : null;
+      const scheduledFor = task.dueLabel ? parseRelativeDate(task.dueLabel) : null;
 
-      await this.db.task.create({
+      const created = await this.db.task.create({
         data: {
           userId,
           inboxEntryId,
-          projectId: task.projectName ? projectMap.get(task.projectName.toLowerCase()) : null,
+          projectId: task.projectName ? projectMap.get(task.projectName.toLowerCase()) || null : null,
           title: task.title,
           description: task.description || null,
           status,
@@ -194,11 +211,15 @@ export class MessageHandler {
           estimatedMinutes: task.estimatedMinutes || null,
           scheduledFor,
           deadlineAt: task.deadlineAt ? new Date(task.deadlineAt) : null,
+          sourceText: result.summary || null,
         },
+      });
+
+      await this.db.taskEvent.create({
+        data: { userId, taskId: created.id, type: 'created', payloadJson: { source: 'ai_parse', title: created.title } },
       });
     }
 
-    // Create notes
     for (const note of result.extractedNotes || []) {
       await this.db.note.create({
         data: {
@@ -221,24 +242,6 @@ export class MessageHandler {
     }
   }
 
-  private parseRelativeDate(label: string): Date | null {
-    const now = new Date();
-    const lower = label.toLowerCase();
-
-    if (lower.includes('сегодня')) return now;
-    if (lower.includes('завтра')) {
-      const d = new Date(now);
-      d.setDate(d.getDate() + 1);
-      return d;
-    }
-    if (lower.includes('послезавтра')) {
-      const d = new Date(now);
-      d.setDate(d.getDate() + 2);
-      return d;
-    }
-    return null;
-  }
-
   async rebuildDayPlan(userId: string) {
     const tasks = await this.db.task.findMany({
       where: { userId, status: { in: ['inbox', 'today', 'tomorrow', 'upcoming'] }, deletedAt: null },
@@ -247,43 +250,30 @@ export class MessageHandler {
 
     if (tasks.length === 0) return;
 
-    const today = new Date().toISOString().split('T')[0];
+    const dateStr = new Date().toISOString().split('T')[0]!;
     const result = await this.ai.buildDayPlan(
       tasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority })),
-      today
+      dateStr
     );
 
-    // Create/update daily plan
-    const todayDate = new Date();
-    todayDate.setHours(0, 0, 0, 0);
-
+    const today = todayStart();
     const dailyPlan = await this.db.dailyPlan.upsert({
-      where: { userId_date: { userId, date: todayDate } },
-      create: {
-        userId,
-        date: todayDate,
-        summary: result.concise_summary,
-        overloadWarning: !!result.overload_warning,
-      },
-      update: {
-        summary: result.concise_summary,
-        overloadWarning: !!result.overload_warning,
-      },
+      where: { userId_date: { userId, date: today } },
+      create: { userId, date: today, summary: result.concise_summary, overloadWarning: !!result.overload_warning },
+      update: { summary: result.concise_summary, overloadWarning: !!result.overload_warning },
     });
 
-    // Clear old items
     await this.db.dailyPlanItem.deleteMany({ where: { dailyPlanId: dailyPlan.id } });
 
-    // Add new items
     let sortOrder = 0;
-    for (const task of result.ordered_plan) {
-      const existing = tasks.find((t) => t.title === task.title);
+    for (const item of result.ordered_plan) {
+      const existing = tasks.find((t) => t.title === item.title);
       if (existing) {
         await this.db.dailyPlanItem.create({
           data: {
             dailyPlanId: dailyPlan.id,
             taskId: existing.id,
-            slotLabel: result.must_do.some((m) => m.title === task.title) ? 'must_do' : 'nice_to_do',
+            slotLabel: result.must_do.some((m) => m.title === item.title) ? 'must_do' : 'nice_to_do',
             sortOrder: sortOrder++,
           },
         });
