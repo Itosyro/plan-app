@@ -34,6 +34,7 @@ export class BotHandlers {
 Команды:
 • /today — план на сегодня
 • /plan — пересобрать план
+• /remind — поставить напоминание
 • /settings — настройки
 • /help — помощь`,
       { reply_markup: keyboard }
@@ -44,9 +45,10 @@ export class BotHandlers {
     await ctx.reply(
       `📝 Что умею:
 
-• Принимать текст и голосовые
-• Превращать хаос в задачи и заметки
+• Принимать текст и голосовые → превращать в задачи
 • Структурировать план дня
+• /remind — поставить напоминание на задачу (бот пришлёт в нужное время)
+• Mini App — управление задачами, drag-and-drop колонки
 
 Просто напиши или наговори — остальное сделаю! 🎯`
     );
@@ -65,17 +67,14 @@ export class BotHandlers {
     }
 
     const s = user.settings;
-    const status = `⚙️ Настройки:
-
-• Напоминания: ${s.remindersEnabled ? '✅' : '❌'}
-• Summary: ${s.postProcessingSummaryEnabled ? '✅' : '❌'}
-• Дайджест: ${s.dailyDigestEnabled ? '✅' : '❌'}
-• Удалять при done: ${s.deleteTaskOnDone ? '✅' : '❌'}`;
-
     const keyboard = new InlineKeyboard()
-      .webApp('⚙️ Подробнее', `${this.config.miniAppUrl}/settings`);
+      .text(s.remindersEnabled ? '🔔 Напоминания: ВКЛ' : '🔕 Напоминания: ВЫКЛ', 'toggle_reminders').row()
+      .text(s.dailyDigestEnabled ? '📬 Дайджест: ВКЛ' : '📭 Дайджест: ВЫКЛ', 'toggle_digest').row()
+      .text(s.deleteTaskOnDone ? '🗑 Удалять при done: ВКЛ' : '📦 Удалять при done: ВЫКЛ', 'toggle_delete_on_done').row()
+      .text(s.columnViewEnabled ? '📊 Колонки: ВКЛ' : '📋 Колонки: ВЫКЛ', 'toggle_columns').row()
+      .webApp('⚙️ Все настройки', this.config.miniAppUrl);
 
-    await ctx.reply(status, { reply_markup: keyboard });
+    await ctx.reply('⚙️ *Настройки:*', { reply_markup: keyboard, parse_mode: 'Markdown' });
   }
 
   async today(ctx: Context) {
@@ -98,11 +97,10 @@ export class BotHandlers {
     });
 
     if (!plan || plan.items.length === 0) {
-      // Get today tasks directly
       const tasks = await this.db.task.findMany({
         where: { userId: user.id, status: 'today', deletedAt: null },
         orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-        take: 5,
+        take: 10,
       });
 
       if (tasks.length === 0) {
@@ -112,7 +110,8 @@ export class BotHandlers {
 
       let text = '📅 *Задачи на сегодня:*\n\n';
       tasks.forEach((t, i) => {
-        text += `${i + 1}. ${t.title}\n`;
+        const pri = t.priority === 'high' ? '🔴' : t.priority === 'medium' ? '🟡' : '🟢';
+        text += `${pri} ${t.title}\n`;
       });
 
       const keyboard = new InlineKeyboard()
@@ -129,16 +128,16 @@ export class BotHandlers {
 
     if (mustDo.length > 0) {
       text += '🔥 *Критично:*\n';
-      mustDo.forEach((item, i) => {
-        text += `${i + 1}. ${item.task.title}\n`;
+      mustDo.forEach((item) => {
+        text += `• ${item.task.title}\n`;
       });
       text += '\n';
     }
 
     if (niceToDo.length > 0) {
       text += '✨ *Если останется время:*\n';
-      niceToDo.forEach((item, i) => {
-        text += `${i + 1}. ${item.task.title}\n`;
+      niceToDo.forEach((item) => {
+        text += `• ${item.task.title}\n`;
       });
     }
 
@@ -183,40 +182,159 @@ export class BotHandlers {
 
   async add(ctx: Context) {
     await ctx.reply(
-      '📝 Напишите задачу текстом или отправьте голосовое.\n\nОтмена: /cancel'
+      '📝 Напишите задачу текстом или отправьте голосовое — я разберу и добавлю.'
     );
+  }
 
-    // Simple flow: wait for next message
-    const waitingCtx = ctx;
+  async remind(ctx: Context) {
+    const telegramId = String(ctx.from?.id);
+    const user = await this.db.user.findUnique({ where: { telegramId } });
 
-    const handler = async (msgCtx: Context) => {
-      if (msgCtx.message?.text?.toLowerCase() === '/cancel') {
-        await msgCtx.reply('✅ Отменено');
-        // Remove listeners
-        return;
-      }
+    if (!user) {
+      await ctx.reply('Начните с /start');
+      return;
+    }
 
-      if (msgCtx.message?.text) {
-        await msgCtx.reply('🧠 Разбираю...');
-        await this.messageHandler.processInput(msgCtx, 'text', msgCtx.message.text);
-        return;
-      }
+    // Get active tasks
+    const tasks = await this.db.task.findMany({
+      where: { userId: user.id, status: { not: 'done' }, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
 
-      if (msgCtx.message?.voice) {
-        await msgCtx.reply('🎙️ Слушаю...');
-        await this.messageHandler.processInput(msgCtx, 'voice', msgCtx.message.voice.file_id);
-        return;
-      }
+    if (tasks.length === 0) {
+      await ctx.reply('У вас нет активных задач. Напишите что-нибудь, и я создам задачу!');
+      return;
+    }
 
-      if (msgCtx.message?.audio) {
-        await msgCtx.reply('🎵 Слушаю...');
-        await this.messageHandler.processInput(msgCtx, 'audio', msgCtx.message.audio.file_id);
-        return;
-      }
+    let text = '🔔 *Выберите задачу для напоминания:*\n\n';
+    const keyboard = new InlineKeyboard();
+
+    tasks.forEach((task, i) => {
+      const pri = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+      text += `${i + 1}. ${pri} ${task.title}\n`;
+      keyboard.text(`${i + 1}. ${task.title.slice(0, 30)}`, `remind_task:${task.id}`).row();
+    });
+
+    await ctx.reply(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
+  }
+
+  async handleCallback(ctx: Context) {
+    const data = ctx.callbackQuery?.data;
+    if (!data) return;
+
+    const telegramId = String(ctx.from?.id);
+    const user = await this.db.user.findUnique({
+      where: { telegramId },
+      include: { settings: true },
+    });
+
+    if (!user) {
+      await ctx.answerCallbackQuery({ text: 'Начните с /start' });
+      return;
+    }
+
+    // Settings toggles
+    if (data.startsWith('toggle_')) {
+      await this.handleSettingsToggle(ctx, user, data);
+      return;
+    }
+
+    // Remind task — show time options
+    if (data.startsWith('remind_task:')) {
+      const taskId = data.replace('remind_task:', '');
+      await this.showReminderTimeOptions(ctx, taskId);
+      return;
+    }
+
+    // Remind time selected
+    if (data.startsWith('remind_time:')) {
+      const [, taskId, minutes] = data.split(':');
+      await this.createReminder(ctx, user.id, taskId, parseInt(minutes));
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+  }
+
+  private async handleSettingsToggle(ctx: Context, user: any, data: string) {
+    const settings = user.settings;
+    if (!settings) {
+      await ctx.answerCallbackQuery({ text: 'Настройки не найдены' });
+      return;
+    }
+
+    const toggleMap: Record<string, string> = {
+      toggle_reminders: 'remindersEnabled',
+      toggle_digest: 'dailyDigestEnabled',
+      toggle_delete_on_done: 'deleteTaskOnDone',
+      toggle_columns: 'columnViewEnabled',
     };
 
-    // This is simplified - in production use conversations plugin
-    ctx.reply('Жду сообщение...');
+    const field = toggleMap[data];
+    if (!field) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const newValue = !(settings as any)[field];
+    await this.db.userSettings.update({
+      where: { userId: user.id },
+      data: { [field]: newValue },
+    });
+
+    await ctx.answerCallbackQuery({ text: `${newValue ? 'Включено' : 'Выключено'}` });
+
+    // Refresh settings view
+    await this.settings(ctx);
+  }
+
+  private async showReminderTimeOptions(ctx: Context, taskId: string) {
+    const keyboard = new InlineKeyboard()
+      .text('⏰ 15 мин', `remind_time:${taskId}:15`)
+      .text('⏰ 30 мин', `remind_time:${taskId}:30`).row()
+      .text('⏰ 1 час', `remind_time:${taskId}:60`)
+      .text('⏰ 2 часа', `remind_time:${taskId}:120`).row()
+      .text('⏰ Завтра 9:00', `remind_time:${taskId}:tomorrow`).row();
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText('⏰ *Через сколько напомнить?*', {
+      reply_markup: keyboard,
+      parse_mode: 'Markdown',
+    });
+  }
+
+  private async createReminder(ctx: Context, userId: string, taskId: string, minutes: number) {
+    let scheduledTime: Date;
+
+    if (isNaN(minutes)) {
+      // "tomorrow" case
+      scheduledTime = new Date();
+      scheduledTime.setDate(scheduledTime.getDate() + 1);
+      scheduledTime.setHours(9, 0, 0, 0);
+    } else {
+      scheduledTime = new Date(Date.now() + minutes * 60 * 1000);
+    }
+
+    await this.db.reminder.create({
+      data: {
+        userId,
+        taskId,
+        type: 'scheduled',
+        scheduledTime,
+        isEnabled: true,
+      },
+    });
+
+    const timeStr = scheduledTime.toLocaleString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: 'numeric',
+      month: 'short',
+    });
+
+    await ctx.answerCallbackQuery({ text: `Напоминание установлено на ${timeStr}` });
+    await ctx.editMessageText(`🔔 Напомню в *${timeStr}*`, { parse_mode: 'Markdown' });
   }
 
   async handleText(ctx: Context) {

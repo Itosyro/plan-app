@@ -2,6 +2,8 @@ import { Bot, Context, session } from 'grammy';
 import { PrismaClient } from '@prisma/client';
 import { createAiService } from '../ai/service.js';
 import { BotHandlers } from './handlers.js';
+import { ReminderScheduler } from './reminder-scheduler.js';
+import * as http from 'http';
 
 const {
   TELEGRAM_BOT_TOKEN,
@@ -33,23 +35,34 @@ bot.command('settings', handlers.settings.bind(handlers));
 bot.command('today', handlers.today.bind(handlers));
 bot.command('plan', handlers.plan.bind(handlers));
 bot.command('add', handlers.add.bind(handlers));
+bot.command('remind', handlers.remind.bind(handlers));
+
+// Callback queries (inline keyboard buttons)
+bot.on('callback_query:data', handlers.handleCallback.bind(handlers));
 
 // Message handlers
 bot.on('message:text', handlers.handleText.bind(handlers));
 bot.on('message:voice', handlers.handleVoice.bind(handlers));
 bot.on('message:audio', handlers.handleAudio.bind(handlers));
 
-// Error handler
+// Error handler — prevent crash on individual message errors
 bot.catch((err) => {
   console.error('Bot error:', err);
 });
 
+// Start bot with error recovery
 console.log('Starting PLAN bot...');
-bot.start();
+bot.start({
+  onStart: () => console.log('Bot polling started'),
+  drop_pending_updates: true,
+});
+
+// Start reminder scheduler
+const scheduler = new ReminderScheduler(db, bot);
+scheduler.start();
 
 // Health check server (for Render)
-import * as http from 'http';
-const healthPort = Number(process.env.HEALTH_PORT) || 8080;
+const healthPort = Number(process.env.PORT) || Number(process.env.HEALTH_PORT) || 8080;
 http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -62,3 +75,15 @@ http.createServer((req, res) => {
   console.log(`Health check on port ${healthPort}`);
 });
 console.log('Bot started!');
+
+// Graceful shutdown
+const shutdown = async (signal: string) => {
+  console.log(`Received ${signal}, shutting down...`);
+  scheduler.stop();
+  bot.stop();
+  await db.$disconnect();
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

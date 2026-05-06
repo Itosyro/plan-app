@@ -74,6 +74,7 @@ export const SettingsSchema = z.object({
   deleteTaskOnDone: z.boolean(),
   deleteNotesWithTask: z.boolean(),
   circlesViewEnabled: z.boolean(),
+  columnViewEnabled: z.boolean(),
 });
 
 export const UpdateSettingsSchema = SettingsSchema.partial();

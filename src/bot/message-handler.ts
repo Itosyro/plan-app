@@ -121,20 +121,43 @@ export class MessageHandler {
   }
 
   private async transcribe(fileUrl: string): Promise<string> {
-    const response = await fetch(fileUrl);
+    const dlController = new AbortController();
+    const dlTimeout = setTimeout(() => dlController.abort(), 30_000);
+
+    let response: Response;
+    try {
+      response = await fetch(fileUrl, { signal: dlController.signal });
+    } finally {
+      clearTimeout(dlTimeout);
+    }
     if (!response.ok) throw new Error('Failed to download audio');
 
     const audioBuffer = await response.arrayBuffer();
+
+    // Reject files > 20MB
+    if (audioBuffer.byteLength > 20 * 1024 * 1024) {
+      throw new Error('Audio file too large (>20MB)');
+    }
+
     const formData = new FormData();
     formData.append('file', new Blob([audioBuffer]), 'audio.ogg');
     formData.append('model', this.config.groqSttModel);
     formData.append('language', 'ru');
 
-    const result = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-      body: formData,
-    });
+    const sttController = new AbortController();
+    const sttTimeout = setTimeout(() => sttController.abort(), 60_000);
+
+    let result: Response;
+    try {
+      result = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        body: formData,
+        signal: sttController.signal,
+      });
+    } finally {
+      clearTimeout(sttTimeout);
+    }
 
     if (!result.ok) {
       const error = await result.text();

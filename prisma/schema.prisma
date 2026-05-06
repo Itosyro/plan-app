@@ -42,6 +42,7 @@ model UserSettings {
   deleteTaskOnDone             Boolean @default(false)
   deleteNotesWithTask          Boolean @default(true)
   circlesViewEnabled           Boolean @default(true)
+  columnViewEnabled            Boolean @default(false)
   createdAt                    DateTime @default(now())
   updatedAt                    DateTime @updatedAt
 }
