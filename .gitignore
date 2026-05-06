@@ -1,26 +1,17 @@
-# =============================================================================
-# Sensitive files - DO NOT COMMIT
-# =============================================================================
+# Dependencies
+node_modules/
 
-# Hermes credentials and secrets
+# Build
+dist/
+
+# Environment
 .env
-.env.*
-credentials.json
-*.pem
-*.key
+.env.local
+.env.production
 
-# API keys and tokens
-api_keys.*
-*token*
-*secret*
-
-# Session data (large, personal)
-sessions/
+# Database
 *.db
 *.db-journal
-
-# Cron output (can contain sensitive data)
-cron/output/
 
 # Logs
 logs/
@@ -41,20 +32,13 @@ tmp/
 temp/
 *.tmp
 
-# =============================================================================
-# Keep these (NOT sensitive)
-# =============================================================================
-# AGENTS.md and PROJECTS.md are intentionally committed - personal instructions
-!AGENTS.md
-!PROJECTS.md
+# Next.js
+miniapp/.next/
+miniapp/out/
+miniapp/node_modules/
 
-# Keep Vault structure but not actual vault content
-# (user will populate manually)
-!Vault/.gitkeep
+# Sessions
+sessions/
 
-# Keep Projects structure
-!Projects/.gitkeep
-Projects/smartkey-router/
-
-# Keep skills (they're public skills anyway)
-!.hermes/
+# Hermes backup (legacy)
+.hermes-backup/
