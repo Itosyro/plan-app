@@ -10,6 +10,7 @@
     "rootDir": "src",
     "resolveJsonModule": true,
     "declaration": true,
+    "types": ["node"],
     "paths": {
       "@/*": ["./src/*"]
     }
