@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Script from 'next/script';
 import { setInitData } from '@/lib/api';
 import { BottomNav } from './BottomNav';
 
@@ -8,6 +9,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    initTelegram();
+  }, []);
+
+  function initTelegram() {
     const tg = (window as any).Telegram?.WebApp;
     if (tg) {
       tg.ready();
@@ -21,7 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       }
     }
     setReady(true);
-  }, []);
+  }
 
   if (!ready) {
     return (
@@ -33,9 +38,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <Script
+        src="https://telegram.org/js/telegram-web-app.js"
+        strategy="beforeInteractive"
+      />
       <main className="min-h-screen px-4 pt-2 pb-4">{children}</main>
       <BottomNav />
-      <script src="https://telegram.org/js/telegram-web-app.js" />
     </>
   );
 }

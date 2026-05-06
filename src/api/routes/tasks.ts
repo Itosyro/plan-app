@@ -145,11 +145,21 @@ export function registerTaskRoutes(app: FastifyInstance, db: PrismaClient) {
     const existing = await db.task.findFirst({ where: { id: request.params.id, userId: user.id } });
     if (!existing) return reply.status(404).send({ error: 'Task not found', statusCode: 404 });
 
+    const targetStatus = status || 'tomorrow';
+    let targetDate: Date | null = null;
+    if (scheduledFor) {
+      targetDate = new Date(scheduledFor);
+    } else if (targetStatus === 'tomorrow') {
+      targetDate = tomorrowStart();
+    } else if (targetStatus === 'today') {
+      targetDate = todayStart();
+    }
+
     const task = await db.task.update({
       where: { id: request.params.id },
       data: {
-        status: status || 'tomorrow',
-        scheduledFor: scheduledFor ? new Date(scheduledFor) : tomorrowStart(),
+        status: targetStatus,
+        scheduledFor: targetDate,
       },
       include: { project: true },
     });
