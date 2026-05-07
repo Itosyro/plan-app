@@ -1,6 +1,13 @@
 target-version = "py312"
 line-length = 100
 
+# Сторонние снепшоты скиллов (anthropics/skills) — не линтим, чтобы не править upstream-код.
+extend-exclude = [
+    ".agents/skills/skill-creator",
+    ".agents/skills/mcp-builder",
+    ".agents/skills/webapp-testing",
+]
+
 [lint]
 select = [
     "E",    # pycodestyle errors
