@@ -1,60 +1,68 @@
-# =============================================================================
-# Sensitive files - DO NOT COMMIT
-# =============================================================================
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+.eggs/
 
-# Hermes credentials and secrets
-.env
-.env.*
-credentials.json
-*.pem
-*.key
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
 
-# API keys and tokens
-api_keys.*
-*token*
-*secret*
+# --- Tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Session data (large, personal)
-sessions/
-*.db
-*.db-journal
+# --- uv lock — track once we have a stable lockfile (Phase 1) ---
+# uv.lock
 
-# Cron output (can contain sensitive data)
-cron/output/
-
-# Logs
-logs/
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Temp
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+api_keys.*
+
+# --- App-local ---
+# Personal "stream of consciousness" archives — never commit
+memory/*
+!memory/README.md
+
+# --- Local dev databases ---
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Temp ---
 tmp/
 temp/
 *.tmp
 
-# =============================================================================
-# Keep these (NOT sensitive)
-# =============================================================================
-# AGENTS.md and PROJECTS.md are intentionally committed - personal instructions
-!AGENTS.md
-!PROJECTS.md
-
-# Keep Vault structure but not actual vault content
-# (user will populate manually)
-!Vault/.gitkeep
-
-# Keep Projects structure
-!Projects/.gitkeep
-Projects/smartkey-router/
-
-# Keep skills (they're public skills anyway)
-!.hermes/
+# --- Docker ---
+docker-compose.override.yml
