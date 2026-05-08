@@ -324,6 +324,128 @@ async def update_task_horizon(
     return task
 
 
+# ── Phase 3a view queries ─────────────────────────────────────────────
+
+
+async def get_tasks_by_horizon(
+    session: AsyncSession,
+    user_id: int,
+    horizon_slug: str,
+) -> list[Task]:
+    """Return active tasks for a user filtered by horizon slug."""
+    hor_result = await session.exec(
+        select(Horizon).where(Horizon.user_id == user_id, Horizon.slug == horizon_slug),
+    )
+    horizon = hor_result.first()
+    if horizon is None:
+        return []
+    result = await session.exec(
+        select(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.horizon_id == horizon.id,
+            Task.status != "done",
+        )
+        .order_by(Task.created_at.desc()),  # type: ignore[union-attr]
+    )
+    return list(result.all())
+
+
+async def get_all_notes(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 20,
+) -> list[Note]:
+    """Return the most recent notes for a user."""
+    result = await session.exec(
+        select(Note)
+        .where(Note.user_id == user_id)
+        .order_by(Note.created_at.desc())  # type: ignore[union-attr]
+        .limit(limit),
+    )
+    return list(result.all())
+
+
+async def get_categories_with_counts(
+    session: AsyncSession,
+    user_id: int,
+) -> list[tuple[Category, int]]:
+    """Return user categories with active task count for each."""
+    cat_result = await session.exec(
+        select(Category).where(Category.user_id == user_id).order_by(Category.name),
+    )
+    categories = list(cat_result.all())
+    pairs: list[tuple[Category, int]] = []
+    for cat in categories:
+        count_result = await session.exec(
+            select(Task).where(
+                Task.user_id == user_id,
+                Task.category_id == cat.id,
+                Task.status != "done",
+            ),
+        )
+        pairs.append((cat, len(list(count_result.all()))))
+    return pairs
+
+
+async def mark_task_done(
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> Task:
+    """Mark a task as done and log the event."""
+    task.status = "done"
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="completed",
+                payload_json={"source": "command"},
+            ),
+        )
+        await session.flush()
+
+    logger.info("task.completed", task_id=task.id, user_id=user_id)
+    return task
+
+
+async def delete_task(
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> None:
+    """Delete a task and log the event."""
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="deleted",
+                payload_json={"source": "command"},
+            ),
+        )
+        await session.flush()
+
+    await session.delete(task)
+    await session.flush()
+    logger.info("task.deleted", task_id=task.id, user_id=user_id)
+
+
+async def get_task_by_id(
+    session: AsyncSession,
+    user_id: int,
+    task_id: int,
+) -> Task | None:
+    """Return a task by ID if it belongs to the user."""
+    result = await session.exec(
+        select(Task).where(Task.id == task_id, Task.user_id == user_id),
+    )
+    return result.first()
+
+
 async def log_ai_run(
     session: AsyncSession,
     *,

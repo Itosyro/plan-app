@@ -1,8 +1,7 @@
 """Telegram bot layer (aiogram 3 handlers and routers).
 
 Phase 1 ships ``/start`` + onboarding FSM and a catch-all text handler.
-Voice (Phase 2), inline-keyboards / ``/today`` (Phase 3) and ``/settings``
-(Phase 3) are added later.
+Phase 2 adds voice. Phase 3 adds view commands and inline buttons.
 """
 
 from __future__ import annotations
@@ -11,13 +10,14 @@ from aiogram import Dispatcher
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from app.bot.routers import commands as commands_router
 from app.bot.routers import start as start_router
 from app.bot.routers import text as text_router
 from app.bot.routers import voice as voice_router
 
 
 def build_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
-    """Construct an aiogram Dispatcher with fresh Phase 1 routers attached.
+    """Construct an aiogram Dispatcher with all routers attached.
 
     Order matters: catch-all routers (``text``) must be last so that
     command / FSM-state routers get a chance to match first.
@@ -28,6 +28,7 @@ def build_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
     """
     dp = Dispatcher(storage=storage or MemoryStorage())
     dp.include_router(start_router.create_router())
+    dp.include_router(commands_router.create_router())
     dp.include_router(voice_router.create_router())
     dp.include_router(text_router.create_router())  # catch-all — keep last
     return dp
