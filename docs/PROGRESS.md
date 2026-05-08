@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-05-08 — Phase 3c: /settings command with inline buttons (PR #29)
+
+**Сделано:**
+- `app/bot/routers/settings.py` — полный `/settings` роутер:
+  - `cmd_settings` — показывает текущие настройки с кнопками редактирования.
+  - `cb_settings_edit` — показывает варианты для конкретной настройки.
+  - `cb_settings_set` — применяет выбранное значение.
+  - `cb_settings_back` — возврат к обзору настроек.
+  - 5 редактируемых настроек: critic_mode, morning_digest_at, evening_digest_at, response_style_source, week_due_semantic.
+- `app/bot/services.py` — `update_user_settings()`: валидация поля + обновление.
+- `app/bot/__init__.py` — регистрация settings_router.
+- `app/bot/courier_templates.py` — `/settings` добавлен в HELP.
+- `tests/test_settings.py` — 11 тестов (клавиатуры, форматтер, сервис).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 119 passed (108 + 11 новых).
+- PR ~410 LOC.
+
+---
+
+## 2026-05-08 — Phase 3b: Inline buttons on task cards (PR #28)
+
+**Сделано:**
+- `app/bot/routers/callbacks.py` — callback-роутер для inline-кнопок:
+  - `task:done:<id>` — отметить задачу выполненной (зачёркнутый текст).
+  - `task:delete:<id>` — удалить задачу.
+  - `task:pick_move:<id>` — показать клавиатуру выбора горизонта.
+  - `task:move:<id>:<horizon>` — перенести задачу на выбранный горизонт.
+  - `task:cancel:<id>` — отменить перенос, вернуть кнопки действий.
+- `task_action_keyboard(task_id)` — 3 кнопки: ✅ Готово, 🔄 Перенести, 🗑 Удалить.
+- `horizon_picker_keyboard(task_id)` — 6 горизонтов + кнопка «Назад».
+- `app/bot/routers/commands.py` — view-команды теперь отправляют inline-кнопки под каждой задачей.
+- `app/bot/__init__.py` — регистрация callbacks_router.
+- `tests/test_callbacks.py` — 6 тестов (структура клавиатур, service-level операции).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 108 passed (102 + 6 новых).
+- PR ~380 LOC.
+
+---
+
+## 2026-05-08 — Phase 3a: View commands (/today, /week, /notes, /categories) (PR #27)
+
+**Сделано:**
+- `app/bot/routers/commands.py` — 8 команд просмотра:
+  - `/today`, `/tomorrow`, `/week`, `/month`, `/year`, `/someday` — задачи по горизонту.
+  - `/notes` — последние 20 заметок.
+  - `/categories` — категории с количеством активных задач.
+- `app/bot/services.py` — 7 новых функций:
+  - `get_tasks_by_horizon()`, `get_all_notes()`, `get_categories_with_counts()`.
+  - `mark_task_done()`, `delete_task()`, `get_task_by_id()`.
+- `_format_task_list()`, `_format_note_list()` — форматтеры с иконками приоритетов.
+- `app/bot/__init__.py` — регистрация commands_router.
+- `app/bot/courier_templates.py` — HELP обновлён со списком новых команд.
+- `tests/test_commands.py` — 11 тестов (сервисы + форматтеры).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 102 passed (91 + 11 новых).
+- PR ~550 LOC.
+
+---
+
 ## 2026-05-08 — e2e Pipeline Tests (PR #25)
 
 **Сделано:**
