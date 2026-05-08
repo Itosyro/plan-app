@@ -22,14 +22,34 @@ _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
+def _to_async_url(url: str) -> str:
+    """Force an async driver onto bare ``postgresql://`` / ``sqlite:///`` URLs.
+
+    Neon (and most managed PG providers) hands out plain ``postgresql://``
+    strings, often with libpq-style ``?sslmode=require``. SQLAlchemy's async
+    engine refuses those without an async driver suffix. We prefer ``+psycopg``
+    (psycopg v3) over ``+asyncpg`` here because psycopg accepts ``sslmode``
+    natively, while asyncpg rejects it as an unknown kwarg.
+    """
+    if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("sqlite:///") and "+" not in url.split("://", 1)[0]:
+        return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    return url
+
+
 def init_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
     """Initialise (or reset) the global async engine.
 
-    Returns the freshly created engine. The previous engine, if any, is
-    *not* disposed automatically — call `dispose_engine()` first if needed.
+    Bare ``postgresql://`` / ``sqlite:///`` URLs are normalised to the async
+    driver flavour. Returns the freshly created engine. The previous engine,
+    if any, is *not* disposed automatically — call ``dispose_engine()``
+    first if needed.
     """
     global _engine, _sessionmaker
-    _engine = create_async_engine(database_url, echo=echo, future=True)
+    _engine = create_async_engine(_to_async_url(database_url), echo=echo, future=True)
     _sessionmaker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _engine
 

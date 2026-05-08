@@ -29,11 +29,22 @@ if config.config_file_name is not None:
 
 
 def _resolve_url() -> str:
-    """Pick a connection URL: env-driven Settings first, fall back to ini."""
+    """Pick a connection URL: env-driven Settings first, fall back to ini.
+
+    Alembic's migration runner is sync, so async drivers are normalised to
+    sync ones (``+asyncpg`` -> ``+psycopg``, ``+aiosqlite`` -> default).
+    Bare ``postgresql://`` URLs (typical for Neon copy-paste) are pinned to
+    ``postgresql+psycopg://`` so SQLAlchemy doesn't try to import psycopg2.
+    """
     settings = get_settings()
     url = settings.database_url or config.get_main_option("sqlalchemy.url") or ""
-    # Alembic's migration runner is sync — swap async drivers for sync ones.
-    return url.replace("+asyncpg", "+psycopg").replace("+aiosqlite", "")
+    url = url.replace("+asyncpg", "+psycopg").replace("+aiosqlite", "")
+    if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgres://"):
+        # Some providers (Heroku-style) hand out ``postgres://`` — rewrite.
+        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
 
 
 target_metadata = SQLModel.metadata
