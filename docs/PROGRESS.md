@@ -6,6 +6,30 @@
 
 ---
 
+## 2026-05-08 — Skills bundle: 5 новых SKILL.md (PR C)
+
+**Контекст:**
+После mega-review (PR B) добавляем недостающие методички в `.agents/skills/`, чтобы в будущих сессиях агент сразу видел паттерны, которые мы вычистили в PR B, и не повторял те же ошибки. Цель — закрыть пробелы в существующем бандле, не дублируя то, что уже есть.
+
+**Сделано:**
+- `.agents/skills/systematic-debugging/SKILL.md` — адаптация из [obra/superpowers](https://github.com/obra/superpowers/blob/main/skills/systematic-debugging/SKILL.md) (MIT). Iron Law «no fixes without root cause», 4 фазы (root cause → pattern → hypothesis → fix), red flags, антипаттерны. Внизу — таблица plan-app-specific симптомов и где искать (Markdown 400, naive-UTC, idle spin-down, dateparser «во вторник», Groq 429 в тестах, `kind=Update`).
+- `.agents/skills/defensive-programming/SKILL.md` — выжимка из `docs/REVIEW-findings.md`. 10 правил, каждое с конкретным кейсом из репо: allow-list (I-1), parse_mode discipline (C-2), naive-UTC (C-1), idempotency guard (M-1), LIKE-escape, callback-data parse, HH:MM matcher, exception isolation в loop, PII в логах, type-checker. Чек-лист в конце.
+- `.agents/skills/testing-async-python/SKILL.md` — паттерны из существующих 172 тестов: pytest-asyncio (`asyncio_mode = "auto"`), in-memory SQLite, `now=...` параметр вместо monkeypatch, `respx.mock` для Groq, `FakeBot.sent`, SQLite vs Postgres квирки, что НЕ тестировать (aiogram-роутеры, live Groq), верификация перед push, типичные ошибки.
+- `.agents/skills/migrations-safely/SKILL.md` — Alembic + SQLModel: iron rule «models.py change ↔ alembic revision in same PR», как читать autogenerate (false-positives), безопасный column drop (2-step), не-nullable + `server_default`, JSON-колонки, naive-UTC `DateTime`, локальное round-trip тестирование, prod rollback, антипаттерны.
+- `.agents/skills/using-uv/SKILL.md` — cheat-sheet: `uv sync --frozen`, `uv add`, `uv lock --upgrade-package`, `uv run`, что коммитить (`uv.lock`), Python 3.12 pinning, Docker prod-install с `--no-dev`, частые ошибки CI (out-of-date lockfile, missing module).
+- `.agents/skills/CATALOG.md` — обновил таблицу custom-скиллов: добавил 7 новых строк (5 новых + 2 ранее не залистанных: `requesting-code-review`, `socraticode-principles`).
+
+**Верификация:**
+- `uv run ruff format .` + `uv run ruff check .` — чисто (никаких code-изменений, только Markdown).
+- `uv run pytest -q` — 172 passed (без регрессий).
+- Все 5 новых SKILL.md имеют валидный YAML-frontmatter (`name` + `description`) — проверено вручную.
+
+**Не сделано (вынесено за рамки PR):**
+- Reload `mcp-builder/` snapshot — текущая версия Anthropic-снэпшота достаточна для Phase 5.
+- Скиллы для Phase 5 (Telegram Mini App / Web frontend) — отложены, будут добавлены вместе с фронтом.
+
+---
+
 ## 2026-05-08 — Mega review: critical & important fixes (PR B)
 
 **Контекст:**
