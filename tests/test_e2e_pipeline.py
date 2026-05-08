@@ -459,6 +459,77 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
     assert len(notes) == 1
 
 
+# ── e2e: partial classify failure ────────────────────────────────────
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_partial_classify_failure_does_not_kill_batch(
+    session: AsyncSession,
+) -> None:
+    """Regression for C-3: a single Groq failure on one of two units must
+    not wipe out the whole batch — the surviving unit should still be
+    persisted and reported in the courier reply.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=350)
+    await session.commit()
+    assert user.id is not None
+
+    call_counter = {"n": 0}
+
+    def staged(request: httpx.Request) -> httpx.Response:
+        call_counter["n"] += 1
+        n = call_counter["n"]
+        if n == 1:
+            # reorder
+            return httpx.Response(200, json=_reorder_response(False))
+        if n == 2:
+            # splitter
+            return httpx.Response(
+                200,
+                json=_splitter_response(
+                    [
+                        {"text": "купить хлеб"},
+                        {"text": "записаться к врачу"},
+                    ]
+                ),
+            )
+        if n == 3:
+            # classifier #1 - succeeds
+            return httpx.Response(
+                200,
+                json=_classifier_response(_cr_dict(category="Покупки", title="Купить хлеб")),
+            )
+        if n == 4:
+            # classifier #2 - fails (rate limit)
+            return httpx.Response(
+                429,
+                json={"error": {"message": "rate limit", "type": "rate_limit_exceeded"}},
+            )
+        # any extra call (e.g. courier in template_only mode shouldn't happen)
+        raise RuntimeError(f"Unexpected LLM call #{n}")
+
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=staged)
+
+    reply = await _run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "купить хлеб, записаться к врачу",
+        tg_user_id=350,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=None,
+        courier_mode="template_only",
+    )
+
+    # Survivor is reported; failed unit is silently dropped.
+    assert "Купить хлеб" in reply
+    assert "Записаться к врачу" not in reply
+
+    tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
+    assert len(tasks) == 1
+    assert tasks[0].title == "Купить хлеб"
+
+
 # ── e2e: high-priority urgent task ───────────────────────────────────
 
 

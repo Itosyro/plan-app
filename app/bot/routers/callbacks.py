@@ -136,10 +136,9 @@ def create_router() -> Router:
 
         await callback.answer("✅ Выполнено!")
         if callback.message is not None:
-            await callback.message.edit_text(
-                f"✅ ~{task.title}~ — выполнено",
-                parse_mode="Markdown",
-            )
+            # No parse_mode: task.title is user-controlled and can contain
+            # Markdown metachars that crash Telegram's parser.
+            await callback.message.edit_text(f"✅ Выполнено: «{task.title}»")
 
     @router.callback_query(F.data.startswith("task:delete:"))
     async def cb_task_delete(callback: CallbackQuery) -> None:
@@ -169,7 +168,7 @@ def create_router() -> Router:
 
         await callback.answer("🗑 Удалено!")
         if callback.message is not None:
-            await callback.message.edit_text(f"🗑 ~{title}~ — удалено", parse_mode="Markdown")
+            await callback.message.edit_text(f"🗑 Удалено: «{title}»")
 
     @router.callback_query(F.data.startswith("task:pick_move:"))
     async def cb_task_pick_move(callback: CallbackQuery) -> None:
@@ -218,10 +217,7 @@ def create_router() -> Router:
         label = horizon_labels.get(target_horizon, target_horizon)
         await callback.answer(f"Перенесено → {label}")
         if callback.message is not None:
-            await callback.message.edit_text(
-                f"🔄 «{task.title}» → {label}",
-                parse_mode="Markdown",
-            )
+            await callback.message.edit_text(f"🔄 «{task.title}» → {label}")
 
     @router.callback_query(F.data.startswith("task:cancel:"))
     async def cb_task_cancel(callback: CallbackQuery) -> None:
@@ -306,7 +302,6 @@ def create_router() -> Router:
         if callback.message is not None:
             await callback.message.edit_text(
                 f"🏷 «{task.title}» → {cat.name}",
-                parse_mode="Markdown",
                 reply_markup=task_action_keyboard(task_id),
             )
 

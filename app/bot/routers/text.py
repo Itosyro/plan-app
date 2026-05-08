@@ -20,6 +20,7 @@ from app.ai.courier import courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
+from app.ai.schemas import ClassifierResult
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
 from app.bot.courier_templates import NOT_ONBOARDED
@@ -39,6 +40,18 @@ from app.shared.logging import get_logger
 logger = get_logger(__name__)
 
 _groq_router: GroqKeyRouter | None = None
+
+
+def _log_task_exception(task: asyncio.Task[object]) -> None:
+    """Log any exception raised inside a background task instead of swallowing it."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "background_task.unhandled",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
 
 def _get_router() -> GroqKeyRouter | None:
@@ -111,24 +124,45 @@ async def _run_pipeline(
     # Resolve time for each unit (pure Python, fast)
     resolved_list = [resolve_time(unit.text, user_tz) for unit in split_result.units]
 
-    # Classify all units in parallel
+    # Classify all units in parallel. ``return_exceptions=True`` keeps a single
+    # transient Groq failure (429, 5xx) from killing the whole batch — we drop
+    # the failed unit and continue with the rest.
     classify_tasks = [
         classify_intent(groq_router, unit.text, resolved, [], user_tz)
         for unit, resolved in zip(split_result.units, resolved_list, strict=True)
     ]
-    classifier_results = list(await asyncio.gather(*classify_tasks))
+    raw_results = await asyncio.gather(*classify_tasks, return_exceptions=True)
 
-    # Critic: review classifications that need it
-    for i, (cr, unit, resolved) in enumerate(
-        zip(classifier_results, split_result.units, resolved_list, strict=True),
-    ):
+    survivors: list[tuple[ClassifierResult, object, str]] = []
+    for unit, resolved, item in zip(split_result.units, resolved_list, raw_results, strict=True):
+        if isinstance(item, BaseException):
+            logger.exception(
+                "pipeline.classify_failed",
+                user_id=user_id,
+                exc_info=(type(item), item, item.__traceback__),
+            )
+            continue
+        survivors.append((item, resolved, unit.text))
+
+    if not survivors:
+        return "Не удалось разобрать ни одну часть сообщения — сохранил во входящие."
+
+    # Critic: review classifications that need it (only survivors).
+    reviewed: list[tuple[ClassifierResult, object]] = []
+    for cr, resolved, unit_text in survivors:
         if should_run_critic(
             cr, critic_mode=critic_mode, confidence_threshold=confidence_threshold
         ):
-            verdict = await critique_classification(groq_router, unit.text, cr, resolved, user_tz)
-            classifier_results[i] = apply_verdict(cr, verdict)
+            try:
+                verdict = await critique_classification(
+                    groq_router, unit_text, cr, resolved, user_tz
+                )
+                cr = apply_verdict(cr, verdict)
+            except Exception:
+                logger.exception("pipeline.critic_failed", user_id=user_id)
+        reviewed.append((cr, resolved))
 
-    # Persist results
+    # Persist surviving units.
     async with session_scope() as session:
         await log_ai_run(
             session,
@@ -139,7 +173,7 @@ async def _run_pipeline(
             key_index=groq_router.current_key_id,
         )
 
-        for cr, resolved in zip(classifier_results, resolved_list, strict=True):
+        for cr, resolved in reviewed:
             due_at = resolved.resolved_dt if resolved else None
 
             await persist_classification(
@@ -161,7 +195,7 @@ async def _run_pipeline(
 
     return await courier_respond(
         groq_router,
-        classifier_results,
+        [cr for cr, _ in reviewed],
         mode=courier_mode,
         style=courier_style,
     )
@@ -242,6 +276,6 @@ def create_router() -> Router:
                 await message.answer("Ошибка при разборе — сохранил во входящие, разберу позже.")
 
         task = asyncio.create_task(_background())
-        task.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
+        task.add_done_callback(_log_task_exception)
 
     return router

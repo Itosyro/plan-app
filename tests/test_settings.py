@@ -133,6 +133,35 @@ async def test_update_user_settings_disallowed_field(session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
+async def test_update_user_settings_rejects_unknown_value(session: AsyncSession) -> None:
+    """Regression for C-2: a replayed/crafted callback with a value that
+    isn't in the allow-list must be rejected — and must not corrupt the
+    DB column with a ``setattr`` of arbitrary string.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=309)
+    await session.commit()
+    assert user.id is not None
+    await complete_onboarding(session, user, display_name="Тест9", tz="UTC")
+    await session.commit()
+
+    # critic_mode allows {always, confidence, never} — anything else is bad
+    bad = await update_user_settings(session, user.id, "critic_mode", "haxxor")
+    assert bad is None
+
+    settings = await get_user_settings(session, user.id)
+    assert settings is not None
+    assert settings.critic_mode != "haxxor"
+
+    # Same for morning_digest_at — must be one of the canned slots
+    bad_time = await update_user_settings(session, user.id, "morning_digest_at", "25:99")
+    assert bad_time is None
+
+    # Same for response_style_source
+    bad_style = await update_user_settings(session, user.id, "response_style_source", "shouty")
+    assert bad_style is None
+
+
+@pytest.mark.asyncio
 async def test_update_user_settings_no_settings_row(session: AsyncSession) -> None:
     user, _ = await get_or_create_user(session, telegram_id=303)
     await session.commit()
