@@ -244,14 +244,72 @@ curl -s -X PUT \
 
 ---
 
-## 13. Кто может помочь
+## 13. Live deploy (Render)
+
+Прод живёт в Render Free, Frankfurt:
+
+| Поле | Значение |
+|---|---|
+| Service ID | `srv-d7uohcf7f7vs73crmk3g` |
+| Service slug | `plan-app-t6nx` |
+| Public URL | `https://plan-app-t6nx.onrender.com` |
+| Webhook path | `/tg/<TELEGRAM_WEBHOOK_SECRET>` |
+| Health check | `GET /healthz` → `{"status":"ok"}` |
+| Workspace (ownerId) | `tea-d7tr6vugvqtc73bsjka0` (Cile Simme's workspace) |
+| Dashboard | `https://dashboard.render.com/web/srv-d7uohcf7f7vs73crmk3g` |
+| Auto-deploy | `commit` (push to `main` → redeploy) |
+| Build / Start | `uv sync --frozen` / `uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Cold-start | ~3 мин (free-tier sleeps after 15 min idle) |
+
+Render API через `RENDER_API_KEY` (юзер выдаёт через `request_secret`, не в чат):
+
+```bash
+SVC=srv-d7uohcf7f7vs73crmk3g
+
+# Health
+curl https://plan-app-t6nx.onrender.com/healthz
+
+# Latest deploys
+curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+  "https://api.render.com/v1/services/${SVC}/deploys?limit=3" | jq
+
+# Trigger redeploy (e.g. after env-var change)
+curl -s -X POST -H "Authorization: Bearer ${RENDER_API_KEY}" \
+  -H "Content-Type: application/json" \
+  "https://api.render.com/v1/services/${SVC}/deploys" \
+  -d '{"clearCache":"do_not_clear"}'
+
+# Update single env var (auto-redeploys)
+curl -s -X PUT -H "Authorization: Bearer ${RENDER_API_KEY}" \
+  -H "Content-Type: application/json" \
+  "https://api.render.com/v1/services/${SVC}/env-vars/<KEY>" \
+  -d '{"value":"<VALUE>"}'
+
+# List env vars (values masked for SDK secrets in dashboard, not API)
+curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+  "https://api.render.com/v1/services/${SVC}/env-vars?limit=20" | jq
+
+# Logs (Render API)
+curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+  "https://api.render.com/v1/logs?ownerId=tea-d7tr6vugvqtc73bsjka0&resource=${SVC}&limit=100" | jq
+```
+
+**Подводные камни:**
+- `WEBHOOK_BASE_URL` должен быть выставлен **до** запуска сервиса, иначе lifespan не зарегистрирует webhook (`if bot is not None and settings.webhook_url:`). При первом создании сервиса URL ещё неизвестен — выставляем `WEBHOOK_BASE_URL` после `POST /v1/services` и триггерим явный redeploy.
+- Free plan не имеет `preDeployCommand` → миграции Alembic накатываются вручную (`uv run alembic upgrade head`) с локальной машины против Neon перед каждым релизом, который меняет схему. Альтернатива на потом — апгрейд до Starter-плана и `preDeployCommand: uv run alembic upgrade head`.
+- Free-tier после 15 мин простоя засыпает — первый webhook после паузы прилетает на холодный старт (~3 мин), Telegram ретраит до 24 ч. Это известная особенность free, не баг.
+- Workspace, к которому привязан текущий `RENDER_API_KEY` — `tea-d7tr6vugvqtc73bsjka0` («Cile Simme's workspace», email `city.cile.simme@gmail.com`). Это **не** основной email юзера. Если нужен переход в другой workspace — отдельный шаг (delete service + recreate).
+
+---
+
+## 14. Кто может помочь
 
 - AI-агенту: читай этот файл + `docs/` + `.agents/skills/`. Если непонятно — спроси юзера комментарием в PR.
 - Юзеру: читай `docs/PROGRESS.md` чтобы видеть прогресс. Если что-то сломалось — открой issue с шагами повтора.
 
 ---
 
-## 14. Где жить идеям и заметкам
+## 15. Где жить идеям и заметкам
 
 - **Идея на потом** → `docs/IDEAS.md` (а не TODO в коде)
 - **Сделанное** → `docs/PROGRESS.md`
