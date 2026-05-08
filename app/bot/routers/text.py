@@ -106,6 +106,7 @@ async def _run_pipeline(
     confidence_threshold: float = 0.7,
     courier_mode: str = "mix",
     courier_style: str = "neutral",
+    default_reminder_offsets: dict[str, list[int]] | None = None,
 ) -> str:
     """Detect reorder or run split → time → classify → critic → persist."""
     reorder_reply = await _try_reorder(groq_router, text, user_id)
@@ -182,6 +183,7 @@ async def _run_pipeline(
                 cr=cr,
                 due_at=due_at,
                 inbox_id=inbox_id,
+                default_reminder_offsets=default_reminder_offsets,
             )
 
             await log_ai_run(
@@ -235,6 +237,11 @@ def create_router() -> Router:
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
             courier_mode = settings.response_style_source if settings else "mix"
             courier_style = "neutral"
+            default_offsets: dict[str, list[int]] | None = (
+                {k: list(v) for k, v in settings.default_reminder_offsets.items()}
+                if settings
+                else None
+            )
 
         logger.info(
             "inbox.text_stored",
@@ -265,6 +272,7 @@ def create_router() -> Router:
                     confidence_threshold=critic_threshold,
                     courier_mode=courier_mode,
                     courier_style=courier_style,
+                    default_reminder_offsets=default_offsets,
                 )
                 await message.answer(reply)
             except Exception:

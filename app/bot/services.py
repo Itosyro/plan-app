@@ -7,7 +7,7 @@ and keeps SQL out of the routers.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
@@ -21,6 +21,7 @@ from app.db.models import (
     Horizon,
     InboxEntry,
     Note,
+    Reminder,
     Task,
     TaskEvent,
     TelegramUpdate,
@@ -229,6 +230,77 @@ async def get_user_categories_full(
     return list(result.all())
 
 
+DEFAULT_REMINDER_OFFSETS: dict[str, list[int]] = {
+    "same_day": [60, 15],
+    "multi_day": [1440, 60],
+}
+
+
+def _select_reminder_offsets(
+    cr: ClassifierResult,
+    default_offsets: dict[str, list[int]] | None,
+) -> list[int]:
+    """Pick which minute-offsets to schedule reminders at.
+
+    Explicit offsets from the classifier (LLM-detected "напомни за 30 минут")
+    win over the user's defaults. Otherwise fall back to ``same_day`` (for
+    today/tomorrow horizons) or ``multi_day`` (for week/month/year/someday).
+    """
+    if cr.reminder_offsets:
+        return [int(o) for o in cr.reminder_offsets if int(o) > 0]
+    defaults = default_offsets or DEFAULT_REMINDER_OFFSETS
+    bucket = "same_day" if cr.horizon in {"today", "tomorrow"} else "multi_day"
+    raw = defaults.get(bucket) or []
+    return [int(o) for o in raw if int(o) > 0]
+
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Return *dt* as a naive UTC datetime (drop tz, converting if needed)."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(UTC).replace(tzinfo=None)
+
+
+async def schedule_reminders(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    task_id: int,
+    due_at: datetime,
+    offsets: list[int],
+    now: datetime | None = None,
+) -> list[Reminder]:
+    """Create ``Reminder`` rows ``offset`` minutes before *due_at*.
+
+    Offsets resolving to a ``fire_at`` at or before *now* are skipped — there's
+    no point scheduling a reminder that's already in the past. Inputs are
+    normalised to **naive UTC** before storage so reads/writes are consistent
+    with the rest of the schema (timestamps live as ``DateTime`` without tz).
+    """
+    if not offsets:
+        return []
+    ref_due = _to_naive_utc(due_at)
+    ref_now = _to_naive_utc(now) if now is not None else datetime.utcnow()
+    created: list[Reminder] = []
+    for offset in offsets:
+        if offset <= 0:
+            continue
+        fire_at = ref_due - timedelta(minutes=offset)
+        if fire_at <= ref_now:
+            continue
+        reminder = Reminder(
+            user_id=user_id,
+            task_id=task_id,
+            fire_at=fire_at,
+            status="pending",
+        )
+        session.add(reminder)
+        created.append(reminder)
+    if created:
+        await session.flush()
+    return created
+
+
 async def persist_classification(
     session: AsyncSession,
     *,
@@ -236,8 +308,14 @@ async def persist_classification(
     cr: ClassifierResult,
     due_at: datetime | None,
     inbox_id: int | None,
+    default_reminder_offsets: dict[str, list[int]] | None = None,
 ) -> Task | Note:
-    """Persist a ClassifierResult as a Task or Note row."""
+    """Persist a ClassifierResult as a Task or Note row.
+
+    For tasks with a concrete ``due_at``, also schedules ``Reminder`` rows
+    according to either ``cr.reminder_offsets`` (explicit user request) or
+    the user's ``default_reminder_offsets`` (Phase 4a).
+    """
     cat = await get_or_create_category(session, user_id, cr.category_name)
     hor = await get_or_create_horizon(session, user_id, cr.horizon)
 
@@ -263,6 +341,7 @@ async def persist_classification(
     session.add(row)
     await session.flush()
 
+    reminders_created = 0
     if cr.is_task:
         if not isinstance(row, Task) or row.id is None:
             raise RuntimeError("Expected a flushed Task row after persist")
@@ -271,12 +350,24 @@ async def persist_classification(
         )
         await session.flush()
 
+        if due_at is not None:
+            offsets = _select_reminder_offsets(cr, default_reminder_offsets)
+            reminders = await schedule_reminders(
+                session,
+                user_id=user_id,
+                task_id=row.id,
+                due_at=due_at,
+                offsets=offsets,
+            )
+            reminders_created = len(reminders)
+
     logger.info(
         "persist.done",
         user_id=user_id,
         is_task=cr.is_task,
         category=cr.category_name,
         title=cr.title,
+        reminders_created=reminders_created,
     )
     return row
 
