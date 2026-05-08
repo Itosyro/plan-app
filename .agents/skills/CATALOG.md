@@ -15,6 +15,13 @@
 | [`russian-nlp/SKILL.md`](./russian-nlp/SKILL.md) | Перед правкой парсинга русских дат / категорий / морфологии. |
 | [`aiogram-3/SKILL.md`](./aiogram-3/SKILL.md) | Перед правкой `app/bot/` (хендлеры, роутеры, FSM). |
 | [`groq-tips/SKILL.md`](./groq-tips/SKILL.md) | Перед правкой `app/ai/` (Groq API, ротация ключей, retry). |
+| [`defensive-programming/SKILL.md`](./defensive-programming/SKILL.md) | Перед любой правкой user-facing кода. Allow-lists, naive-UTC, parse_mode discipline — выжимка из mega-review. |
+| [`systematic-debugging/SKILL.md`](./systematic-debugging/SKILL.md) | При **любом** баге / упавшем тесте. Сначала root-cause, потом фикс. Адаптировано из obra/superpowers (MIT). |
+| [`testing-async-python/SKILL.md`](./testing-async-python/SKILL.md) | Перед написанием тестов. pytest-asyncio, in-memory SQLite, respx-моки Groq, fake-bot, `now=...`. |
+| [`migrations-safely/SKILL.md`](./migrations-safely/SKILL.md) | Перед любой правкой `app/db/models.py`. Alembic + SQLModel, autogenerate gotchas, безопасный drop column. |
+| [`using-uv/SKILL.md`](./using-uv/SKILL.md) | Cheat-sheet по uv: sync / add / lock / run, что коммитить, как чинит CI. |
+| [`requesting-code-review/SKILL.md`](./requesting-code-review/SKILL.md) | Перед отправкой работы на review (sub-agent или fresh chat). |
+| [`socraticode-principles/SKILL.md`](./socraticode-principles/SKILL.md) | Перед навигацией по незнакомому коду / большим рефактором. Hybrid search + dependency graph + blast-radius. |
 
 ---
 
