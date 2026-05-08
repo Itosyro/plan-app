@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-05-08 — Phase 2.3b: Critic — conditional review of classifier output (PR #19)
+
+**Сделано:**
+- `app/ai/critic.py` — `critique_classification()` через `qwen-qwq-32b` (instructor, temperature=0.0), `should_run_critic()` (два режима: `confidence` / `always`), `apply_verdict()` (подмена результата при `approved=False`).
+- `app/ai/prompts/critic.md` — системный промпт для критика: проверяет is_task, category_name, horizon, priority, title, reminder_offsets.
+- `app/ai/schemas.py` — `CriticVerdict` (approved, reason, corrected ClassifierResult | None).
+- `app/bot/services.py` — `get_user_settings()` для чтения critic_mode / confidence_threshold из `UserSettings`.
+- `app/bot/routers/text.py` — интеграция критика в `_run_pipeline()`: после classify, до persist. Параметры `critic_mode` и `confidence_threshold` пробрасываются из UserSettings.
+- `app/bot/routers/voice.py` — аналогичная передача critic-настроек из UserSettings в pipeline.
+- `tests/test_critic.py` — 9 тестов: should_run_critic (4 кейса), apply_verdict (3 кейса), critique_classification с мокнутым Groq (2 кейса).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 63 passed.
+- PR ~400 LOC (344 строк кода + 63 строк промпта).
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- Courier — Phase 2.3c.
+- Voice reordering — Phase 2.3d.
+
+---
+
+## 2026-05-08 — Phase 2.3a: Whisper — голосовые сообщения (PR #18)
+
+**Сделано:**
+- `app/ai/whisper.py` — `transcribe_voice()`: whisper-large-v3 через Groq, language=ru, temperature=0.0, response_format=verbose_json. Логирование latency и key_id через structlog.
+- `app/bot/routers/voice.py` — хендлер голосовых: проверка онбординга → скачивание файла → транскрипция → сохранение в inbox (kind=voice) → запуск text-pipeline в фоне (`asyncio.create_task`). Лимит 20 МБ.
+- `app/bot/services.py` — `store_inbox_voice()` (kind="voice", transcript в raw_text).
+- `app/bot/__init__.py` — регистрация voice-роутера.
+- `tests/test_whisper.py` — 5 тестов с мокнутым Groq через respx.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 54 passed.
+- PR 279 LOC.
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- Critic — Phase 2.3b.
+- Courier — Phase 2.3c.
+
+---
+
 ## 2026-05-08 — Phase 2.2b: DB models + persistence + pipeline integration
 
 **Сделано:**
