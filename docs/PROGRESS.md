@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-05-08 — Phase 2.2b: DB models + persistence + pipeline integration
+
+**Сделано:**
+- `app/db/models.py` — 6 новых SQLModel-таблиц: `Category`, `Horizon`, `Task`, `Note`, `AiRun`, `TaskEvent`. Все с FK на `users`, индексами по `user_id`, `_utcnow` default.
+- `alembic/versions/0002_phase_2_2_models.py` — миграция: создаёт 6 таблиц + индексы, downgrade дропает в обратном порядке.
+- `app/bot/services.py` — 5 новых функций: `get_or_create_category`, `get_or_create_horizon`, `get_user_categories`, `persist_classification`, `log_ai_run`.
+- `app/bot/routers/text.py` — полная цепочка: split → time_resolver → classify → persist → ответ с резюме. GroqKeyRouter — singleton (lazy init). Ответ юзеру: «Разобрал на N элемент(ов): 📌 задача / 📝 заметка: title [category]».
+- `tests/test_persistence.py` — 7 тестов: category CRUD, horizon CRUD, user_categories, persist task + events, persist note, ai_run log, category reuse.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 47 passed (24 старых + 16 Phase 2.2a + 7 новых).
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- Critic — Phase 2.3.
+- Whisper — Phase 2.3.
+- `call_with_retry` — перенесён в Phase 2.3 (пока хватает одного ключа).
+
+---
+
 ## 2026-05-08 — Phase 2.1: Splitter + AI infrastructure (PR #12)
 
 **Сделано:**
