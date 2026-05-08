@@ -23,6 +23,12 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (formatter handles it)
+    # Cyrillic strings often share glyphs with Latin letters (е/e, у/y, ...).
+    # We're a Russian-first project, so RUF001/002/003 fire constantly without
+    # adding signal — disable them globally.
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 
 [lint.per-file-ignores]
