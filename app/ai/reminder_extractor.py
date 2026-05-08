@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import dateparser
 
 from app.ai.schemas import ReminderInfo
+from app.ai.time_resolver import _preprocess
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -29,21 +30,11 @@ _TIME_AFTER_REMINDER: list[re.Pattern[str]] = [
     re.compile(r"\bнапомн\w*\s+(завтра(?:\s+в\s+\d{1,2}[:.]\d{2})?)", re.I),
     re.compile(r"\bнапомн\w*\s+(послезавтра(?:\s+в\s+\d{1,2}[:.]\d{2})?)", re.I),
     re.compile(r"\bнапомн\w*\s+(в\s+\d{1,2}[:.]\d{2})", re.I),
-    re.compile(r"\bнапомн\w*\s+(через\s+час)", re.I),
+    re.compile(r"\bнапомн\w*\s+(через\s+час)\b", re.I),
+    re.compile(r"\bнапомн\w*\s+(через\s+минуту)\b", re.I),
+    re.compile(r"\bнапомн\w*\s+(через\s+неделю)\b", re.I),
+    re.compile(r"\bнапомн\w*\s+(через\s+месяц)\b", re.I),
 ]
-
-# Препроцесс идиом (аналогично time_resolver)
-_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\bчерез\s+полчаса\b", re.I), "через 30 минут"),
-    (re.compile(r"\bчерез\s+полтора\s+часа\b", re.I), "через 1 час 30 минут"),
-    (re.compile(r"\bчерез\s+сутки\b", re.I), "через 24 часа"),
-]
-
-
-def _preprocess(text: str) -> str:
-    for pattern, replacement in _REPLACEMENTS:
-        text = pattern.sub(replacement, text)
-    return text
 
 
 def _extract_time_after_napomni(text: str) -> str | None:
