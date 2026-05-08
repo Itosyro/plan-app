@@ -29,7 +29,7 @@ plan-app/
 ├── app/
 │   ├── bot/         — aiogram 3 хендлеры (telegram-side)
 │   ├── api/         — FastAPI endpoints (mini-app, webhooks)
-│   ├── ai/          — LLM-пайплайн (Splitter / Classifier / Critic / Courier)
+│   ├── ai/          — LLM-пайплайн (Splitter ✔ / Classifier / Critic / Courier)
 │   ├── db/          — SQLModel модели + миграции
 │   ├── workers/     — фоновые задачи (cron, scheduler)
 │   ├── shared/      — общие утилиты, config, типы
@@ -180,7 +180,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host/db
 
 - ❌ Дёргать Groq API из CI / тестов — только моки
 - ❌ Хранить promo / inline-промпты в коде — отдельный файл в `app/ai/prompts/`
-- ❌ Делать большие PR (> 600 LOC) — режь
+- ❌ Делать большие PR (> 400 LOC) — режь
 - ❌ Использовать polling — только webhook
 - ❌ Логировать `message.text` (PII)
 - ❌ Force-push в main / master

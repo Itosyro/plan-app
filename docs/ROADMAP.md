@@ -59,21 +59,38 @@
 
 **Цель:** голосовое/текстовое сообщение превращается в задачи и заметки.
 
+Делается тремя подPR'ами ≤ 400 LOC.
+
+### Phase 2.1 — Splitter + AI infrastructure ✔ (PR #12, смерджен 2026-05-08)
+
 **Содержимое:**
-- `app/ai/router.py` — GroqKeyRouter (3 ключа, round-robin, fallback);
-- `app/ai/splitter.py` — `llama-3.1-8b-instant`, выход через `instructor`;
+- `app/ai/router.py` — `GroqKeyRouter` (round-robin по ключам Groq, `advance()`, `async_client()`);
+- `app/ai/schemas.py` — Pydantic-модели `IntentUnit`, `SplitterResult`;
+- `app/ai/splitter.py` — `split_message()` через `llama-3.1-8b-instant` + `instructor` (temperature 0.0);
+- `app/ai/prompts/splitter.md` — системный промпт (3 few-shot примера на русском);
+- интеграция в text-роутер: splitter в фоне (`asyncio.create_task`), результат логируется;
+- 10 новых тестов (5 GroqKeyRouter + 5 Splitter с моком Groq через `respx`).
+
+### Phase 2.2 — Classifier + русский NLP (следующая)
+
+**Содержимое:**
 - `app/ai/classifier.py` — `llama-3.3-70b-versatile`, авто-создание категорий;
-- `app/ai/critic.py` — режим `confidence` по умолчанию;
 - `app/ai/time_resolver.py` — `dateparser` + `pymorphy3` + `razdel`, чистый Python;
 - `app/ai/reminder_extractor.py` — извлечение «через 43 минуты»;
-- транскрибация через Groq Whisper (`whisper-large-v3`);
 - SQLModel: `Category`, `Horizon`, `Task`, `Note`, `AiRun`, `TaskEvent`;
 - Alembic: миграция;
-- бот отвечает «курьерским» сообщением с резюме;
+- бот сохраняет задачи и отвечает детерминированным резюме.
+
+### Phase 2.3 — Critic + Whisper + Courier
+
+**Содержимое:**
+- `app/ai/critic.py` — `qwen-qwq-32b`, режим `confidence` по умолчанию;
+- транскрибация через Groq Whisper (`whisper-large-v3`);
+- `app/ai/courier.py` — шаблоны + LLM (50/50);
 - перестановка задач голосом (минимальная: «перенеси Х на Y»);
 - e2e тесты на 5–10 типовых русских фраз.
 
-**Критерий готовности:**
+**Критерий готовности (Phase 2 целиком):**
 - голос «утром пробежка, в 11 совещание, до пятницы отчёт, обед через час напомни» → 4 задачи + 1 напоминание;
 - юзер задал перестановку → задача обновлена.
 

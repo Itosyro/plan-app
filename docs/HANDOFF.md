@@ -14,7 +14,7 @@
 
 **Стек:** Python 3.12, aiogram 3 (бот), FastAPI (HTTP+webhook+Mini App), SQLModel + Alembic, Pydantic v2, Groq API (LLM + Whisper), `instructor` (структурный output), `dateparser`+`pymorphy3`+`razdel` (русский NLP), uv (пакеты), ruff (линт+формат), pytest, Docker. Деплой: Render Free + Neon Postgres. Доставка апдейтов — **webhook**, не polling.
 
-**Где сейчас (2026-05-08):** Phase 0, 0.5, 1, 1.5 и **out-of-order Phase 4** (деплой + e2e живого бота) **смерджены в main**. Бот живой на https://plan-app-t6nx.onrender.com под именем **@daylirobot** (PLAN). Прошёл онбординг настоящего юзера, в Neon-БД лежит 1 user / 1 user_settings / 3 inbox_entries / 7 telegram_updates. Дальше — **Phase 2** (AI-пайплайн на Groq + русский NLP).
+**Где сейчас (2026-05-08):** Phase 0, 0.5, 1, 1.5, **out-of-order Phase 4** (деплой + e2e живого бота) и **Phase 2.1** (Splitter + AI infrastructure) **смерджены в main**. Бот живой на https://plan-app-t6nx.onrender.com под именем **@daylirobot** (PLAN). Splitter разбивает текст на атомарные намерения через `llama-3.1-8b-instant` + `instructor`, результат логируется (задачи пока не сохраняются — Phase 2.2). Дальше — **Phase 2.2** (Classifier + русский NLP + сохранение задач в БД).
 
 **Главное правило:** маленькие PR пофазно. Никаких мегаPR. Размер PR ≤ 400 LOC.
 
@@ -237,7 +237,9 @@ plan-app/
 | **1** | Бот: webhook + БД + onboarding + первая Alembic миграция | **смерджена** (PR #6, sha `c17bab4`) |
 | **1.5** | GitHub Actions CI (uv → ruff → pytest) + driver-нормализация для Neon | **смерджена** (PR #7, sha `eacb3a9`) |
 | **4 (out-of-order, часть 1)** | `render.yaml` под Python + создание Render-сервиса + регистрация webhook | **смерджена** (PR #8, sha `6819d18` — render.yaml; PR #9 sha `606526a` — docs; PR #10 sha `fbae8fc` — e2e-проверка) |
-| **2** | AI-пайплайн (Splitter / Classifier / Critic / Time resolver / Whisper / Courier) | **следующая** |
+| **2.1** | Splitter + AI infrastructure (`GroqKeyRouter`, `split_message`, `instructor`, Pydantic schemas) | **смерджена** (PR #12) |
+| **2.2** | Classifier + русский NLP + модели Task/Note/AiRun + сохранение в БД | **следующая** |
+| **2.3** | Critic + Whisper + Courier | после P2.2 |
 | **3** | Команды бота (`/today` …), inline-кнопки, `/settings`, REST API заготовки | после P2 |
 | **4 (часть 2)** | Cron worker — напоминания, утренние и вечерние дайджесты + FSM на Postgres-storage | после P2/P3 |
 | **5** | Telegram Mini App (React + Vite + Tailwind) | после P4 |
@@ -388,8 +390,20 @@ docker build -t plan-app .               # собрать контейнер
 - ✅ CATALOG.md
 - ✅ ruff exclude для third-party снепшотов
 
-### Phase 2 — НЕ начата
-Дальше — AI-пайплайн: Splitter (`llama-3.1-8b-instant`) → Classifier (`llama-3.3-70b-versatile`) → Critic (`qwen-qwq-32b`, по уверенности) + русский NLP (`dateparser` + `pymorphy3` + `razdel`) + Whisper для голоса. Делать тремя подPR'ами ≤ 400 LOC.
+### Phase 2.1 — Splitter + AI infrastructure (PR #12, смерджен 2026-05-08)
+- `app/ai/router.py` — `GroqKeyRouter`: round-robin пул API-ключей Groq с `advance()` и `async_client()`.
+- `app/ai/schemas.py` — Pydantic-модели `IntentUnit` и `SplitterResult`.
+- `app/ai/splitter.py` — `split_message()`: `llama-3.1-8b-instant` через `instructor` (temperature 0.0). Короткие сообщения (< 2 символов) пропускаются без LLM.
+- `app/ai/prompts/splitter.md` — системный промпт (ROLE → TASK → CONSTRAINTS → OUTPUT → EXAMPLES), 3 few-shot примера на русском.
+- `app/bot/routers/text.py` — интеграция: splitter в фоне (`asyncio.create_task`), результат логируется.
+- 10 новых тестов (5 GroqKeyRouter + 5 Splitter с моком Groq через `respx`). Итого 24 теста.
+- 361 LOC.
+
+### Phase 2.2 — НЕ начата
+Дальше — Classifier (`llama-3.3-70b-versatile`) + русский NLP (`dateparser` + `pymorphy3` + `razdel`) + модели Task/Note/AiRun + Alembic-миграция + сохранение задач в БД.
+
+### Phase 2.3 — НЕ начата
+Critic (`qwen-qwq-32b`, по уверенности) + Whisper (`whisper-large-v3`) + Courier (шаблоны + LLM 50/50).
 
 ---
 
@@ -482,6 +496,8 @@ docker build -t plan-app .               # собрать контейнер
 - **PR #8 (Phase 4 — render.yaml, sha `6819d18`):** https://github.com/Itosyro/plan-app/pull/8
 - **PR #9 (Phase 4 — docs, sha `606526a`):** https://github.com/Itosyro/plan-app/pull/9
 - **PR #10 (Phase 4 — e2e, sha `fbae8fc`):** https://github.com/Itosyro/plan-app/pull/10
+- **PR #11 (Phase 4 closeout — HANDOFF.md update, sha `cd2351c`):** https://github.com/Itosyro/plan-app/pull/11
+- **PR #12 (Phase 2.1 — Splitter + AI infrastructure):** https://github.com/Itosyro/plan-app/pull/12
 
 ### External docs
 - **Telegram Bot API:** https://core.telegram.org/bots/api
