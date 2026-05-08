@@ -14,7 +14,7 @@ from aiogram.types import Message
 from app.ai.whisper import transcribe_voice
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.routers.text import _get_router, _run_pipeline
-from app.bot.services import get_or_create_user, log_ai_run, store_inbox_voice
+from app.bot.services import get_or_create_user, get_user_settings, log_ai_run, store_inbox_voice
 from app.db.base import session_scope
 from app.shared.logging import get_logger
 
@@ -59,6 +59,9 @@ def create_router() -> Router:
                 return
             user_id = user.id
             user_tz = user.tz
+            settings = await get_user_settings(session, user.id)
+            critic_mode = settings.critic_mode if settings else "confidence"
+            critic_threshold = settings.critic_confidence_threshold if settings else 0.7
 
         groq_router = _get_router()
         if groq_router is None:
@@ -119,6 +122,8 @@ def create_router() -> Router:
                     user_id,
                     user_tz,
                     inbox_id,
+                    critic_mode=critic_mode,
+                    confidence_threshold=critic_threshold,
                 )
                 await message.answer(reply)
 

@@ -142,6 +142,17 @@ async def store_inbox_voice(
     return entry
 
 
+async def get_user_settings(
+    session: AsyncSession,
+    user_id: int,
+) -> UserSettings | None:
+    """Return the user's settings row, or None if not onboarded yet."""
+    result = await session.exec(
+        select(UserSettings).where(UserSettings.user_id == user_id),
+    )
+    return result.first()
+
+
 # ── Phase 2.2 persistence ────────────────────────────────────────────
 
 

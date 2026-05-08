@@ -2,6 +2,7 @@
 
 Phase 2.1: Splitter schemas.
 Phase 2.2: Classifier + ResolvedTime schemas.
+Phase 2.3: CriticVerdict.
 """
 
 from __future__ import annotations
@@ -63,3 +64,21 @@ class ReminderInfo(BaseModel):
 
     fire_at: datetime
     original_text: str
+
+
+# ── Phase 2.3 ────────────────────────────────────────────────────────
+
+
+class CriticVerdict(BaseModel):
+    """Output of the Critic LLM call.
+
+    The critic reviews the classifier output and either approves it
+    or returns a corrected ``ClassifierResult``.
+    """
+
+    approved: bool = Field(description="True if classifier result is correct")
+    reason: str = Field(description="Short explanation in Russian (why approved or what was wrong)")
+    corrected: ClassifierResult | None = Field(
+        default=None,
+        description="Corrected result if approved=False, null if approved=True",
+    )

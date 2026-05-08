@@ -3,6 +3,7 @@
 Phase 1 stored the message in ``inbox_entries`` and replied with a stub.
 Phase 2.1 added the Splitter.
 Phase 2.2 adds the full pipeline: split → time → classify → persist → reply.
+Phase 2.3 adds the Critic (conditional review of classifier output).
 """
 
 from __future__ import annotations
@@ -13,12 +14,14 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from app.ai.classifier import classify_intent
+from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.router import GroqKeyRouter
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.services import (
     get_or_create_user,
+    get_user_settings,
     log_ai_run,
     persist_classification,
     store_inbox_text,
@@ -63,8 +66,11 @@ async def _run_pipeline(
     user_id: int,
     user_tz: str,
     inbox_id: int | None,
+    *,
+    critic_mode: str = "confidence",
+    confidence_threshold: float = 0.7,
 ) -> str:
-    """Run split → time → classify → persist and return a reply summary."""
+    """Run split → time → classify → critic → persist and return a reply."""
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
@@ -83,7 +89,17 @@ async def _run_pipeline(
         classify_intent(groq_router, unit.text, resolved, [], user_tz)
         for unit, resolved in zip(split_result.units, resolved_list, strict=True)
     ]
-    classifier_results = await asyncio.gather(*classify_tasks)
+    classifier_results = list(await asyncio.gather(*classify_tasks))
+
+    # Critic: review classifications that need it
+    for i, (cr, unit, resolved) in enumerate(
+        zip(classifier_results, split_result.units, resolved_list, strict=True),
+    ):
+        if should_run_critic(
+            cr, critic_mode=critic_mode, confidence_threshold=confidence_threshold
+        ):
+            verdict = await critique_classification(groq_router, unit.text, cr, resolved, user_tz)
+            classifier_results[i] = apply_verdict(cr, verdict)
 
     # Persist results
     summaries: list[str] = []
@@ -153,6 +169,9 @@ def create_router() -> Router:
             user_id = user.id
             user_tz = user.tz
             inbox_id = entry.id
+            settings = await get_user_settings(session, user.id)
+            critic_mode = settings.critic_mode if settings else "confidence"
+            critic_threshold = settings.critic_confidence_threshold if settings else 0.7
 
         logger.info(
             "inbox.text_stored",
@@ -179,6 +198,8 @@ def create_router() -> Router:
                     user_id,
                     user_tz,
                     inbox_id,
+                    critic_mode=critic_mode,
+                    confidence_threshold=critic_threshold,
                 )
                 await message.answer(reply)
             except Exception:
