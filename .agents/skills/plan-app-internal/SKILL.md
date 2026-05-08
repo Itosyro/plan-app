@@ -188,14 +188,70 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host/db
 
 ---
 
-## 11. Кто может помочь
+## 11. Merge-workflow (важно для будущих AI-сессий)
+
+Юзер (Itosyro / Юсуф) — не разработчик и **не мерджит PR'ы сам**. Полный цикл (открыть → починить CI → squash-merge) **делает AI-агент**.
+
+Стандартная последовательность:
+
+1. Перед запросом ревью: `uv run ruff format .` + `uv run ruff check .` + `uv run pytest -q` — всё зелёное.
+2. Создать PR (см. §12 ниже про tooling), отправить ссылку юзеру в чат.
+3. Дождаться его словесного «ок / мерджи / давай дальше».
+4. Squash-merge через REST API.
+5. `git checkout main && git pull --ff-only`, новая ветка `devin/$(date +%s)-<slug>` для следующей задачи.
+
+**Никогда не**:
+- `force-push` в `main` / `master`
+- мерджить, если CI красный или юзер не дал явного одобрения
+- мерджить через rebase/merge — только squash (один коммит на фазу)
+
+---
+
+## 12. PR tooling — особенности этого репо
+
+Встроенные `git_create_pr` / `git_update_pr_description` Devin'а **сейчас не работают** для `Itosyro/plan-app` (PAT инструмента не имеет write-доступа к этому репо). Используем GitHub REST API через user-provided fine-grained PAT.
+
+```bash
+# PAT хранится в env как GITHUB_PLAN_APP_PAT
+# scope: Contents R/W + Pull Requests R/W на plan-app
+
+# push (без credential helper, чтобы не дёргать прокси)
+git -c credential.helper= push \
+  "https://x-access-token:${GITHUB_PLAN_APP_PAT}@github.com/Itosyro/plan-app.git" \
+  "$BRANCH"
+
+# create PR
+curl -s -X POST \
+  -H "Authorization: Bearer ${GITHUB_PLAN_APP_PAT}" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/Itosyro/plan-app/pulls \
+  -d '{"title":"...","head":"'"$BRANCH"'","base":"main","body":"..."}'
+
+# update PR body
+curl -s -X PATCH \
+  -H "Authorization: Bearer ${GITHUB_PLAN_APP_PAT}" \
+  https://api.github.com/repos/Itosyro/plan-app/pulls/<num> \
+  -d '{"body":"..."}'
+
+# squash merge
+curl -s -X PUT \
+  -H "Authorization: Bearer ${GITHUB_PLAN_APP_PAT}" \
+  https://api.github.com/repos/Itosyro/plan-app/pulls/<num>/merge \
+  -d '{"merge_method":"squash"}'
+```
+
+Никогда не вписывай PAT в `.git/config` (вычисти, если протёк). PAT короткоживущий — если 401, попроси юзера через `request_secret` (в чат не присылать).
+
+---
+
+## 13. Кто может помочь
 
 - AI-агенту: читай этот файл + `docs/` + `.agents/skills/`. Если непонятно — спроси юзера комментарием в PR.
 - Юзеру: читай `docs/PROGRESS.md` чтобы видеть прогресс. Если что-то сломалось — открой issue с шагами повтора.
 
 ---
 
-## 12. Где жить идеям и заметкам
+## 14. Где жить идеям и заметкам
 
 - **Идея на потом** → `docs/IDEAS.md` (а не TODO в коде)
 - **Сделанное** → `docs/PROGRESS.md`
