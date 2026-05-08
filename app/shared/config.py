@@ -1,12 +1,13 @@
 """Application configuration.
 
 Reads from environment variables (and `.env` for local dev) via Pydantic
-Settings. Phase 0 ships a minimal skeleton — real fields land alongside the
-features that need them.
+Settings. Phase 1 wires up Telegram + database fields. Groq fields land in
+Phase 2.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
@@ -26,13 +27,13 @@ class Settings(BaseSettings):
     env: Literal["development", "production", "test"] = "development"
     log_level: str = "INFO"
 
-    # Phase 1 will populate these.
+    # Phase 1 — Telegram + DB
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
     webhook_base_url: str | None = None
     database_url: str | None = None
 
-    # Phase 2 will populate these.
+    # Phase 2 — Groq
     groq_api_keys: str | None = Field(
         default=None,
         description="Comma-separated list of Groq API keys.",
@@ -46,11 +47,15 @@ class Settings(BaseSettings):
             return []
         return [key.strip() for key in self.groq_api_keys.split(",") if key.strip()]
 
+    @property
+    def webhook_url(self) -> str | None:
+        """Full public webhook URL (`{base}/tg/{secret}`) or None if unset."""
+        if not self.webhook_base_url or not self.telegram_webhook_secret:
+            return None
+        return f"{self.webhook_base_url.rstrip('/')}/tg/{self.telegram_webhook_secret}"
 
+
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return a settings instance.
-
-    Currently re-creates each time. Phase 1 will switch this to `lru_cache`
-    once we know the wiring is right.
-    """
+    """Return a cached settings instance."""
     return Settings()

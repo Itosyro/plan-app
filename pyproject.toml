@@ -39,6 +39,8 @@ dev = [
     "pytest-cov>=6.0",
     "mypy>=1.13",
     "types-dateparser>=1.2",
+    "aiosqlite>=0.20",
+    "respx>=0.21",
 ]
 
 [tool.uv]
