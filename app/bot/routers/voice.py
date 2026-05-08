@@ -15,7 +15,7 @@ from aiogram.types import Message
 
 from app.ai.whisper import transcribe_voice
 from app.bot.courier_templates import NOT_ONBOARDED
-from app.bot.routers.text import _get_router, _run_pipeline
+from app.bot.routers.text import _get_router, _log_task_exception, _run_pipeline
 from app.bot.services import get_or_create_user, get_user_settings, log_ai_run, store_inbox_voice
 from app.db.base import session_scope
 from app.shared.logging import get_logger
@@ -141,8 +141,6 @@ def create_router() -> Router:
                 await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
 
         task = asyncio.create_task(_background())
-        task.add_done_callback(
-            lambda t: t.result() if not t.cancelled() else None,
-        )
+        task.add_done_callback(_log_task_exception)
 
     return router

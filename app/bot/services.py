@@ -10,8 +10,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.schemas import ClassifierResult
 from app.db.models import (
@@ -41,10 +42,16 @@ async def get_or_create_user(
 
     Returns ``(user, created)``. The newly-created user has no name and
     no timezone yet — those are filled in by the onboarding wizard.
+    For an existing user, refresh ``lang_code`` if Telegram now reports a
+    different value (so locale-sensitive features stay in sync).
     """
     result = await session.exec(select(User).where(User.telegram_id == telegram_id))
     user = result.first()
     if user is not None:
+        if lang_code is not None and lang_code != user.lang_code:
+            user.lang_code = lang_code
+            session.add(user)
+            await session.flush()
         return user, False
 
     user = User(telegram_id=telegram_id, lang_code=lang_code)
@@ -277,6 +284,11 @@ async def persist_classification(
 # ── Phase 2.3d reorder ────────────────────────────────────────────────
 
 
+def _escape_like(value: str) -> str:
+    """Escape ``%`` / ``_`` / ``\\`` so they're treated as literals in LIKE."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def find_task_by_query(
     session: AsyncSession,
     user_id: int,
@@ -284,15 +296,15 @@ async def find_task_by_query(
 ) -> Task | None:
     """Find a user's task whose title best matches *query*.
 
-    Uses a simple case-insensitive LIKE search.  Returns the most
-    recently created match, or ``None`` if nothing found.
+    Uses a simple case-insensitive LIKE search with wildcard escaping.
+    Returns the most recently created match, or ``None`` if nothing found.
     """
-    pattern = f"%{query}%"
+    pattern = f"%{_escape_like(query)}%"
     result = await session.exec(
         select(Task)
         .where(
             Task.user_id == user_id,
-            Task.title.ilike(pattern),  # type: ignore[union-attr]
+            Task.title.ilike(pattern, escape="\\"),  # type: ignore[union-attr]
             Task.status != "done",
         )
         .order_by(Task.created_at.desc()),  # type: ignore[union-attr]
@@ -342,6 +354,19 @@ REMINDER_PRESETS: dict[str, dict[str, list[int]]] = {
     "minimal": {"same_day": [15], "multi_day": [60]},
     "default": {"same_day": [60, 15], "multi_day": [1440, 60]},
     "extra": {"same_day": [180, 60, 15], "multi_day": [1440, 240, 60]},
+}
+
+# Allowed values for each user-editable setting field. Mirrors the options
+# rendered by ``app/bot/routers/settings.py::SETTING_OPTIONS`` and is the
+# authoritative validation gate at the service layer — a malformed callback
+# (replayed, edited, or maliciously crafted) is rejected before it touches
+# the database.
+ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
+    "critic_mode": frozenset({"always", "confidence", "never"}),
+    "morning_digest_at": frozenset({"07:00", "08:00", "09:00", "10:00"}),
+    "evening_digest_at": frozenset({"20:00", "21:00", "22:00", "23:00"}),
+    "response_style_source": frozenset({"formal", "casual", "mix"}),
+    "week_due_semantic": frozenset({"deadline_sunday", "deadline_saturday", "spread_evenly"}),
 }
 
 
@@ -397,17 +422,21 @@ async def update_user_settings(
         logger.info("settings.updated", user_id=user_id, field=field, value=value)
         return settings
 
-    allowed = {
-        "critic_mode",
-        "morning_digest_at",
-        "evening_digest_at",
-        "response_style_source",
-        "week_due_semantic",
-    }
-    if field not in allowed:
+    if field not in ALLOWED_SETTING_VALUES or value not in ALLOWED_SETTING_VALUES[field]:
         return None
 
-    setattr(settings, field, value)
+    if field == "critic_mode":
+        settings.critic_mode = value
+    elif field == "morning_digest_at":
+        settings.morning_digest_at = value
+    elif field == "evening_digest_at":
+        settings.evening_digest_at = value
+    elif field == "response_style_source":
+        settings.response_style_source = value
+    elif field == "week_due_semantic":
+        settings.week_due_semantic = value
+    else:  # pragma: no cover - exhaustive above
+        return None
     session.add(settings)
     await session.flush()
     logger.info("settings.updated", user_id=user_id, field=field, value=value)
@@ -495,22 +524,24 @@ async def get_categories_with_counts(
     session: AsyncSession,
     user_id: int,
 ) -> list[tuple[Category, int]]:
-    """Return user categories with active task count for each."""
-    cat_result = await session.exec(
-        select(Category).where(Category.user_id == user_id).order_by(Category.name),
-    )
-    categories = list(cat_result.all())
-    pairs: list[tuple[Category, int]] = []
-    for cat in categories:
-        count_result = await session.exec(
-            select(Task).where(
-                Task.user_id == user_id,
-                Task.category_id == cat.id,
-                Task.status != "done",
-            ),
+    """Return user categories with active task count for each.
+
+    Uses a single LEFT OUTER JOIN + GROUP BY so the cost stays O(1) round-trips
+    no matter how many categories the user has (was N+1 previously).
+    """
+    stmt = (
+        select(Category, func.count(Task.id))
+        .join(
+            Task,
+            (Task.category_id == Category.id) & (Task.status != "done"),
+            isouter=True,
         )
-        pairs.append((cat, len(list(count_result.all()))))
-    return pairs
+        .where(Category.user_id == user_id)
+        .group_by(Category.id)  # type: ignore[arg-type]
+        .order_by(Category.name)
+    )
+    result = await session.exec(stmt)
+    return [(cat, int(count)) for cat, count in result.all()]
 
 
 async def mark_task_done(

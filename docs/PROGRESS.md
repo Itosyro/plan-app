@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-05-08 — Code review: critical & important fixes + skills bundle
+
+**Сделано:**
+- `code-review-findings.md` — глубокое ревью на 3 Critical / 6 Important / 10 Minor findings (с file:line и severity).
+- `.agents/skills/requesting-code-review/` — адаптированный obra superpowers скилл (SKILL.md + code-reviewer.md), плюс `.agents/skills/socraticode-principles/SKILL.md` — методология SocratiCode (hybrid search + dependency graphs + blast radius). В Render-деплой не попадает: `render.yaml.buildCommand` теперь `rm -rf .agents docs tests && uv sync --frozen` — на free tier чистый рантайм, в GitHub видно всё.
+- `app/bot/routers/callbacks.py` (C-1): убран `parse_mode="Markdown"` из всех `edit_text` с пользовательскими `task.title`. Не падаем на названиях с `*`, `_`, `[`.
+- `app/bot/services.py`:
+  - C-2: `update_user_settings()` теперь валидирует `value` против `ALLOWED_SETTING_VALUES` (frozenset на поле). Никаких `setattr(settings, field, arbitrary_string)`.
+  - I-1: `get_categories_with_counts()` — один LEFT JOIN + GROUP BY вместо 1+N запросов.
+  - I-2: новая утилита `_escape_like()` + `Task.title.ilike(pattern, escape="\\")` для безопасного поиска по подстроке.
+  - I-5: импорт `AsyncSession` теперь из `sqlmodel.ext.asyncio.session` (а не `sqlalchemy.ext.asyncio`) — соответствует фактическому типу из `session_scope()`.
+  - I-6: `get_or_create_user()` обновляет `lang_code`, если Telegram прислал новый (раньше навсегда оставался первый).
+- `app/bot/routers/text.py` (C-3 + I-3): `asyncio.gather(..., return_exceptions=True)` + явный `_log_task_exception` callback вместо лямбды, которая молча проглатывала ошибки. Один сбойный classify не убивает весь батч; критик в `try/except` — ошибка критика не трогает уже хорошие классификации.
+- `app/bot/routers/voice.py` (I-3): тот же `_log_task_exception` импортирован из text.py.
+- `tests/test_callbacks.py` — регрессии для C-1 (не должно быть `parse_mode="Markdown"` рядом с `task.title`) и I-2 (LIKE-метасимволы экранируются).
+- `tests/test_settings.py` — регрессия для C-2 (отвергаем неизвестное `value`).
+- `tests/test_e2e_pipeline.py` — регрессия для C-3 (один Groq 429 на втором юните — выживший юнит сохраняется и попадает в ответ).
+
+**Верификация:**
+- `uv run ruff format .` + `uv run ruff check .` — чисто.
+- `uv run pytest -q` — 132 passed (128 + 4 новых).
+- Скиллы и docs в Render-деплой не попадают (`buildCommand` сначала их удаляет).
+
+---
+
 ## 2026-05-08 — Phase 3 finish: change-category button + tz/reminder в /settings (PR #31)
 
 **Сделано:**

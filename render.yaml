@@ -21,7 +21,9 @@ services:
     autoDeployTrigger: commit
     # Render's native Python runtime auto-detects `uv.lock` and installs uv
     # for us; we just need to invoke it.
-    buildCommand: uv sync --frozen
+    # `.agents/`, `docs/`, and `tests/` are repo-only assets — strip them
+    # before uv builds the slug so the free-tier image stays minimal.
+    buildCommand: rm -rf .agents docs tests && uv sync --frozen
     startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ENV

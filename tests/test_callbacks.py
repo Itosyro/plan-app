@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.bot.routers import callbacks as callbacks_module
 from app.bot.routers.callbacks import (
     category_picker_keyboard,
     horizon_picker_keyboard,
@@ -12,6 +15,7 @@ from app.bot.routers.callbacks import (
 )
 from app.bot.services import (
     delete_task,
+    find_task_by_query,
     get_or_create_category,
     get_or_create_horizon,
     get_or_create_user,
@@ -188,6 +192,76 @@ async def test_update_task_category_via_callback(session: AsyncSession) -> None:
 
     cats = await get_user_categories_full(session, user.id)
     assert {c.name for c in cats} == {"Старая", "Новая"}
+
+
+def test_callback_edit_text_does_not_use_markdown_parse_mode() -> None:
+    """Regression for C-1: task.title is user-controlled, so the callback
+    handlers must not pass ``parse_mode="Markdown"`` to ``edit_text`` —
+    Telegram rejects (HTTP 400) any title containing ``*``, ``_``, ``[``,
+    etc. We verify by reading the handler source: the four task-action
+    branches must not contain ``parse_mode="Markdown"`` near their
+    ``edit_text`` calls.
+    """
+    src = inspect.getsource(callbacks_module)
+    # The settings router uses Markdown for its own message text (no user
+    # data) — that's fine. The task callbacks must not.
+    forbidden_combo_count = 0
+    for fragment in (
+        'edit_text(\n                f"✅',
+        'edit_text(f"🗑',
+        'edit_text(f"🔄',
+        'edit_text(\n                f"🏷',
+    ):
+        idx = 0
+        while True:
+            idx = src.find(fragment, idx)
+            if idx == -1:
+                break
+            window = src[idx : idx + 400]
+            if 'parse_mode="Markdown"' in window:
+                forbidden_combo_count += 1
+            idx += len(fragment)
+    assert forbidden_combo_count == 0, (
+        "Task-callback edit_text must not use parse_mode='Markdown' — "
+        "user-controlled titles can break Telegram's Markdown parser."
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_task_by_query_escapes_like_wildcards(
+    session: AsyncSession,
+) -> None:
+    """Regression for I-2: ``%`` and ``_`` in the query must be treated as
+    literals, not LIKE wildcards. We create one task with a literal
+    underscore in its title and one without; querying for ``_foo`` must
+    return only the one with the underscore.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=210)
+    await session.commit()
+    assert user.id is not None
+    cat = await get_or_create_category(session, user.id, "Тесты")
+    hor = await get_or_create_horizon(session, user.id, "today")
+    target = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="купить _foo",
+        priority="medium",
+    )
+    decoy = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="купить afoo",  # would match if ``_`` was an unescaped wildcard
+        priority="medium",
+    )
+    session.add(target)
+    session.add(decoy)
+    await session.commit()
+
+    found = await find_task_by_query(session, user.id, "_foo")
+    assert found is not None
+    assert found.title == "купить _foo"
 
 
 @pytest.mark.asyncio
