@@ -14,9 +14,11 @@
 
 **Стек:** Python 3.12, aiogram 3 (бот), FastAPI (HTTP+webhook+Mini App), SQLModel + Alembic, Pydantic v2, Groq API (LLM + Whisper), `instructor` (структурный output), `dateparser`+`pymorphy3`+`razdel` (русский NLP), uv (пакеты), ruff (линт+формат), pytest, Docker. Деплой: Render Free + Neon Postgres. Доставка апдейтов — **webhook**, не polling.
 
-**Где сейчас:** Phase 0 (скелет) **смерджен**. Phase 0.5 (`.agents/skills/`) **смерджен**. Бизнес-логики **нет**. Дальше — Phase 1.
+**Где сейчас (2026-05-08):** Phase 0, 0.5, 1, 1.5 и **out-of-order Phase 4** (деплой + e2e живого бота) **смерджены в main**. Бот живой на https://plan-app-t6nx.onrender.com под именем **@daylirobot** (PLAN). Прошёл онбординг настоящего юзера, в Neon-БД лежит 1 user / 1 user_settings / 3 inbox_entries / 7 telegram_updates. Дальше — **Phase 2** (AI-пайплайн на Groq + русский NLP).
 
-**Главное правило:** маленькие PR пофазно. Никаких мегаPR.
+**Главное правило:** маленькие PR пофазно. Никаких мегаPR. Размер PR ≤ 400 LOC.
+
+**Кто мерджит:** Юзер (Юсуф) **не делает merge** — это работа AI-агента через GitHub REST API после `ruff format/check + pytest` зелёных и явного «давай мерджи» от юзера. Закреплено в `.agents/skills/plan-app-internal/SKILL.md` §11.
 
 ---
 
@@ -230,12 +232,14 @@ plan-app/
 
 | Phase | Что делаем | Статус |
 |---|---|---|
-| **0** | Чистка + Python скелет + docs | **смерджена** |
+| **0** | Чистка + Python скелет + docs | **смерджена** (PR #3) |
 | **0.5** | `.agents/skills/` (Anthropic snapshots + 7 custom + Brex reference + CATALOG) | **смерджена** |
-| **1** | Бот: webhook + БД + onboarding + первая Alembic миграция + деплой | следующая |
-| **2** | AI-пайплайн (Splitter / Classifier / Critic / Time resolver / Whisper / Courier) | после P1 |
+| **1** | Бот: webhook + БД + onboarding + первая Alembic миграция | **смерджена** (PR #6, sha `c17bab4`) |
+| **1.5** | GitHub Actions CI (uv → ruff → pytest) + driver-нормализация для Neon | **смерджена** (PR #7, sha `eacb3a9`) |
+| **4 (out-of-order, часть 1)** | `render.yaml` под Python + создание Render-сервиса + регистрация webhook | **смерджена** (PR #8, sha `6819d18` — render.yaml; PR #9 sha `606526a` — docs; PR #10 sha `fbae8fc` — e2e-проверка) |
+| **2** | AI-пайплайн (Splitter / Classifier / Critic / Time resolver / Whisper / Courier) | **следующая** |
 | **3** | Команды бота (`/today` …), inline-кнопки, `/settings`, REST API заготовки | после P2 |
-| **4** | Cron worker — напоминания, утренние и вечерние дайджесты | после P3 |
+| **4 (часть 2)** | Cron worker — напоминания, утренние и вечерние дайджесты + FSM на Postgres-storage | после P2/P3 |
 | **5** | Telegram Mini App (React + Vite + Tailwind) | после P4 |
 | **6** | Polish: structlog, eval-сеты, DSPy, mypy strict, бэкап БД | финал |
 
@@ -336,6 +340,34 @@ docker build -t plan-app .               # собрать контейнер
 
 ## 9. Уже сделано (статус Phase 0 + 0.5)
 
+### Phase 4 — out-of-order часть 1 (3 PR'а, смерджены 2026-05-08)
+- ✅ **PR #8** (`6819d18`) — `render.yaml` переписан под Python: один web-сервис `plan-app`, `runtime: python`, `region: frankfurt`, `plan: free`, `buildCommand: uv sync --frozen`, `startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`, `healthCheckPath: /healthz`, `autoDeployTrigger: commit`. Старый Node-конфиг (TS-эпохи) удалён.
+- ✅ Render-сервис создан через REST API: `srv-d7uohcf7f7vs73crmk3g`, public URL https://plan-app-t6nx.onrender.com, workspace «Cile Simme's workspace» (`tea-d7tr6vugvqtc73bsjka0`) — это второй Render-аккаунт юзера (подтверждено).
+- ✅ ENV-переменные на Render проставлены через REST API: `ENV=production`, `LOG_LEVEL=info`, `PYTHON_VERSION=3.12` + 5 секретных (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `WEBHOOK_BASE_URL`, `DATABASE_URL`, `GROQ_API_KEYS`). В git ничего из секретов не попало.
+- ✅ Telegram webhook зарегистрирован, `getWebhookInfo` отдаёт URL+IP, ошибок нет.
+- ✅ `/healthz` отвечает 200; e2e-онбординг живого юзера прошёл: `users` 1, `user_settings` 1, `inbox_entries` 3, `telegram_updates` 7, идемпотентность не сломана.
+- ✅ **PR #9** (`606526a`) и **PR #10** (`fbae8fc`) — docs (PROGRESS + SKILL §13 «Live deploy (Render)»).
+
+### Phase 1.5 (PR #7, смерджен 2026-05-08)
+- ✅ `.github/workflows/ci.yml` — pipeline на каждый push в `main` и на каждый PR: чекаут → `astral-sh/setup-uv` (с кэшом по `uv.lock`) → `uv sync --frozen` → `ruff format --check` → `ruff check` → `pytest -q`. Concurrency: новая попытка отменяет предыдущую на той же ветке.
+- ✅ Driver-hotfix: голый `postgresql://` (вид Neon copy-paste) автоматически становится `postgresql+psycopg://` в `app/db/base.py` и `alembic/env.py`. SQLite получает суффикс `+aiosqlite`.
+- ✅ `tests/test_smoke.py` — `monkeypatch`-фикстура для тестов дефолтных настроек, чтобы не падали на дев-машинах с уже экспортированными секретами.
+- ✅ В `.agents/skills/plan-app-internal/SKILL.md` зафиксированы §11 «Merge-workflow» и §12 «PR tooling».
+
+### Phase 1 (PR #6, смерджен 2026-05-08)
+- ✅ `app/shared/config.py` — Pydantic Settings, `webhook_url`, `lru_cache`-обёртка `get_settings()`.
+- ✅ `app/shared/logging.py` — `structlog` (JSON в проде, console в dev), запрет PII в логах.
+- ✅ `app/db/` — четыре модели Phase 1 (`User`, `UserSettings`, `InboxEntry`, `TelegramUpdate`), async engine + sessionmaker, BigInteger для Telegram-ID, JSON для `default_reminder_offsets`.
+- ✅ Alembic подключён к `SQLModel.metadata` и `DATABASE_URL`, миграция `0001_init` создаёт 4 таблицы + индексы. Применена против настоящей Neon-БД (5 таблиц с учётом `alembic_version`).
+- ✅ `app/bot/`:
+  - `routers/start.py` — `/start`, `/help`, FSM-онбординг (имя → IANA-tz → дефолты).
+  - `routers/text.py` — catch-all для текстов: пишет в `inbox_entries`, отвечает заглушкой «AI подключим в Phase 2».
+  - Роутеры — фабрики (`create_router()`), чтобы каждое `build_dispatcher()` собирало свежий граф (aiogram запрещает повторное прикрепление одного `Router` к двум диспетчерам).
+  - FSM-storage = `MemoryStorage` (Phase 4 переключим на Postgres-storage).
+- ✅ `app/main.py` — FastAPI с lifespan-`set_webhook(drop_pending_updates=True, secret_token=...)`, `POST /tg/<secret>` с двойной валидацией (path-secret + `X-Telegram-Bot-Api-Secret-Token`), идемпотентность по `update_id`. `/healthz` сохранился.
+- ✅ Тесты: `tests/test_services.py` (unit), `tests/test_webhook.py` (security + идемпотентность POST'а с замоканным aiogram), `tests/conftest.py` (in-memory SQLite, Settings, TestClient). Всего **14 тестов**.
+- ✅ Dev-зависимости: `aiosqlite`, `respx`. Ruff: глобально игнорим `RUF001/002/003` (false positives на кириллице).
+
 ### Phase 0 (PR #3, смерджен 2026-05-07)
 - ✅ удалён весь TS + Hermes-мусор
 - ✅ Python 3.12 skeleton: `pyproject.toml` (uv), `ruff.toml`, Dockerfile, `.python-version`, `.env.example`
@@ -356,28 +388,30 @@ docker build -t plan-app .               # собрать контейнер
 - ✅ CATALOG.md
 - ✅ ruff exclude для third-party снепшотов
 
-### Phase 1 — НЕ начата
-Дальше — минимальный бот: webhook + БД + первая миграция + onboarding + деплой.
+### Phase 2 — НЕ начата
+Дальше — AI-пайплайн: Splitter (`llama-3.1-8b-instant`) → Classifier (`llama-3.3-70b-versatile`) → Critic (`qwen-qwq-32b`, по уверенности) + русский NLP (`dateparser` + `pymorphy3` + `razdel`) + Whisper для голоса. Делать тремя подPR'ами ≤ 400 LOC.
 
 ---
 
 ## 10. Что нужно от юзера для следующих фаз
 
-### Прямо сейчас (Phase 1)
-- ничего, можно начинать.
-- юзер должен решить: будем ли мы реально деплоить в этой сессии (Phase 1 заканчивается «бот живой в Telegram» только если получит токен).
-
-### К Phase 2 (AI)
-- **3 Groq API-ключа** через защищённый интерфейс (запросить через `request_secret`).
-- Ответы на оставшиеся (необязательные) уточнения из `IDEAS.md` §«Открытые вопросы»:
+### Прямо сейчас (Phase 2)
+- `GROQ_API_KEYS` — **уже сохранён в профиле юзера** (1 ключ из 3). Если в Phase 2 поймём что нужно больше для нагрузки — попросим ещё, но для одного юзера и одного ключа хватит.
+- Желательно (не блокирует): ответы на «открытые вопросы» из `IDEAS.md`:
   - Что делать с просрочкой (авто-перенос или метка)?
   - Догонять пропущенные дайджесты или нет?
   - Дедупликация задач (мерджить или предупреждать)?
   - Юзер сам выбирает модели Groq в `/settings` или нет?
 
-### К Phase 4 (cron)
-- Render аккаунт + Neon аккаунт.
-- Telegram bot token (через @BotFather).
+### К Phase 4 (часть 2 — cron, напоминания, дайджесты)
+- Ничего нового от юзера. Render и Neon уже подключены, Telegram bot token уже сохранён в профиле, cron-сервис в Render Free создаётся через REST API.
+
+### Все секреты уже в профиле юзера (`save_scope=user`)
+- `TELEGRAM_BOT_TOKEN` — от @BotFather для `@daylirobot` (id `8642044324`).
+- `TELEGRAM_WEBHOOK_SECRET` — сгенерирован Devin'ом (43 символа).
+- `DATABASE_URL` — direct connection-string Neon (для Render Free в будущем заменим на pooled).
+- `GROQ_API_KEYS` — 1 ключ (по необходимости попросим ещё).
+- `RENDER_API_KEY` — **только эта сессия** (`save_scope=session`); следующая сессия попросит заново.
 
 ### К Phase 5 (Mini App)
 - Решить, нужны ли drag-n-drop **между** горизонтами (или только внутри).
@@ -433,9 +467,23 @@ docker build -t plan-app .               # собрать контейнер
 
 ## 13. Ссылки
 
+### Project
 - **Repo:** https://github.com/Itosyro/plan-app
-- **Phase 0 PR (merged):** https://github.com/Itosyro/plan-app/pull/3
-- **Phase 0.5 commit (merged):** https://github.com/Itosyro/plan-app/commit/41b43c8
+- **Live service:** https://plan-app-t6nx.onrender.com (`/healthz`, `POST /tg/<secret>`)
+- **Render dashboard:** https://dashboard.render.com/web/srv-d7uohcf7f7vs73crmk3g (workspace `tea-d7tr6vugvqtc73bsjka0` = «Cile Simme's workspace», 2-й аккаунт юзера)
+- **Telegram bot:** [@daylirobot](https://t.me/daylirobot) (имя в Telegram — «PLAN»; bot id `8642044324`)
+- **Neon project:** `ep-super-sea-al0s5kug.c-3.eu-central-1.aws.neon.tech` / db `neondb` (direct connection)
+
+### Merged PRs
+- **PR #3 (Phase 0):** https://github.com/Itosyro/plan-app/pull/3
+- **Phase 0.5 commit:** https://github.com/Itosyro/plan-app/commit/41b43c8
+- **PR #6 (Phase 1, sha `c17bab4`):** https://github.com/Itosyro/plan-app/pull/6
+- **PR #7 (Phase 1.5, sha `eacb3a9`):** https://github.com/Itosyro/plan-app/pull/7
+- **PR #8 (Phase 4 — render.yaml, sha `6819d18`):** https://github.com/Itosyro/plan-app/pull/8
+- **PR #9 (Phase 4 — docs, sha `606526a`):** https://github.com/Itosyro/plan-app/pull/9
+- **PR #10 (Phase 4 — e2e, sha `fbae8fc`):** https://github.com/Itosyro/plan-app/pull/10
+
+### External docs
 - **Telegram Bot API:** https://core.telegram.org/bots/api
 - **aiogram 3 docs:** https://docs.aiogram.dev/en/latest/
 - **Groq docs:** https://console.groq.com/docs/
