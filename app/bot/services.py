@@ -324,6 +324,37 @@ async def update_task_horizon(
     return task
 
 
+# ── Phase 3c settings ─────────────────────────────────────────────────
+
+
+async def update_user_settings(
+    session: AsyncSession,
+    user_id: int,
+    field: str,
+    value: str,
+) -> UserSettings | None:
+    """Update a single field on UserSettings and return the updated row."""
+    settings = await get_user_settings(session, user_id)
+    if settings is None:
+        return None
+
+    allowed = {
+        "critic_mode": str,
+        "morning_digest_at": str,
+        "evening_digest_at": str,
+        "response_style_source": str,
+        "week_due_semantic": str,
+    }
+    if field not in allowed:
+        return None
+
+    setattr(settings, field, value)
+    session.add(settings)
+    await session.flush()
+    logger.info("settings.updated", user_id=user_id, field=field, value=value)
+    return settings
+
+
 # ── Phase 3a view queries ─────────────────────────────────────────────
 
 
