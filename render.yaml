@@ -1,12 +1,19 @@
 # render.yaml — Render Blueprint for plan-app
 # https://render.com/docs/blueprint-spec
 #
-# 1. `web` — FastAPI hosting the Telegram webhook (`POST /tg/<secret>`) and,
-#    later, the mini-app API (`/api/*`, Phase 5).
-# 2. `cron` — `plan-app-scheduler` runs the Phase 4 worker once per minute:
-#    delivers due `reminders` rows and dispatches morning/evening digests.
-#    Render's free plan does NOT include cron; this service requires Starter+.
-#    The Blueprint deploys regardless — adjust `plan:` if you upgrade.
+# Single FastAPI web service hosting:
+#   1. Telegram webhook (`POST /tg/<secret>`).
+#   2. Future mini-app API (`/api/*`, Phase 5).
+#   3. In-process scheduler loop (`app.workers.runner`) that ticks reminders
+#      and digests every `SCHEDULER_TICK_INTERVAL_SECONDS` (default 60s).
+#
+# Why in-process? Render's free plan does NOT include standalone Cron
+# services — those require Starter+. Embedding the loop keeps the deploy on
+# the free tier. To prevent free-tier idle spin-down, hit `/healthz` every
+# 5–10 minutes from cron-job.org or GitHub Actions cron (see
+# `docs/RENDER.md` for the recipe). When upgrading to Starter+ later, set
+# `SCHEDULER_INPROC_ENABLED=false` here and re-add a `cron` service that
+# runs `uv run python -m app.workers.scheduler`.
 #
 # Secrets (`sync: false`) live in the Render dashboard, never in this file.
 # `WEBHOOK_BASE_URL` is the public URL Render assigns to the web service —
@@ -34,6 +41,10 @@ services:
         value: info
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: SCHEDULER_INPROC_ENABLED
+        value: "true"
+      - key: SCHEDULER_TICK_INTERVAL_SECONDS
+        value: "60"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET
@@ -43,25 +54,4 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: GROQ_API_KEYS
-        sync: false
-
-  - type: cron
-    name: plan-app-scheduler
-    runtime: python
-    region: frankfurt
-    plan: starter
-    branch: main
-    schedule: "*/1 * * * *"
-    buildCommand: rm -rf .agents docs tests && uv sync --frozen
-    startCommand: uv run python -m app.workers.scheduler
-    envVars:
-      - key: ENV
-        value: production
-      - key: LOG_LEVEL
-        value: info
-      - key: PYTHON_VERSION
-        value: "3.12"
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: DATABASE_URL
         sync: false

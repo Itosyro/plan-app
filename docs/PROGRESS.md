@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-05-08 — Render fix: in-process scheduler loop (free-tier deploy)
+
+**Контекст:**
+Render Free **не поддерживает** standalone Cron Jobs (нужен Starter+ ~$1/мес). Чтобы остаться на бесплатке и при этом гонять «будильник» каждую минуту, переезжаем с отдельного cron-сервиса на фоновый `asyncio`-loop в самом FastAPI-процессе. Free-тир засыпает через 15 мин неактивности — её пинаем извне (`cron-job.org` или GitHub Actions cron на `/healthz`).
+
+**Сделано:**
+- `app/workers/runner.py` — новый модуль с тремя функциями:
+  - `run_scheduler_loop(bot, stop_event, *, interval=60.0)` — крутится до сигнала, на каждой итерации зовёт `tick_reminders` + `tick_digests`, ловит и логирует исключения (один сбой не убивает loop), спит через `asyncio.wait_for(stop_event.wait(), timeout=interval)` чтобы корректно прерываться.
+  - `start_inproc_scheduler(bot, *, interval)` → `(task, stop_event)`.
+  - `stop_inproc_scheduler(task, stop_event, *, grace=10.0)` — ставит флаг, ждёт graceful shutdown, при таймауте `task.cancel()` + `contextlib.suppress`.
+- `app/main.py` — `lifespan` теперь поднимает scheduler после `init_engine` + `setWebhook`, если `bot is not None`, есть `database_url` и `scheduler_inproc_enabled=True`. На shutdown — `stop_inproc_scheduler` перед `bot.session.close()`.
+- `app/shared/config.py` — поля `scheduler_inproc_enabled: bool = True` и `scheduler_tick_interval_seconds: float = 60.0`.
+- `app/workers/__init__.py` — обновлённый docstring (два потока: `scheduler.main` для внешнего cron / `runner.run_scheduler_loop` для in-proc).
+- `render.yaml` — удалён `cron`-сервис `plan-app-scheduler`. В web envVars добавлены `SCHEDULER_INPROC_ENABLED=true` и `SCHEDULER_TICK_INTERVAL_SECONDS=60`. В верхнем комментарии — рецепт перехода на real-cron при апгрейде до Starter+.
+- `docs/RENDER.md` — новый документ: топология free-тира, инструкции по cron-job.org и GitHub Actions cron keep-alive, описание SLO интервала тика, рецепт апгрейда.
+- `tests/test_runner.py` — 4 теста: loop вызывает tick-функции и останавливается по флагу, исключение в одной итерации не убивает loop, `start_inproc_scheduler` + `stop_inproc_scheduler` пара, `stop_inproc_scheduler` для уже завершённой таски — no-op.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 172 passed (+7 новых: 4 runner + 3 побочных от lifespan/cfg/exports).
+- LOC основной правки (без тестов и доков): ~140.
+
+**Замечание по эксплуатации (для деплоя):**
+- После выкатки задать в Render dashboard внешний пинг на `/healthz` каждые 5–10 минут (см. `docs/RENDER.md`).
+- При апгрейде до Starter+ — `SCHEDULER_INPROC_ENABLED=false` и поднять обратно cron-сервис, который дёргает `python -m app.workers.scheduler`.
+
+---
+
 ## 2026-05-08 — Phase 4b: Scheduler + Digest + render.yaml cron
 
 **Сделано:**

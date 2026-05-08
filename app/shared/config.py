@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     )
     critic_default_mode: Literal["confidence", "paranoid"] = "confidence"
 
+    # Phase 4 — in-process scheduler (used on Render free tier instead of a
+    # standalone cron service).
+    scheduler_inproc_enabled: bool = True
+    scheduler_tick_interval_seconds: float = 60.0
+
     @property
     def groq_keys_list(self) -> list[str]:
         """Parse `GROQ_API_KEYS` into a clean list of keys."""
