@@ -3,6 +3,7 @@
 Phase 2.1: Splitter schemas.
 Phase 2.2: Classifier + ResolvedTime schemas.
 Phase 2.3: CriticVerdict.
+Phase 2.3d: ReorderRequest.
 """
 
 from __future__ import annotations
@@ -81,4 +82,25 @@ class CriticVerdict(BaseModel):
     corrected: ClassifierResult | None = Field(
         default=None,
         description="Corrected result if approved=False, null if approved=True",
+    )
+
+
+# ── Phase 2.3d ───────────────────────────────────────────────────────
+
+
+class ReorderRequest(BaseModel):
+    """Output of the reorder detection LLM call."""
+
+    is_reorder: bool = Field(description="True if this is a task reorder/reschedule request")
+    task_query: str | None = Field(
+        default=None,
+        description="Search string to find the task (Russian, original wording)",
+    )
+    target_horizon: Literal["today", "tomorrow", "week", "month", "year", "someday"] | None = Field(
+        default=None,
+        description="New horizon for the task",
+    )
+    target_raw: str | None = Field(
+        default=None,
+        description="Raw time expression from the user",
     )

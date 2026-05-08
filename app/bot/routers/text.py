@@ -5,6 +5,7 @@ Phase 2.1 added the Splitter.
 Phase 2.2 adds the full pipeline: split → time → classify → persist → reply.
 Phase 2.3 adds the Critic (conditional review of classifier output).
 Phase 2.3c replaces the deterministic reply with Courier.
+Phase 2.3d adds reorder detection (move task to a different horizon).
 """
 
 from __future__ import annotations
@@ -17,16 +18,19 @@ from aiogram.types import Message
 from app.ai.classifier import classify_intent
 from app.ai.courier import courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
+from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.services import (
+    find_task_by_query,
     get_or_create_user,
     get_user_settings,
     log_ai_run,
     persist_classification,
     store_inbox_text,
+    update_task_horizon,
 )
 from app.db.base import session_scope
 from app.shared.config import get_settings
@@ -49,6 +53,34 @@ def _get_router() -> GroqKeyRouter | None:
     return _groq_router
 
 
+async def _try_reorder(
+    groq_router: GroqKeyRouter,
+    text: str,
+    user_id: int,
+) -> str | None:
+    """Detect reorder intent and execute if found. Returns reply or None."""
+    reorder_req = await detect_reorder(groq_router, text)
+    if not reorder_req.is_reorder or not reorder_req.task_query or not reorder_req.target_horizon:
+        return None
+
+    async with session_scope() as session:
+        task = await find_task_by_query(session, user_id, reorder_req.task_query)
+        if task is None:
+            return f"Не нашёл задачу «{reorder_req.task_query}» — возможно, она уже выполнена или не существует."
+
+        await update_task_horizon(session, task, reorder_req.target_horizon, user_id)
+        horizon_labels = {
+            "today": "сегодня",
+            "tomorrow": "завтра",
+            "week": "на эту неделю",
+            "month": "на этот месяц",
+            "year": "на этот год",
+            "someday": "когда-нибудь",
+        }
+        label = horizon_labels.get(reorder_req.target_horizon, reorder_req.target_horizon)
+        return f"✅ Перенёс «{task.title}» → {label}."
+
+
 async def _run_pipeline(
     groq_router: GroqKeyRouter,
     text: str,
@@ -62,7 +94,10 @@ async def _run_pipeline(
     courier_mode: str = "mix",
     courier_style: str = "neutral",
 ) -> str:
-    """Run split → time → classify → critic → persist and return a reply."""
+    """Detect reorder or run split → time → classify → critic → persist."""
+    reorder_reply = await _try_reorder(groq_router, text, user_id)
+    if reorder_reply is not None:
+        return reorder_reply
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
