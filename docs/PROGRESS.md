@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-05-08 — Phase 2.3c: Courier — confirmation + summary replies (PR #21)
+
+**Сделано:**
+- `app/ai/courier.py` — модуль Courier:
+  - `TEMPLATES` — 6 стилей × 6 фраз = 36 шаблонов подтверждений (neutral, formal_master, friendly, playful, terse, respectful).
+  - `generate_courier_reply()` — выбирает шаблон или генерирует через LLM (`llama-3.1-8b-instant`) в зависимости от `mode` (mix/template_only/llm_only).
+  - `build_summary()` — детерминированное резюме из `ClassifierResult[]` (📌 задача / 📝 заметка: title [category]).
+  - `courier_respond()` — полный ответ: подтверждение + резюме.
+  - `_pluralize()` — русское склонение «элемент/элемента/элементов».
+- `app/ai/prompts/courier.md` — системный промпт для LLM-генерации подтверждений: описание 6 стилей, правила (русский, без markdown, без перечисления задач).
+- `app/bot/routers/text.py` — заменён inline-reply на `courier_respond()`. Из UserSettings читается `response_style_source` → `courier_mode`. Удалена неиспользуемая `_pluralize_elements()`.
+- `app/bot/routers/voice.py` — аналогичная интеграция: `courier_mode` и `courier_style` пробрасываются в `_run_pipeline()`.
+- `tests/test_courier.py` — 11 тестов: шаблоны (2), build_summary (3), generate_courier_reply template_only (2), LLM mock (1), courier_respond full (3).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 74 passed (63 старых + 11 новых).
+- PR ~400 LOC (418 строк).
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- Voice task reordering — Phase 2.3d.
+- e2e тесты — после Phase 2.3d.
+
+---
+
 ## 2026-05-08 — Phase 2.3b: Critic — conditional review of classifier output (PR #19)
 
 **Сделано:**
