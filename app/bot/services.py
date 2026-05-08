@@ -211,6 +211,17 @@ async def get_user_categories(
     return list(result.all())
 
 
+async def get_user_categories_full(
+    session: AsyncSession,
+    user_id: int,
+) -> list[Category]:
+    """Return all ``Category`` rows for the user, ordered by name."""
+    result = await session.exec(
+        select(Category).where(Category.user_id == user_id).order_by(Category.name),  # type: ignore[union-attr]
+    )
+    return list(result.all())
+
+
 async def persist_classification(
     session: AsyncSession,
     *,
@@ -327,23 +338,71 @@ async def update_task_horizon(
 # ── Phase 3c settings ─────────────────────────────────────────────────
 
 
+REMINDER_PRESETS: dict[str, dict[str, list[int]]] = {
+    "minimal": {"same_day": [15], "multi_day": [60]},
+    "default": {"same_day": [60, 15], "multi_day": [1440, 60]},
+    "extra": {"same_day": [180, 60, 15], "multi_day": [1440, 240, 60]},
+}
+
+
+def reminder_preset_from_offsets(offsets: dict[str, list[int]] | dict[str, object]) -> str:
+    """Return the preset name matching ``offsets`` (custom if no match)."""
+    same = list(offsets.get("same_day") or [])
+    multi = list(offsets.get("multi_day") or [])
+    for name, preset in REMINDER_PRESETS.items():
+        if preset["same_day"] == same and preset["multi_day"] == multi:
+            return name
+    return "custom"
+
+
 async def update_user_settings(
     session: AsyncSession,
     user_id: int,
     field: str,
     value: str,
 ) -> UserSettings | None:
-    """Update a single field on UserSettings and return the updated row."""
+    """Update a single setting and return the latest UserSettings row.
+
+    Most fields live on ``UserSettings``. Two virtual fields are handled
+    specially:
+
+    * ``tz`` — written to ``User.tz`` (after ``is_valid_timezone`` check).
+    * ``reminder_preset`` — expanded via ``REMINDER_PRESETS`` and written
+      to ``UserSettings.default_reminder_offsets``.
+    """
     settings = await get_user_settings(session, user_id)
     if settings is None:
         return None
 
+    if field == "tz":
+        if not is_valid_timezone(value):
+            return None
+        user_result = await session.exec(select(User).where(User.id == user_id))
+        user = user_result.first()
+        if user is None:
+            return None
+        user.tz = value
+        session.add(user)
+        await session.flush()
+        logger.info("settings.updated", user_id=user_id, field=field, value=value)
+        return settings
+
+    if field == "reminder_preset":
+        preset = REMINDER_PRESETS.get(value)
+        if preset is None:
+            return None
+        settings.default_reminder_offsets = dict(preset)
+        session.add(settings)
+        await session.flush()
+        logger.info("settings.updated", user_id=user_id, field=field, value=value)
+        return settings
+
     allowed = {
-        "critic_mode": str,
-        "morning_digest_at": str,
-        "evening_digest_at": str,
-        "response_style_source": str,
-        "week_due_semantic": str,
+        "critic_mode",
+        "morning_digest_at",
+        "evening_digest_at",
+        "response_style_source",
+        "week_due_semantic",
     }
     if field not in allowed:
         return None
@@ -353,6 +412,40 @@ async def update_user_settings(
     await session.flush()
     logger.info("settings.updated", user_id=user_id, field=field, value=value)
     return settings
+
+
+async def update_task_category(
+    session: AsyncSession,
+    task: Task,
+    new_category_id: int,
+    user_id: int,
+) -> Task:
+    """Move a task to a different category and log the event."""
+    old_category_id = task.category_id
+    task.category_id = new_category_id
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="recategorized",
+                payload_json={
+                    "old_category_id": old_category_id,
+                    "new_category_id": new_category_id,
+                },
+            ),
+        )
+        await session.flush()
+
+    logger.info(
+        "task.recategorized",
+        task_id=task.id,
+        user_id=user_id,
+        new_category_id=new_category_id,
+    )
+    return task
 
 
 # ── Phase 3a view queries ─────────────────────────────────────────────
