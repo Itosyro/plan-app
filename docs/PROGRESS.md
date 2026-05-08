@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-05-08 — Phase 2.3d: Reorder — detect and execute task rescheduling (PR #23)
+
+**Сделано:**
+- `app/ai/reorder.py` — `detect_reorder()`: определяет, является ли сообщение запросом на перенос задачи. LLM (`llama-3.1-8b-instant`) через `instructor` (JSON mode, temperature 0.0). Короткие сообщения (<3 символов) пропускаются без LLM.
+- `app/ai/prompts/reorder.md` — системный промпт для детекции переноса: примеры фраз, формат вывода (`is_reorder`, `task_query`, `target_horizon`, `target_raw`).
+- `app/ai/schemas.py` — `ReorderRequest` (is_reorder, task_query, target_horizon, target_raw).
+- `app/bot/services.py` — `find_task_by_query()` (ILIKE-поиск по title, исключает done), `update_task_horizon()` (смена горизонта + TaskEvent kind=reordered).
+- `app/bot/routers/text.py` — `_try_reorder()`: перед обычным pipeline проверяет reorder-интент. Если найден — ищет задачу и обновляет горизонт, отвечает «✅ Перенёс «X» → Y.». Если задача не найдена — сообщает об этом.
+- `app/bot/routers/voice.py` — наследует reorder из `_run_pipeline()` text.py.
+- `tests/test_reorder.py` — 9 тестов: schema (2), detect_reorder LLM mock (2), short text (1), find_task DB (3), update_task_horizon DB (1).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 83 passed (74 старых + 9 новых).
+- PR ~470 LOC.
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- e2e тесты — отдельный PR.
+- due_at обновление при переносе — пока только horizon, без пересчёта даты.
+
+---
+
 ## 2026-05-08 — Phase 2.3c: Courier — confirmation + summary replies (PR #21)
 
 **Сделано:**
