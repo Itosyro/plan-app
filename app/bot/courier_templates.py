@@ -59,7 +59,8 @@ HELP: Final[str] = (
     "/year — задачи на этот год\n"
     "/someday — задачи без срока\n"
     "/notes — последние заметки\n"
-    "/categories — список категорий"
+    "/categories — список категорий\n"
+    "/settings — настройки бота"
 )
 
 NOT_ONBOARDED: Final[str] = "Похоже, мы ещё не знакомы. Напиши /start — настроим всё за минуту."
