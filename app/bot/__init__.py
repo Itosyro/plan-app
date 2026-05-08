@@ -10,6 +10,7 @@ from aiogram import Dispatcher
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from app.bot.routers import callbacks as callbacks_router
 from app.bot.routers import commands as commands_router
 from app.bot.routers import start as start_router
 from app.bot.routers import text as text_router
@@ -29,6 +30,7 @@ def build_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
     dp = Dispatcher(storage=storage or MemoryStorage())
     dp.include_router(start_router.create_router())
     dp.include_router(commands_router.create_router())
+    dp.include_router(callbacks_router.create_router())
     dp.include_router(voice_router.create_router())
     dp.include_router(text_router.create_router())  # catch-all — keep last
     return dp
