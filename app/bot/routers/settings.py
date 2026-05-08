@@ -86,13 +86,28 @@ SETTING_DISPLAY: dict[str, dict[str, str]] = {
 
 
 def _setting_value(field: str, settings: UserSettings, user: User | None) -> str:
-    """Resolve the current raw value for a setting (incl. virtual fields)."""
+    """Resolve the current raw value for a setting (incl. virtual fields).
+
+    Uses an explicit field-by-field mapping rather than ``getattr`` so the
+    type-checker can prove every branch returns a ``str`` and the
+    field-allow-list (``SETTING_LABELS``) is the *only* way to reach a
+    column. See ``docs/REVIEW-findings.md::I-1``.
+    """
     if field == "tz":
         return user.tz if user is not None else "UTC"
     if field == "reminder_preset":
         return reminder_preset_from_offsets(settings.default_reminder_offsets)
-    value = getattr(settings, field, None)
-    return str(value) if value is not None else "—"
+    if field == "critic_mode":
+        return settings.critic_mode
+    if field == "morning_digest_at":
+        return settings.morning_digest_at
+    if field == "evening_digest_at":
+        return settings.evening_digest_at
+    if field == "response_style_source":
+        return settings.response_style_source
+    if field == "week_due_semantic":
+        return settings.week_due_semantic
+    return "—"
 
 
 def _format_settings(settings: UserSettings, user: User | None = None) -> str:

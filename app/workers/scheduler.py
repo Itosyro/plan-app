@@ -20,6 +20,7 @@ from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import Reminder, Task, User
 from app.shared.config import get_settings
 from app.shared.logging import configure_logging, get_logger
+from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -46,7 +47,7 @@ async def tick_reminders(
     captured; once ``attempts`` reaches :data:`MAX_REMINDER_ATTEMPTS` the row
     is marked ``failed`` and excluded from future ticks.
     """
-    cutoff = now if now is not None else datetime.utcnow()
+    cutoff = now if now is not None else utcnow_naive()
     sent = retry = failed = 0
 
     async with session_scope() as session:
@@ -84,7 +85,7 @@ async def tick_reminders(
                 )
             else:
                 reminder.status = "sent"
-                reminder.sent_at = datetime.utcnow()
+                reminder.sent_at = utcnow_naive()
                 reminder.last_error = None
                 sent += 1
             session.add(reminder)

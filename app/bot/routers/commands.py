@@ -41,11 +41,17 @@ PRIORITY_ICONS: dict[str, str] = {
 
 
 def _format_task_list(tasks: list[Task], title: str) -> str:
-    """Format a list of tasks into a readable message."""
-    if not tasks:
-        return f"📋 *{title}*\n\nПусто — ни одной задачи."
+    """Format a list of tasks into a readable plain-text message.
 
-    lines = [f"📋 *{title}*\n"]
+    Plain text only — ``parse_mode`` is intentionally **not** set on send,
+    because ``task.title`` is user-controlled and routinely contains
+    Markdown-active characters (``*``, ``_``, ``[``) that would break
+    Telegram's parser. See ``docs/REVIEW-findings.md::C-2``.
+    """
+    if not tasks:
+        return f"📋 {title}\n\nПусто — ни одной задачи."
+
+    lines = [f"📋 {title}\n"]
     for i, task in enumerate(tasks, 1):
         icon = PRIORITY_ICONS.get(task.priority, "⚪")
         due_part = ""
@@ -58,11 +64,14 @@ def _format_task_list(tasks: list[Task], title: str) -> str:
 
 
 def _format_note_list(notes: list[Note]) -> str:
-    """Format a list of notes into a readable message."""
-    if not notes:
-        return "📝 *Заметки*\n\nПусто — ни одной заметки."
+    """Format a list of notes into a readable plain-text message.
 
-    lines = ["📝 *Заметки*\n"]
+    Same plain-text rationale as ``_format_task_list``.
+    """
+    if not notes:
+        return "📝 Заметки\n\nПусто — ни одной заметки."
+
+    lines = ["📝 Заметки\n"]
     for i, note in enumerate(notes, 1):
         lines.append(f"{i}. {note.title}")
 
@@ -93,10 +102,10 @@ def create_router() -> Router:
 
         title = HORIZON_TITLES.get(slug, slug)
         if not tasks:
-            await message.answer(_format_task_list(tasks, title), parse_mode="Markdown")
+            await message.answer(_format_task_list(tasks, title))
             return
 
-        await message.answer(_format_task_list(tasks, title), parse_mode="Markdown")
+        await message.answer(_format_task_list(tasks, title))
         for task in tasks:
             if task.id is not None:
                 await message.answer(
@@ -146,7 +155,7 @@ def create_router() -> Router:
                 return
             notes = await get_all_notes(session, user.id)
 
-        await message.answer(_format_note_list(notes), parse_mode="Markdown")
+        await message.answer(_format_note_list(notes))
 
     @router.message(Command("categories"))
     async def cmd_categories(message: Message) -> None:
@@ -168,14 +177,13 @@ def create_router() -> Router:
 
         if not pairs:
             await message.answer(
-                "🏷 *Категории*\n\nПусто — категории создаются автоматически при добавлении задач.",
-                parse_mode="Markdown",
+                "🏷 Категории\n\nПусто — категории создаются автоматически при добавлении задач.",
             )
             return
 
-        lines = ["🏷 *Категории*\n"]
+        lines = ["🏷 Категории\n"]
         for cat, count in pairs:
             lines.append(f"• {cat.name} — {count} задач(и)")
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await message.answer("\n".join(lines))
 
     return router
