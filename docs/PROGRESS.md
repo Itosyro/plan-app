@@ -6,6 +6,30 @@
 
 ---
 
+## 2026-05-08 — Phase 2.1: Splitter + AI infrastructure (PR #12)
+
+**Сделано:**
+- `app/ai/router.py` — `GroqKeyRouter`: round-robin пул API-ключей Groq с методами `advance()` и `async_client()`.
+- `app/ai/schemas.py` — Pydantic-модели `IntentUnit` и `SplitterResult` для структурированного вывода LLM.
+- `app/ai/splitter.py` — `split_message()`: вызывает `llama-3.1-8b-instant` через `instructor` (structured output, temperature 0.0). Сообщения < 2 символов пропускаются без вызова LLM.
+- `app/ai/prompts/splitter.md` — системный промпт по структуре ROLE → TASK → CONSTRAINTS → OUTPUT → EXAMPLES. 3 few-shot примера на русском.
+- `app/bot/routers/text.py` — интеграция: после сохранения в inbox splitter запускается в фоне (`asyncio.create_task`), результат логируется. Задачи пока не сохраняются (Phase 2.2).
+- `tests/test_groq_router.py` — 5 тестов на ротацию ключей.
+- `tests/test_splitter.py` — 5 тестов с мокнутым Groq через `respx`.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 24 passed (14 старых + 10 новых).
+- PR ≤ 400 LOC (361 строк), одна тема.
+- Нет секретов, нет `print()`, нет `Any`/`getattr`.
+
+**Не сделано (намеренно):**
+- Classifier, Critic, Whisper — Phase 2.2 / 2.3.
+- Сохранение задач/заметок в БД — Phase 2.2 (нужны модели Task/Note).
+- `call_with_retry` с retry/backoff — добавится в Phase 2.2 когда появится Classifier.
+
+---
+
 ## 2026-05-08 — Phase 4: e2e-проверка живого бота (`@daylirobot`)
 
 **Сделано:**
