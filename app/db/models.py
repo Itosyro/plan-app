@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Column
+from sqlalchemy import JSON, BigInteger, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -108,6 +108,7 @@ class Category(SQLModel, table=True):
     """Per-user category created on-the-fly by the Classifier."""
 
     __tablename__ = "categories"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
@@ -119,6 +120,7 @@ class Horizon(SQLModel, table=True):
     """Per-user time horizon (today, tomorrow, week, …)."""
 
     __tablename__ = "horizons"
+    __table_args__ = (UniqueConstraint("user_id", "slug"),)
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)

@@ -33,6 +33,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "name"),
     )
     op.create_index(op.f("ix_categories_user_id"), "categories", ["user_id"], unique=False)
 
@@ -45,6 +46,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "slug"),
     )
     op.create_index(op.f("ix_horizons_user_id"), "horizons", ["user_id"], unique=False)
 

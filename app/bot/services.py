@@ -216,8 +216,8 @@ async def persist_classification(
     await session.flush()
 
     if cr.is_task:
-        assert isinstance(row, Task)
-        assert row.id is not None
+        if not isinstance(row, Task) or row.id is None:
+            raise RuntimeError("Expected a flushed Task row after persist")
         session.add(
             TaskEvent(task_id=row.id, kind="created", payload_json={"source": "classifier"}),
         )

@@ -19,7 +19,6 @@ from app.ai.time_resolver import resolve_time
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.services import (
     get_or_create_user,
-    get_user_categories,
     log_ai_run,
     persist_classification,
     store_inbox_text,
@@ -45,6 +44,18 @@ def _get_router() -> GroqKeyRouter | None:
     return _groq_router
 
 
+def _pluralize_elements(n: int) -> str:
+    """Russian plural for 'элемент'."""
+    if 11 <= n % 100 <= 19:
+        return f"{n} элементов"
+    mod = n % 10
+    if mod == 1:
+        return f"{n} элемент"
+    if 2 <= mod <= 4:
+        return f"{n} элемента"
+    return f"{n} элементов"
+
+
 async def _run_pipeline(
     groq_router: GroqKeyRouter,
     text: str,
@@ -64,21 +75,30 @@ async def _run_pipeline(
     if not split_result.units:
         return "Принял, но не нашёл конкретных задач или заметок."
 
+    # Resolve time for each unit (pure Python, fast)
+    resolved_list = [resolve_time(unit.text, user_tz) for unit in split_result.units]
+
+    # Classify all units in parallel
+    classify_tasks = [
+        classify_intent(groq_router, unit.text, resolved, [], user_tz)
+        for unit, resolved in zip(split_result.units, resolved_list, strict=True)
+    ]
+    classifier_results = await asyncio.gather(*classify_tasks)
+
+    # Persist results
     summaries: list[str] = []
     async with session_scope() as session:
-        categories = await get_user_categories(session, user_id)
+        await log_ai_run(
+            session,
+            user_id=user_id,
+            inbox_id=inbox_id,
+            stage="splitter",
+            model="llama-3.1-8b-instant",
+            key_index=groq_router.current_key_id,
+        )
 
-        for unit in split_result.units:
-            resolved = resolve_time(unit.text, user_tz)
+        for cr, resolved in zip(classifier_results, resolved_list, strict=True):
             due_at = resolved.resolved_dt if resolved else None
-
-            cr = await classify_intent(
-                groq_router,
-                unit.text,
-                resolved,
-                categories,
-                user_tz,
-            )
 
             await persist_classification(
                 session,
@@ -100,10 +120,7 @@ async def _run_pipeline(
             kind = "📌 задача" if cr.is_task else "📝 заметка"
             summaries.append(f"{kind}: {cr.title} [{cr.category_name}]")
 
-            if cr.category_name not in categories:
-                categories.append(cr.category_name)
-
-    header = f"Разобрал на {len(summaries)} элемент(ов):\n"
+    header = f"Разобрал на {_pluralize_elements(len(summaries))}:\n"
     return header + "\n".join(summaries)
 
 
@@ -148,12 +165,17 @@ def create_router() -> Router:
             await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
             return
 
+        msg_text = message.text
+        from_user_id = message.from_user.id
+
+        await message.answer("⏳ Разбираю…")
+
         async def _background() -> None:
             try:
                 reply = await _run_pipeline(
                     groq_router,
-                    message.text or "",
-                    message.from_user.id if message.from_user else 0,
+                    msg_text,
+                    from_user_id,
                     user_id,
                     user_tz,
                     inbox_id,
@@ -162,8 +184,8 @@ def create_router() -> Router:
             except Exception:
                 logger.exception(
                     "pipeline.error",
-                    tg_user_id=message.from_user.id if message.from_user else 0,
-                    text_len=len(message.text or ""),
+                    tg_user_id=from_user_id,
+                    text_len=len(msg_text),
                 )
                 await message.answer("Ошибка при разборе — сохранил во входящие, разберу позже.")
 
