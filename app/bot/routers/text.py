@@ -1,8 +1,8 @@
 """Catch-all router for plain-text messages (after onboarding).
 
 Phase 1 stored the message in ``inbox_entries`` and replied with a stub.
-Phase 2.1 adds the Splitter: after storing the message, we run the AI
-splitter in the background and reply with a short acknowledgement.
+Phase 2.1 added the Splitter.
+Phase 2.2 adds the full pipeline: split → time → classify → persist → reply.
 """
 
 from __future__ import annotations
@@ -12,44 +12,99 @@ import asyncio
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.ai.classifier import classify_intent
 from app.ai.router import GroqKeyRouter
 from app.ai.splitter import split_message
-from app.bot.courier_templates import NOT_ONBOARDED, TEXT_ACK_PHASE1
-from app.bot.services import get_or_create_user, store_inbox_text
+from app.ai.time_resolver import resolve_time
+from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.services import (
+    get_or_create_user,
+    get_user_categories,
+    log_ai_run,
+    persist_classification,
+    store_inbox_text,
+)
 from app.db.base import session_scope
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+_groq_router: GroqKeyRouter | None = None
+
 
 def _get_router() -> GroqKeyRouter | None:
-    """Build a GroqKeyRouter from settings, or None if no keys configured."""
+    """Return singleton GroqKeyRouter (lazy init)."""
+    global _groq_router
+    if _groq_router is not None:
+        return _groq_router
     keys = get_settings().groq_keys_list
     if not keys:
         return None
-    return GroqKeyRouter(keys=keys)
+    _groq_router = GroqKeyRouter(keys=keys)
+    return _groq_router
 
 
-async def _run_splitter(groq_router: GroqKeyRouter, text: str, tg_user_id: int) -> None:
-    """Run the splitter and log the result.
+async def _run_pipeline(
+    groq_router: GroqKeyRouter,
+    text: str,
+    tg_user_id: int,
+    user_id: int,
+    user_tz: str,
+    inbox_id: int | None,
+) -> str:
+    """Run split → time → classify → persist and return a reply summary."""
+    split_result = await split_message(groq_router, text)
+    logger.info(
+        "pipeline.split",
+        tg_user_id=tg_user_id,
+        units_count=len(split_result.units),
+    )
 
-    Exceptions are caught so a splitter failure never crashes the webhook.
-    """
-    try:
-        result = await split_message(groq_router, text)
-        logger.info(
-            "splitter.result",
-            tg_user_id=tg_user_id,
-            units_count=len(result.units),
-            text_len=len(text),
-        )
-    except Exception:
-        logger.exception(
-            "splitter.error",
-            tg_user_id=tg_user_id,
-            text_len=len(text),
-        )
+    if not split_result.units:
+        return "Принял, но не нашёл конкретных задач или заметок."
+
+    summaries: list[str] = []
+    async with session_scope() as session:
+        categories = await get_user_categories(session, user_id)
+
+        for unit in split_result.units:
+            resolved = resolve_time(unit.text, user_tz)
+            due_at = resolved.resolved_dt if resolved else None
+
+            cr = await classify_intent(
+                groq_router,
+                unit.text,
+                resolved,
+                categories,
+                user_tz,
+            )
+
+            await persist_classification(
+                session,
+                user_id=user_id,
+                cr=cr,
+                due_at=due_at,
+                inbox_id=inbox_id,
+            )
+
+            await log_ai_run(
+                session,
+                user_id=user_id,
+                inbox_id=inbox_id,
+                stage="classifier",
+                model="llama-3.3-70b-versatile",
+                key_index=groq_router.current_key_id,
+            )
+
+            kind = "📌 задача" if cr.is_task else "📝 заметка"
+            summaries.append(f"{kind}: {cr.title} [{cr.category_name}]")
+
+            if cr.category_name not in categories:
+                categories.append(cr.category_name)
+
+    header = f"Разобрал на {len(summaries)} элемент(ов):\n"
+    return header + "\n".join(summaries)
 
 
 def create_router() -> Router:
@@ -58,7 +113,7 @@ def create_router() -> Router:
 
     @router.message(F.text)
     async def handle_text(message: Message) -> None:
-        """Persist incoming text, run Splitter in background, acknowledge."""
+        """Persist incoming text, run full pipeline in background, reply."""
         if message.from_user is None or message.text is None:
             return
 
@@ -72,29 +127,47 @@ def create_router() -> Router:
                 await message.answer(NOT_ONBOARDED)
                 return
             assert user.id is not None
-            await store_inbox_text(
+            entry = await store_inbox_text(
                 session,
                 user_id=user.id,
                 raw_text=message.text,
                 telegram_message_id=message.message_id,
             )
+            user_id = user.id
+            user_tz = user.tz
+            inbox_id = entry.id
 
-        # PII: text-length only, never the message text itself.
         logger.info(
             "inbox.text_stored",
             user_id=message.from_user.id,
             text_len=len(message.text),
         )
 
-        # Phase 2.1: fire splitter in background so webhook responds fast.
         groq_router = _get_router()
-        if groq_router is not None:
-            task = asyncio.create_task(
-                _run_splitter(groq_router, message.text, message.from_user.id),
-            )
-            # Prevent the task from being garbage-collected before completion.
-            task.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
+        if groq_router is None:
+            await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
+            return
 
-        await message.answer(TEXT_ACK_PHASE1)
+        async def _background() -> None:
+            try:
+                reply = await _run_pipeline(
+                    groq_router,
+                    message.text or "",
+                    message.from_user.id if message.from_user else 0,
+                    user_id,
+                    user_tz,
+                    inbox_id,
+                )
+                await message.answer(reply)
+            except Exception:
+                logger.exception(
+                    "pipeline.error",
+                    tg_user_id=message.from_user.id if message.from_user else 0,
+                    text_len=len(message.text or ""),
+                )
+                await message.answer("Ошибка при разборе — сохранил во входящие, разберу позже.")
+
+        task = asyncio.create_task(_background())
+        task.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
 
     return router

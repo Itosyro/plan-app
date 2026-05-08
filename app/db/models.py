@@ -1,13 +1,8 @@
-"""SQLModel tables for Phase 1.
+"""SQLModel tables.
 
-Phase 1 ships only the four tables the webhook + onboarding need:
-
-* ``users`` / ``user_settings`` — onboarding result
-* ``inbox_entries`` — raw incoming text/voice (Phase 2 AI consumes this)
-* ``telegram_updates`` — idempotency cache keyed by ``update_id``
-
-Phase 2 will add ``categories``, ``horizons``, ``tasks``, ``notes``,
-``reminders``, ``ai_runs`` and friends — see ``docs/ARCHITECTURE.md`` §5.
+Phase 1: ``users``, ``user_settings``, ``inbox_entries``, ``telegram_updates``.
+Phase 2.2: ``categories``, ``horizons``, ``tasks``, ``notes``, ``ai_runs``,
+``task_events``.
 """
 
 from __future__ import annotations
@@ -104,3 +99,96 @@ class TelegramUpdate(SQLModel, table=True):
     user_id: int | None = Field(default=None, foreign_key="users.id")
     kind: str | None = Field(default=None, max_length=32)
     processed_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+# ── Phase 2.2 ────────────────────────────────────────────────────────
+
+
+class Category(SQLModel, table=True):
+    """Per-user category created on-the-fly by the Classifier."""
+
+    __tablename__ = "categories"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    name: str = Field(max_length=64)
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+class Horizon(SQLModel, table=True):
+    """Per-user time horizon (today, tomorrow, week, …)."""
+
+    __tablename__ = "horizons"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    slug: str = Field(max_length=32)
+    label: str = Field(max_length=64)
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+class Task(SQLModel, table=True):
+    """A classified task extracted from user input."""
+
+    __tablename__ = "tasks"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    category_id: int | None = Field(default=None, foreign_key="categories.id")
+    horizon_id: int | None = Field(default=None, foreign_key="horizons.id")
+    title: str = Field(max_length=256)
+    description: str | None = Field(default=None)
+    priority: str = Field(default="medium", max_length=16)
+    due_at: datetime | None = Field(default=None)
+    status: str = Field(default="new", max_length=16)
+    source_inbox_id: int | None = Field(default=None, foreign_key="inbox_entries.id")
+    needs_clarification: bool = Field(default=False)
+    confidence: float = Field(default=1.0)
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+class Note(SQLModel, table=True):
+    """A classified note extracted from user input."""
+
+    __tablename__ = "notes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    category_id: int | None = Field(default=None, foreign_key="categories.id")
+    title: str = Field(max_length=256)
+    body: str | None = Field(default=None)
+    source_inbox_id: int | None = Field(default=None, foreign_key="inbox_entries.id")
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+class AiRun(SQLModel, table=True):
+    """Log entry for every LLM call."""
+
+    __tablename__ = "ai_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    inbox_id: int | None = Field(default=None, foreign_key="inbox_entries.id")
+    stage: str = Field(max_length=32)
+    model: str = Field(max_length=64)
+    key_index: int = Field(default=0)
+    latency_ms: int = Field(default=0)
+    tokens: int = Field(default=0)
+    status: str = Field(default="ok", max_length=16)
+    error: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+class TaskEvent(SQLModel, table=True):
+    """Audit trail for task state changes."""
+
+    __tablename__ = "task_events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    kind: str = Field(max_length=32)
+    payload_json: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
