@@ -2,7 +2,159 @@
 
 > Этот файл — **единственное**, что нужно прочитать, чтобы войти в курс дела. Всё остальное (`PLAN.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `IDEAS.md`) — детализация.
 >
-> Если ты — нейронка, открывшая репо впервые: прочти этот файл, потом [`docs/README.md`](README.md), потом [`.agents/skills/CATALOG.md`](../.agents/skills/CATALOG.md), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
+> Если ты — нейронка, открывшая репо впервые: прочти **§0.1 (актуальный handoff)**, потом `docs/PROGRESS.md` (две верхние записи), потом [`docs/PLAN.md`](PLAN.md), потом [`docs/ARCHITECTURE.md`](ARCHITECTURE.md), потом [`.agents/skills/CATALOG.md`](../.agents/skills/CATALOG.md), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
+
+---
+
+## 0.1. Свежий handoff — 2026-05-08, после `b79dce8` (Phase 4 закрыта)
+
+### Что это за проект
+
+Telegram-бот **@daylirobot** (PLAN, bot id `8642044324`) — превращает русский голос/текст в задачи, заметки и напоминания. Один Render Free web-service + Neon Postgres + Groq (LLM) + `instructor`.
+
+- Репо: https://github.com/Itosyro/plan-app
+- Прод-URL: https://plan-app-t6nx.onrender.com (`/healthz` отдаёт 200)
+- Стек: Python 3.12 / aiogram 3 / FastAPI / SQLModel + Alembic / Pydantic v2 / Groq (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `qwen-qwq-32b`, `whisper-large-v3`) / `dateparser` + `pymorphy3` + `razdel` / uv / ruff / pytest / Docker
+
+### Цепочка обработки (короткая)
+
+```
+Telegram update (webhook /tg/<secret>)
+  → idempotency check (TelegramUpdate.update_id)
+  → store inbox (InboxEntry)
+  → if voice:  Whisper (whisper-large-v3) → text
+  → reorder?   detect_reorder → update_task_horizon  (если «перенеси задачу X на пятницу»)
+  → split:     split_message  (llama-3.1-8b-instant + instructor)
+  → time:      resolve_time   (Pure Python: dateparser + pymorphy3 + razdel)
+  → classify:  classify_intent (llama-3.3-70b-versatile + instructor)
+  → critic:    qwen-qwq-32b   (если confidence < 0.7 — настраиваемо)
+  → persist:   Task / Note + (если due_at) Reminder с offsets из UserSettings
+  → reply:     courier (≈50% template / ≈50% llama-3.1-8b-instant) + детерминированное summary
+
+Параллельно (in-process, каждые 60с — `app/workers/runner.py`):
+  → tick_reminders: rows where status='pending' AND fire_at<=now → bot.send_message → status='sent'
+  → tick_digests:   для каждого юзера сравнивает локальное HH:MM с UserSettings → morning/evening digest
+```
+
+### Что в `main` (хронология последних PR)
+
+| PR | Что | Коммит |
+|---|---|---|
+| **#38** | Skills bundle — 5 новых SKILL.md + CATALOG | `b79dce8` |
+| **#37** | Mega review — фиксы C-1, C-2, I-1, I-2 + REVIEW-findings.md | `e15cb17` |
+| **#36** | Render fix — in-process scheduler loop (free-tier) | `4202208` |
+| **#35** | Phase 4b — Scheduler + Digest + render.yaml cron | `0f69424` |
+| **#34** | Phase 4a — Reminder model + миграция + persist расширен | `5818309` |
+
+`uv run pytest -q` → **172 passed**, ruff format/check чисто.
+
+### Где остановились
+
+**Phase 4 закрыта.** Следующее — **Phase 4c**: e2e-тесты для всей цепочки `сообщение → task в БД → reminder сработал → задача появляется в morning digest`. Существующие тесты покрывают компоненты по отдельности; интеграция «reminder + digest» не покрыта.
+
+### Что делать дальше (Phase 4c)
+
+1. Прочти `docs/PROGRESS.md` — две верхние записи (snapshot + skills bundle).
+2. Прочти `docs/PLAN.md` (что строим) и `docs/ARCHITECTURE.md` (как).
+3. Прочти `docs/REVIEW-findings.md` — паттерны и анти-паттерны кодовой базы.
+4. **Прочти `.agents/skills/CATALOG.md`** и пробеги по SKILL.md, особенно:
+   - `plan-app-internal/SKILL.md` — карта проекта
+   - `defensive-programming/SKILL.md` — что мы недавно вычистили в PR #37
+   - `testing-async-python/SKILL.md` — паттерны существующих 172 тестов
+   - `systematic-debugging/SKILL.md` — Iron Law «no fixes without root cause»
+   - `migrations-safely/SKILL.md` — Alembic + SQLModel
+   - `using-uv/SKILL.md` — uv cheat-sheet
+5. Перед написанием тестов **посмотри какие ещё скиллы есть в публичных репозиториях** под наш стек:
+   - aiogram 3, FastAPI lifespan + webhook
+   - structured LLM output (`instructor`)
+   - русский NLP (`dateparser`, `pymorphy3`, `razdel`)
+   - SQLModel + asyncio + Postgres/SQLite
+   - pytest-asyncio + respx (для моков Groq HTTP)
+   - Render free tier deployments
+   - Telegram Mini App (Phase 5 далеко, но скиллы можно начать собирать)
+
+   Если найдёшь полезные практики, которых у нас ещё нет — добавь как новый SKILL.md в `.agents/skills/<name>/` (с YAML frontmatter `name`+`description`), обнови `.agents/skills/CATALOG.md`. Лицензии — указать в шапке файла, MIT/Apache 2.0 — ок, проприетарное — нельзя.
+
+6. Спланируй Phase 4c и реализуй:
+   - Новый файл `tests/test_e2e_phase4.py`. Покрытие:
+     - **полный поток**: имитировать message-id, прогнать `_run_pipeline`-логику (можно через service-уровень, не через aiogram-роутер) → проверить, что Task создан, Reminder создан, fire_at правильный → передвинуть «время» вперёд (`now=...` параметр в `tick_reminders`) → проверить FakeBot получил сообщение → построить morning digest для `now=...` под utc-локаль юзера → проверить, что title задачи в нём.
+     - **изоляция между юзерами**: два онбордженных юзера, разные tz → один получает дайджест в момент UTC-X, другой нет.
+     - **edge cases**: reminder в прошлом не отправляется как просрочка (или отправляется — посмотри текущее поведение `tick_reminders` и закрепи), завершённая задача (`status='done'`) исключена из morning digest, retry логика после первой неудачи.
+   - Использовать существующие фикстуры из `tests/conftest.py` (engine, session, FakeBot из `test_scheduler.py`/`test_digest.py`).
+   - Не вызывать живой Groq — `respx.mock` или прямо вызывать сервисы (`persist_classification`) с готовым `ClassifierResult`.
+   - LOC ≤ 400.
+
+7. После Phase 4c — Phase 5 (Telegram Mini App). Это уже фронт + REST API. Скиллы под фронт (React + Vite + Tailwind + Telegram WebApp SDK) сейчас в `.agents/skills/` отсутствуют — будет повод добавить.
+
+### КРИТИЧЕСКИ ВАЖНО — автономный режим
+
+Юзер (Юсуф) работает в режиме «не спрашивай — делай». **Не спрашивай у пользователя подтверждений** на каждый чих:
+- НЕ проси разрешения создать PR — создавай.
+- НЕ проси разрешения замёржить свой PR — мерджи (squash, после зелёного CI).
+- НЕ проси разрешения пушить — пушь.
+- НЕ проси «давай проверим» — проверяй сам.
+
+**Перед каждым push**:
+1. `uv run ruff format .` (чисто)
+2. `uv run ruff check .` (чисто)
+3. `uv run pytest -q` (зелёное, без регрессий)
+4. **Обнови `docs/PROGRESS.md`** — добавь новую секцию **сверху** с датой, что сделано, как верифицировал, что не сделано. Это закреплено правилом и юзер этого ждёт.
+
+**После merge** обнови `docs/PROGRESS.md` отдельным docs-PR (если ещё не обновил), и сразу мерджи. Не копи docs-долг.
+
+### Грабли, на которые наступали
+
+1. **`git push` через PAT.** Token задаётся как `GIT_ASKPASS`-скрипт; в этой сессии работало:
+   ```bash
+   GIT_TOKEN="ghp_..."
+   ASKPASS="$(mktemp)"
+   cat > "$ASKPASS" <<EOF
+   #!/usr/bin/env bash
+   case "\$1" in *Username*) echo "x-access-token";; *Password*) echo "$GIT_TOKEN";; esac
+   EOF
+   chmod +x "$ASKPASS"
+   GIT_ASKPASS="$ASKPASS" git push -u origin <branch>
+   ```
+   `gh` CLI в этом окружении нет — операции с PR через `curl` к GitHub REST API.
+
+2. **CI ждать через polling.** `git_pr_checks` есть, но в автономе быстрее `curl https://api.github.com/repos/Itosyro/plan-app/commits/<sha>/check-runs` каждые 5–10 сек.
+
+3. **Squash-merge через REST.** Endpoint `PUT /repos/Itosyro/plan-app/pulls/<num>/merge`, body `{"merge_method": "squash"}`. После 200-ответа — локально `git checkout main && git pull --rebase`.
+
+4. **Naive UTC.** Все DateTime-колонки tz-naive. Никогда не пиши tz-aware datetime в БД — используй `app.shared.time.utcnow_naive()`. Это была критика C-1 в PR #37.
+
+5. **`parse_mode="Markdown"` запрещено** для текстов с user-controlled `task.title`/`note.title`. Отвечаем plain text + emoji-заголовки. C-2 в PR #37.
+
+6. **`getattr(settings, field, None)` запрещён** в callback-обработчиках — explicit field-allow-list (`SETTING_LABELS`). I-1 в PR #37.
+
+7. **Render Free** не даёт Cron-сервис. Scheduler крутится in-process через `asyncio` loop в FastAPI lifespan (`app/workers/runner.py`). Холодный старт ~30–60 сек после 15 мин неактивности — keep-alive ping `/healthz` каждые 5–10 мин снаружи (`docs/RENDER.md`).
+
+8. **`asyncio.create_task` без strong-ref.** В `text.py`/`voice.py` background task привязан через `add_done_callback(_log_task_exception)` — не трогать. M-2 в `REVIEW-findings.md`.
+
+9. **respx для Groq.** Никогда не зови живой Groq в тестах — мокай через `respx.mock`. Примеры: `tests/test_splitter.py`, `tests/test_classifier.py`.
+
+10. **SQLite vs Postgres квирки.** Тесты на in-memory SQLite (`sqlite+aiosqlite:///:memory:`); прод на Postgres через `psycopg`. Не используй PG-специфичный SQL.
+
+### GitHub-токен и аутентификация
+
+Юзер передаст PAT отдельным сообщением. Формат: `ghp_...`. Скоуп: `repo`. Используй для push (через GIT_ASKPASS) и для REST API (`Authorization: token ghp_...`). Не коммить токен в репо.
+
+### Что НЕ делать
+
+- ❌ Не править тесты, чтобы они проходили (правь код или флэгай тест).
+- ❌ Не комментировать диф (комментарий «теперь делаем X» — кандидат на удаление).
+- ❌ Не использовать `Any`, `getattr`, `setattr`, `print()`.
+- ❌ Не делать `git add .` — добавляй конкретные файлы.
+- ❌ Не использовать `--no-verify`, `--no-gpg-sign`.
+- ❌ Не amend-коммиты.
+- ❌ Не push в `main`/`master` — только PR.
+- ❌ Не запускай git с sudo, не правь git-config.
+- ❌ Не коммить файлы с секретами.
+- ❌ Не force-push в `main`/`master`.
+
+### Куда писать прогресс
+
+После каждого мердж'а — новая секция сверху в `docs/PROGRESS.md` с датой. Шаблон есть в любой существующей записи: **Контекст / Сделано / Верификация / Не сделано**.
 
 ---
 

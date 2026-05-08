@@ -6,6 +6,92 @@
 
 ---
 
+## 2026-05-08 — Snapshot: Phase 4 закрыта, перед Phase 4c делаем sanity-check + handoff
+
+**Контекст:**
+Юзер попросил остановиться, сверить текущее состояние с детальным планом
+(`docs/PLAN.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`) и подтвердить, что
+мы движемся в нужном направлении. Этот PR — только документация: фиксируем
+актуальное состояние и обновляем `docs/HANDOFF.md` под следующего AI-агента.
+
+**Где мы сейчас (2026-05-08, после `b79dce8`):**
+
+- **Smoke / lint / test:** `uv run ruff format/check` чисто, `uv run pytest -q` —
+  **172 passed**.
+- **main:** `b79dce8 Phase 4: skills bundle — 5 new SKILL.md (#38)`.
+- **Деплой:** один Render Free web-service. `app/workers/runner.py` крутит
+  `tick_reminders` + `tick_digests` каждые 60 сек прямо в FastAPI-процессе;
+  `/healthz` пинается извне (cron-job.org / GitHub Actions cron) — см.
+  `docs/RENDER.md`. Cron-сервис из `render.yaml` удалён, апгрейд до Starter+
+  описан в комментарии того же файла.
+
+**Карта по фазам (что в `main`):**
+
+| Фаза | Статус | Где смотреть |
+|---|---|---|
+| Phase 0 / 0.5 (cleanup + skills) | done | PR #3, `41b43c8` |
+| Phase 1 (webhook + БД + onboarding) | done | PR #6 |
+| Phase 1.5 (CI: ruff + pytest) | done | PR #7 |
+| Phase 4 (early: deploy + e2e живого бота) | done | PR #8–#11 |
+| Phase 2.1 (Splitter + GroqKeyRouter + instructor) | done | PR #12, #13 |
+| Phase 2.2a (Classifier + time_resolver + reminder_extractor) | done | PR #14 |
+| Phase 2.2b (DB models + persist) | done | PR #17 |
+| Phase 2.3a (Whisper voice) | done | PR #18 |
+| Phase 2.3b (Critic) | done | PR #19 |
+| Phase 2.3c (Courier) | done | PR #21 |
+| Phase 2.3d (Reorder голосом) | done | PR #23 |
+| Phase 2 e2e (8 сквозных тестов) | done | PR #25 |
+| Phase 3a (view-команды `/today` … `/categories`) | done | PR #27 |
+| Phase 3b (inline-кнопки на карточке задачи) | done | PR #28 |
+| Phase 3c (`/settings`) | done | PR #29 |
+| Phase 3 finish (4-я кнопка + tz/reminder в /settings) | done | PR #31 |
+| Code review + skills (early) | done | PR #33 |
+| **Phase 4a** (Reminder model + миграция + persist) | done | **PR #34** |
+| **Phase 4b** (Scheduler + Digest + render.yaml cron) | done | **PR #35** |
+| **Render fix** (in-process scheduler, free-tier) | done | **PR #36** |
+| **Mega review** (C-1, C-2, I-1, I-2 + REVIEW-findings.md) | done | **PR #37** |
+| **Skills bundle** (5 новых SKILL.md + CATALOG) | done | **PR #38** |
+| **Этот PR** (snapshot + HANDOFF) | in-flight | docs only |
+
+**Что НЕ сделано (в порядке приоритета):**
+
+1. **Phase 4c — e2e тесты для дайджеста + reminders end-to-end** (следующее).
+   Существующие тесты покрывают компоненты по отдельности (172 шт.):
+   `test_e2e_pipeline.py` — message → task; `test_scheduler.py` — reminder
+   tick; `test_digest.py` — digest tick; `test_runner.py` — loop lifecycle.
+   Пробел: нет тестов всей цепочки «сообщение пользователя → task в БД →
+   reminder сработал → задача появляется в morning digest».
+2. Phase 5 (Telegram Mini App — React + Vite + Tailwind, 3 вкладки).
+3. Phase 6 (наблюдаемость, эвалы, DSPy).
+4. M-1..M-5 из `docs/REVIEW-findings.md` (webhook idempotency race, asyncio
+   strong-ref, прочее) — низкий приоритет, можно в Phase 6.
+
+**Соответствие детальному плану (sanity-check vs `docs/PLAN.md`):**
+
+- §2.1 (утренний поток мыслей) — пайплайн split → time → classify → critic →
+  persist + courier-reply работает (Phase 2.1–2.3 + e2e PR #25).
+- §2.2 (заметки) — `Note` модель есть, persist различает task/note (Phase 2.2b).
+- §2.3 (напоминание из текста) — extractor + reminder_offsets + Reminder model
+  работают (Phase 4a).
+- §2.4 (перестановка задач голосом) — `app/ai/reorder.py` + `update_task_horizon`
+  (Phase 2.3d).
+- §2.5 (утренний/вечерний дайджест) — `build_morning_digest`/`build_evening_digest`
+  + `tick_digests` строгий HH:MM матч (Phase 4b).
+- §2.6 (ручной ввод/редактирование) — view-команды + inline-кнопки + /settings
+  (Phase 3a/b/c).
+- §2.7 (Mini App) — отложено в Phase 5.
+- §4 (стиль курьера) — courier_templates + LLM 50/50, настраивается в /settings
+  (Phase 2.3c).
+
+Главные сценарии из `PLAN.md` покрыты по коду; не покрыты по интеграционным
+тестам — это и есть Phase 4c.
+
+**Не сделано (вынесено за рамки этого PR):**
+- Phase 4c (отдельный PR от следующего агента).
+- Перевыкладка bot, проверка боевого пинга `/healthz`.
+
+---
+
 ## 2026-05-08 — Skills bundle: 5 новых SKILL.md (PR C)
 
 **Контекст:**
