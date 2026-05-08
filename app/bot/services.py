@@ -123,6 +123,25 @@ async def store_inbox_text(
     return entry
 
 
+async def store_inbox_voice(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    transcript: str,
+    telegram_message_id: int | None,
+) -> InboxEntry:
+    """Persist an incoming voice message (with transcript) into the inbox."""
+    entry = InboxEntry(
+        user_id=user_id,
+        kind="voice",
+        transcript=transcript,
+        telegram_message_id=telegram_message_id,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
 # ── Phase 2.2 persistence ────────────────────────────────────────────
 
 
