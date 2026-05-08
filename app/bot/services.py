@@ -29,6 +29,7 @@ from app.db.models import (
     UserSettings,
 )
 from app.shared.logging import get_logger
+from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -84,7 +85,7 @@ async def complete_onboarding(
     """
     user.display_name = display_name
     user.tz = tz
-    user.onboarded_at = datetime.now(UTC)
+    user.onboarded_at = utcnow_naive()
     session.add(user)
 
     assert user.id is not None, "user must be flushed before complete_onboarding()"
@@ -280,7 +281,7 @@ async def schedule_reminders(
     if not offsets:
         return []
     ref_due = _to_naive_utc(due_at)
-    ref_now = _to_naive_utc(now) if now is not None else datetime.utcnow()
+    ref_now = _to_naive_utc(now) if now is not None else utcnow_naive()
     created: list[Reminder] = []
     for offset in offsets:
         if offset <= 0:

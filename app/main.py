@@ -28,6 +28,28 @@ from app.shared.logging import configure_logging, get_logger
 from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
 
 
+def _classify_update(update: Update) -> str:
+    """Map an aiogram ``Update`` to a short string kind for logs.
+
+    ``type(update).__name__`` is always ``"Update"`` so it tells us
+    nothing — branch on the populated optional sub-field instead. See
+    ``docs/REVIEW-findings.md::I-2``.
+    """
+    if update.message is not None:
+        return "message"
+    if update.edited_message is not None:
+        return "edited_message"
+    if update.callback_query is not None:
+        return "callback_query"
+    if update.inline_query is not None:
+        return "inline_query"
+    if update.channel_post is not None:
+        return "channel_post"
+    if update.edited_channel_post is not None:
+        return "edited_channel_post"
+    return "other"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build a configured FastAPI app.
 
@@ -118,7 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if (update.message and update.message.from_user)
                 else None
             )
-            kind = "message" if update.message else type(update).__name__
+            kind = _classify_update(update)
             await record_update(session, update_id=update.update_id, user_id=None, kind=kind)
             logger.info(
                 "webhook.received",

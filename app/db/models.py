@@ -8,16 +8,22 @@ Phase 4a: ``reminders``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, BigInteger, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.shared.time import utcnow_naive
+
 
 def _utcnow() -> datetime:
-    """Timezone-aware UTC ``now`` (``datetime.utcnow`` is deprecated)."""
-    return datetime.now(UTC)
+    """Naive-UTC ``now`` matching the tz-naive ``DateTime`` columns.
+
+    See ``app/shared/time.py`` for the rationale — keep all DB writes
+    on the same naive-UTC clock.
+    """
+    return utcnow_naive()
 
 
 def _default_offsets() -> dict[str, list[int]]:

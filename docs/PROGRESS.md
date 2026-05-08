@@ -6,6 +6,33 @@
 
 ---
 
+## 2026-05-08 — Mega review: critical & important fixes (PR B)
+
+**Контекст:**
+Сквозное ревью кода/тестов/доков перед Phase 4c (e2e). Нашли 2 critical (UTC inconsistency + Markdown injection в командах) и 2 important (`getattr(settings,...)` + `type(update).__name__` всегда `"Update"`). Все четыре правки в одном PR ≤180 LOC, минорные вынесены в `docs/REVIEW-findings.md::Minor`.
+
+**Сделано:**
+- `app/shared/time.py` — новый хелпер `utcnow_naive()`: `datetime.now(UTC).replace(tzinfo=None)`. Один источник правды для всех DB-write сайтов на naive-UTC колонках. Заменил три call-сайта:
+  - `app/db/models.py::_utcnow` теперь делегирует в `utcnow_naive()` (раньше возвращал tz-aware → silent strip on insert).
+  - `app/bot/services.py::complete_onboarding` (`onboarded_at`) и `schedule_reminders` (`now`).
+  - `app/workers/scheduler.py::tick_reminders` (`cutoff` и `sent_at`). Заодно убраны `noqa: DTZ003` / `noqa: BLE001` — теперь чистые без подавлений.
+- `app/bot/routers/commands.py` (C-2) — убраны все `parse_mode="Markdown"` и `*Title*` декорации в `/today`, `/tomorrow`, `/week`, `/month`, `/year`, `/someday`, `/notes`, `/categories`. `task.title` / `note.title` приходят от пользователя и могут содержать `*`/`_`/`[`/`` ` `` — Telegram возвращал бы `400 Bad Request: can't parse entities`. Тот же фикс уже применён к callback-хендлерам, плюс есть регрессия в `test_callbacks.py` — `commands.py` мимо неё проскочил.
+- `app/bot/routers/settings.py::_setting_value` (I-1) — заменил `getattr(settings, field, None)` на явный if-маппинг по `SETTING_LABELS`-полям (`critic_mode`, `morning_digest_at`, `evening_digest_at`, `response_style_source`, `week_due_semantic`). Теперь field-allow-list — единственный путь к колонке, и type-checker видит каждую ветку.
+- `app/main.py::_classify_update` (I-2) — выделил функцию-классификатор: ветвится по `update.message`, `edited_message`, `callback_query`, `inline_query`, `channel_post`, `edited_channel_post` → `"other"`. Старое `type(update).__name__` всегда было `"Update"` (бесполезный лог).
+- `docs/REVIEW-findings.md` — итоговый отчёт ревью: 2 Critical (исправлены), 2 Important (исправлены), 5 Minor (M-1..M-5: race на webhook, `asyncio.create_task` без strong-ref, `_utcnow` алиас, singleton groq router, free-tier idle) — задокументированы для follow-up. Плюс блок Positive patterns (N+1 avoidance, exception isolation, graceful shutdown, PII discipline, idempotency, HH:MM matcher, allow-list, LIKE escape).
+
+**Верификация:**
+- `uv run ruff format .` + `uv run ruff check .` — чисто.
+- `uv run pytest -q` — 172 passed.
+- LOC ≤180 (включая фикс-сайты + докментацию в коде).
+
+**Не сделано (вынесено в `docs/REVIEW-findings.md::Minor`):**
+- M-1: webhook idempotency race (catch `IntegrityError` на `record_update`).
+- M-2: pending tasks set в `text.py`/`voice.py` чтобы избежать GC-окна.
+- M-4: groq router singleton — приемлемо для production, документ.
+
+---
+
 ## 2026-05-08 — Render fix: in-process scheduler loop (free-tier deploy)
 
 **Контекст:**
