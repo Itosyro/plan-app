@@ -6,6 +6,39 @@
 
 ---
 
+## 2026-05-08 — Phase 4b: Scheduler + Digest + render.yaml cron
+
+**Сделано:**
+- `app/workers/scheduler.py` — реальная имплементация cron-воркера:
+  - `_format_reminder(task)` — текст напоминания: «⏰ Напоминаю: {title}» + «— в HH:MM» если `due_at` задан и не равен 00:00.
+  - `tick_reminders(bot, *, now=None)` — выбирает `pending` напоминания с `fire_at <= now` (батч 100, сортировка по `fire_at`), отправляет в Telegram. На успех → `status='sent'`, `sent_at=now`, `last_error=None`. На ошибку → `attempts++`, `last_error=str(exc)[:512]`, при `attempts >= 3` → `status='failed'`. Возвращает `{"sent","retry","failed"}`.
+  - `main_async()` — entrypoint: `configure_logging` → `init_engine(database_url)` → `Bot(token)` → `tick_reminders` → `tick_digests` → закрытие сессии Bot и `dispose_engine`.
+  - `main()` — sync-обёртка `asyncio.run(main_async())` для `python -m app.workers.scheduler`.
+- `app/bot/digest.py` — daily digest builders + cron tick:
+  - `_user_local_now(tz, now_utc)` — UTC → локальное время через `ZoneInfo`, фолбэк UTC при битой tz.
+  - `_matches_hhmm(local_dt, hhmm)` — строгое сравнение `HH:MM` (zero-padded), без слэка.
+  - `_format_task_line(task)` — единая строка `🔴/🟡/🟢 {title} — в HH:MM`.
+  - `_open_tasks_for_horizon(session, user_id, horizon_kind)` — задачи в горизонте, исключая `done`/`cancelled`, сортировка по `due_at NULLS LAST, created_at`.
+  - `build_morning_digest(session, user)` — список задач `today` или приветствие при пустом списке.
+  - `build_evening_digest(session, user)` — итоги (что осталось today + завтрашний пик), либо «Сегодня всё закрыто 🎉».
+  - `tick_digests(bot, *, now=None)` — для каждого онбордженного пользователя сравнивает локальное HH:MM с `morning_digest_at` / `evening_digest_at`, шлёт соответствующий дайджест. Изоляция ошибок одного пользователя через `try/except`.
+- `render.yaml` — добавлен новый сервис:
+  - `type: cron`, `name: plan-app-scheduler`, `runtime: python`, `region: frankfurt`, `plan: starter`, `branch: main`, `schedule: "*/1 * * * *"`.
+  - `buildCommand: rm -rf .agents docs tests && uv sync --frozen`, `startCommand: uv run python -m app.workers.scheduler`.
+  - `envVars`: `ENV=production`, `LOG_LEVEL=info`, `PYTHON_VERSION=3.12`, `TELEGRAM_BOT_TOKEN` (sync: false), `DATABASE_URL` (sync: false).
+- `tests/test_scheduler.py` — 7 тестов: форматтер с/без времени и при `00:00`, отправка просроченных, пропуск будущих, пропуск уже `sent`, retry-семантика, переход в `failed` после `MAX_REMINDER_ATTEMPTS`, батч из нескольких записей.
+- `tests/test_digest.py` — 13 тестов: helpers (`_matches_hhmm`, `_user_local_now`), morning empty/полный/без `done`, evening combined/empty-today, `tick_digests` morning local-match, off-minute skip, skip unonboarded, изоляция падений по чату.
+
+**Верификация:**
+- `uv run ruff format .` + `uv run ruff check .` — чисто.
+- `uv run pytest -q` — 165 passed (145 Phase 4a + 20 новых).
+- PR ~390 LOC (код Phase 4b без тестов).
+
+**Замечание по Render:**
+- Free-план не поддерживает cron. Поэтому `plan-app-scheduler` объявлен на `plan: starter`. Web-сервис остаётся на `free` без изменений.
+
+---
+
 ## 2026-05-08 — Phase 4a: Reminder model + migration + persist extension
 
 **Сделано:**
