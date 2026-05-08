@@ -1,45 +1,42 @@
-# render.yaml — PLAN Deploy Configuration
-# https://render.com/docs/yaml-spec
+# render.yaml — Render Blueprint for plan-app
+# https://render.com/docs/blueprint-spec
+#
+# Single FastAPI web service hosting both the Telegram webhook (`POST
+# /tg/<secret>`) and the future mini-app API (`/api/*`, Phase 5).
+# Background workers (cron / scheduler) land as a separate `worker` service
+# in Phase 4 once we actually have reminders to deliver.
+#
+# Secrets (`sync: false`) live in the Render dashboard, never in this file.
+# `WEBHOOK_BASE_URL` is the public URL Render assigns to the web service —
+# patch it in after the first deploy and Render will redeploy automatically.
 
 services:
-  # === Bot Service ===
   - type: web
-    name: plan-bot
-    env: node
+    name: plan-app
+    runtime: python
     region: frankfurt
     plan: free
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    startCommand: npm run start:bot
-    healthCheckPath: /health
+    branch: main
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    # Render's native Python runtime auto-detects `uv.lock` and installs uv
+    # for us; we just need to invoke it.
+    buildCommand: uv sync --frozen
+    startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: NODE_ENV
+      - key: ENV
         value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: PYTHON_VERSION
+        value: "3.12"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: GROQ_API_KEY
+      - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
-      - key: GROQ_STT_MODEL
-        value: whisper-large-v3-turbo
-      - key: MINIAPP_URL
-        value: https://plan-api-b6nk.onrender.com
-      - key: DATABASE_URL
-        sync: false
-
-  # === API Service ===
-  - type: web
-    name: plan-api
-    env: node
-    region: frankfurt
-    plan: free
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    startCommand: npm run start:api
-    healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: TELEGRAM_BOT_TOKEN
+      - key: WEBHOOK_BASE_URL
         sync: false
       - key: DATABASE_URL
         sync: false
-      - key: PORT
-        value: 3000
+      - key: GROQ_API_KEYS
+        sync: false
