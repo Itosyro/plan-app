@@ -1,6 +1,7 @@
 """Inline-button callback handlers for task actions.
 
 Phase 3b: ✅ done, 🔄 move (horizon picker), 🗑 delete.
+Phase 3 finish: 🏷 change category (category picker).
 Callback data format: ``task:<action>:<task_id>[:<extra>]``.
 """
 
@@ -13,10 +14,13 @@ from app.bot.services import (
     delete_task,
     get_or_create_user,
     get_task_by_id,
+    get_user_categories_full,
     mark_task_done,
+    update_task_category,
     update_task_horizon,
 )
 from app.db.base import session_scope
+from app.db.models import Category
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -42,8 +46,39 @@ def task_action_keyboard(task_id: int) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"task:delete:{task_id}"),
             ],
+            [
+                InlineKeyboardButton(
+                    text="🏷 Категория", callback_data=f"task:pick_category:{task_id}"
+                ),
+            ],
         ],
     )
+
+
+def category_picker_keyboard(task_id: int, categories: list[Category]) -> InlineKeyboardMarkup:
+    """Build the category-selection keyboard for changing task category."""
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for cat in categories:
+        if cat.id is None:
+            continue
+        row.append(
+            InlineKeyboardButton(
+                text=cat.name,
+                callback_data=f"task:set_category:{task_id}:{cat.id}",
+            ),
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            InlineKeyboardButton(text="↩ Назад", callback_data=f"task:cancel:{task_id}"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def horizon_picker_keyboard(task_id: int) -> InlineKeyboardMarkup:
@@ -190,7 +225,7 @@ def create_router() -> Router:
 
     @router.callback_query(F.data.startswith("task:cancel:"))
     async def cb_task_cancel(callback: CallbackQuery) -> None:
-        """Cancel horizon picker — restore action buttons."""
+        """Cancel horizon / category picker — restore action buttons."""
         if callback.from_user is None or callback.data is None:
             return
         parts = callback.data.split(":")
@@ -202,6 +237,76 @@ def create_router() -> Router:
         await callback.answer()
         if callback.message is not None:
             await callback.message.edit_reply_markup(
+                reply_markup=task_action_keyboard(task_id),
+            )
+
+    @router.callback_query(F.data.startswith("task:pick_category:"))
+    async def cb_task_pick_category(callback: CallbackQuery) -> None:
+        """Show category picker for changing task category."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parts = callback.data.split(":")
+        if len(parts) != 3:
+            await callback.answer("Неверный формат.")
+            return
+        task_id = int(parts[2])
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            categories = await get_user_categories_full(session, user.id)
+
+        if not categories:
+            await callback.answer("Категорий пока нет — добавятся при разборе сообщений.")
+            return
+
+        await callback.answer()
+        if callback.message is not None:
+            await callback.message.edit_reply_markup(
+                reply_markup=category_picker_keyboard(task_id, categories),
+            )
+
+    @router.callback_query(F.data.startswith("task:set_category:"))
+    async def cb_task_set_category(callback: CallbackQuery) -> None:
+        """Apply a chosen category to the task."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parts = callback.data.split(":")
+        if len(parts) != 4:
+            await callback.answer("Неверный формат.")
+            return
+        task_id = int(parts[2])
+        new_category_id = int(parts[3])
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            task = await get_task_by_id(session, user.id, task_id)
+            if task is None:
+                await callback.answer("Задача не найдена.")
+                return
+            categories = await get_user_categories_full(session, user.id)
+            cat = next((c for c in categories if c.id == new_category_id), None)
+            if cat is None:
+                await callback.answer("Категория не найдена.")
+                return
+            await update_task_category(session, task, new_category_id, user.id)
+
+        await callback.answer(f"Категория → {cat.name}")
+        if callback.message is not None:
+            await callback.message.edit_text(
+                f"🏷 «{task.title}» → {cat.name}",
+                parse_mode="Markdown",
                 reply_markup=task_action_keyboard(task_id),
             )
 

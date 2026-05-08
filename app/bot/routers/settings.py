@@ -1,6 +1,9 @@
 """``/settings`` command — view and edit user preferences via inline buttons.
 
 Phase 3c: shows current settings, each editable via callback buttons.
+Phase 3 finish: timezone (``tz``) and reminder preset (``reminder_preset``)
+are virtual fields — the service layer routes them to ``User.tz`` and
+``UserSettings.default_reminder_offsets`` respectively.
 """
 
 from __future__ import annotations
@@ -10,17 +13,24 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.courier_templates import NOT_ONBOARDED
-from app.bot.services import get_or_create_user, get_user_settings, update_user_settings
+from app.bot.services import (
+    get_or_create_user,
+    get_user_settings,
+    reminder_preset_from_offsets,
+    update_user_settings,
+)
 from app.db.base import session_scope
-from app.db.models import UserSettings
+from app.db.models import User, UserSettings
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
 SETTING_LABELS: dict[str, str] = {
     "critic_mode": "Режим критика",
+    "tz": "Часовой пояс",
     "morning_digest_at": "Утренний дайджест",
     "evening_digest_at": "Вечерний дайджест",
+    "reminder_preset": "Дефолтные напоминания",
     "response_style_source": "Стиль ответа",
     "week_due_semantic": "Семантика «на неделе»",
 }
@@ -30,6 +40,16 @@ SETTING_OPTIONS: dict[str, list[tuple[str, str]]] = {
         ("always", "Всегда"),
         ("confidence", "По уверенности"),
         ("never", "Никогда"),
+    ],
+    "tz": [
+        ("Europe/Moscow", "Москва (UTC+3)"),
+        ("Europe/Kaliningrad", "Калининград (UTC+2)"),
+        ("Europe/Samara", "Самара (UTC+4)"),
+        ("Asia/Yekaterinburg", "Екатеринбург (UTC+5)"),
+        ("Asia/Almaty", "Алматы (UTC+6)"),
+        ("Asia/Tashkent", "Ташкент (UTC+5)"),
+        ("Asia/Vladivostok", "Владивосток (UTC+10)"),
+        ("UTC", "UTC"),
     ],
     "morning_digest_at": [
         ("07:00", "07:00"),
@@ -42,6 +62,11 @@ SETTING_OPTIONS: dict[str, list[tuple[str, str]]] = {
         ("21:00", "21:00"),
         ("22:00", "22:00"),
         ("23:00", "23:00"),
+    ],
+    "reminder_preset": [
+        ("minimal", "Минимум: за 15 мин / за 1 ч"),
+        ("default", "Стандарт: за 1 ч + 15 мин / за день + 1 ч"),
+        ("extra", "Подробно: за 3 ч + 1 ч + 15 мин / за день + 4 ч + 1 ч"),
     ],
     "response_style_source": [
         ("formal", "Формальный"),
@@ -60,12 +85,22 @@ SETTING_DISPLAY: dict[str, dict[str, str]] = {
 }
 
 
-def _format_settings(settings: UserSettings) -> str:
+def _setting_value(field: str, settings: UserSettings, user: User | None) -> str:
+    """Resolve the current raw value for a setting (incl. virtual fields)."""
+    if field == "tz":
+        return user.tz if user is not None else "UTC"
+    if field == "reminder_preset":
+        return reminder_preset_from_offsets(settings.default_reminder_offsets)
+    value = getattr(settings, field, None)
+    return str(value) if value is not None else "—"
+
+
+def _format_settings(settings: UserSettings, user: User | None = None) -> str:
     """Format settings into a readable message."""
     lines = ["⚙️ *Настройки*\n"]
     for field, label in SETTING_LABELS.items():
-        value = getattr(settings, field, "—")
-        display = SETTING_DISPLAY.get(field, {}).get(str(value), str(value))
+        raw = _setting_value(field, settings, user)
+        display = SETTING_DISPLAY.get(field, {}).get(raw, raw)
         lines.append(f"• {label}: {display}")
     return "\n".join(lines)
 
@@ -127,13 +162,14 @@ def create_router() -> Router:
             if user.id is None:
                 return
             settings = await get_user_settings(session, user.id)
+            user_snapshot = User(id=user.id, telegram_id=user.telegram_id, tz=user.tz)
 
         if settings is None:
             await message.answer("Настройки не найдены. Пройди /start заново.")
             return
 
         await message.answer(
-            _format_settings(settings),
+            _format_settings(settings, user_snapshot),
             parse_mode="Markdown",
             reply_markup=_settings_keyboard(),
         )
@@ -182,6 +218,10 @@ def create_router() -> Router:
                 await callback.answer("Ошибка.")
                 return
             updated = await update_user_settings(session, user.id, field, value)
+            if updated is None:
+                user_snapshot: User | None = None
+            else:
+                user_snapshot = User(id=user.id, telegram_id=user.telegram_id, tz=user.tz)
 
         if updated is None:
             await callback.answer("Не удалось обновить.")
@@ -192,7 +232,7 @@ def create_router() -> Router:
         await callback.answer(f"{label} → {display}")
         if callback.message is not None:
             await callback.message.edit_text(
-                _format_settings(updated),
+                _format_settings(updated, user_snapshot),
                 parse_mode="Markdown",
                 reply_markup=_settings_keyboard(),
             )
@@ -212,6 +252,7 @@ def create_router() -> Router:
                 await callback.answer("Ошибка.")
                 return
             settings = await get_user_settings(session, user.id)
+            user_snapshot = User(id=user.id, telegram_id=user.telegram_id, tz=user.tz)
 
         if settings is None:
             await callback.answer("Настройки не найдены.")
@@ -220,7 +261,7 @@ def create_router() -> Router:
         await callback.answer()
         if callback.message is not None:
             await callback.message.edit_text(
-                _format_settings(settings),
+                _format_settings(settings, user_snapshot),
                 parse_mode="Markdown",
                 reply_markup=_settings_keyboard(),
             )
