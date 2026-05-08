@@ -4,6 +4,7 @@ Phase 1 stored the message in ``inbox_entries`` and replied with a stub.
 Phase 2.1 added the Splitter.
 Phase 2.2 adds the full pipeline: split → time → classify → persist → reply.
 Phase 2.3 adds the Critic (conditional review of classifier output).
+Phase 2.3c replaces the deterministic reply with Courier.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from app.ai.classifier import classify_intent
+from app.ai.courier import courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.router import GroqKeyRouter
 from app.ai.splitter import split_message
@@ -47,18 +49,6 @@ def _get_router() -> GroqKeyRouter | None:
     return _groq_router
 
 
-def _pluralize_elements(n: int) -> str:
-    """Russian plural for 'элемент'."""
-    if 11 <= n % 100 <= 19:
-        return f"{n} элементов"
-    mod = n % 10
-    if mod == 1:
-        return f"{n} элемент"
-    if 2 <= mod <= 4:
-        return f"{n} элемента"
-    return f"{n} элементов"
-
-
 async def _run_pipeline(
     groq_router: GroqKeyRouter,
     text: str,
@@ -69,6 +59,8 @@ async def _run_pipeline(
     *,
     critic_mode: str = "confidence",
     confidence_threshold: float = 0.7,
+    courier_mode: str = "mix",
+    courier_style: str = "neutral",
 ) -> str:
     """Run split → time → classify → critic → persist and return a reply."""
     split_result = await split_message(groq_router, text)
@@ -102,7 +94,6 @@ async def _run_pipeline(
             classifier_results[i] = apply_verdict(cr, verdict)
 
     # Persist results
-    summaries: list[str] = []
     async with session_scope() as session:
         await log_ai_run(
             session,
@@ -133,11 +124,12 @@ async def _run_pipeline(
                 key_index=groq_router.current_key_id,
             )
 
-            kind = "📌 задача" if cr.is_task else "📝 заметка"
-            summaries.append(f"{kind}: {cr.title} [{cr.category_name}]")
-
-    header = f"Разобрал на {_pluralize_elements(len(summaries))}:\n"
-    return header + "\n".join(summaries)
+    return await courier_respond(
+        groq_router,
+        classifier_results,
+        mode=courier_mode,
+        style=courier_style,
+    )
 
 
 def create_router() -> Router:
@@ -172,6 +164,8 @@ def create_router() -> Router:
             settings = await get_user_settings(session, user.id)
             critic_mode = settings.critic_mode if settings else "confidence"
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
+            courier_mode = settings.response_style_source if settings else "mix"
+            courier_style = "neutral"
 
         logger.info(
             "inbox.text_stored",
@@ -200,6 +194,8 @@ def create_router() -> Router:
                     inbox_id,
                     critic_mode=critic_mode,
                     confidence_threshold=critic_threshold,
+                    courier_mode=courier_mode,
+                    courier_style=courier_style,
                 )
                 await message.answer(reply)
             except Exception:

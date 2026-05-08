@@ -2,6 +2,7 @@
 
 Phase 2.3a: download voice file from Telegram, transcribe via Groq Whisper,
 then run the same pipeline as text (split → time → classify → persist → reply).
+Phase 2.3c: reply via Courier instead of deterministic text.
 """
 
 from __future__ import annotations
@@ -62,6 +63,8 @@ def create_router() -> Router:
             settings = await get_user_settings(session, user.id)
             critic_mode = settings.critic_mode if settings else "confidence"
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
+            courier_mode = settings.response_style_source if settings else "mix"
+            courier_style = "neutral"
 
         groq_router = _get_router()
         if groq_router is None:
@@ -124,6 +127,8 @@ def create_router() -> Router:
                     inbox_id,
                     critic_mode=critic_mode,
                     confidence_threshold=critic_threshold,
+                    courier_mode=courier_mode,
+                    courier_style=courier_style,
                 )
                 await message.answer(reply)
 
