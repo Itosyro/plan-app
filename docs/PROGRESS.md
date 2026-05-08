@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-05-08 — Phase 3 finish: change-category button + tz/reminder в /settings (PR #31)
+
+**Сделано:**
+- `app/bot/routers/callbacks.py`:
+  - 4-я кнопка «🏷 Категория» во второй строке `task_action_keyboard`.
+  - `category_picker_keyboard(task_id, categories)` — сетка 2×N с кнопкой «↩ Назад».
+  - Хендлеры `task:pick_category:<id>` (показать пикер) и `task:set_category:<id>:<cat_id>` (применить).
+- `app/bot/services.py`:
+  - `get_user_categories_full()` — возвращает `Category[]` (а не только имена).
+  - `update_task_category()` + `TaskEvent(kind="recategorized")`.
+  - `REMINDER_PRESETS = {"minimal","default","extra"}` + `reminder_preset_from_offsets()`.
+  - `update_user_settings()` маршрутизирует виртуальные поля: `tz` → `User.tz` (валидация через `is_valid_timezone()`), `reminder_preset` → `UserSettings.default_reminder_offsets`.
+- `app/bot/routers/settings.py`:
+  - Поля `tz` (8 пресетов IANA: Москва, Калининград, Самара, Екатеринбург, Алматы, Ташкент, Владивосток, UTC) и `reminder_preset` (3 пресета) в SETTING_LABELS / SETTING_OPTIONS.
+  - `_setting_value(field, settings, user)` — резолвит виртуальные поля.
+  - `_format_settings(settings, user)` — принимает `User` для отображения tz и текущего пресета.
+- `tests/test_callbacks.py` — обновлена проверка структуры кнопок; добавлены тесты пикера и `update_task_category`.
+- `tests/test_settings.py` — добавлены тесты на tz/reminder_preset (валидация, expand to offsets, обратная мапа, fallback без user).
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 128 passed (119 + 9 новых).
+- PR ~396 LOC.
+
+**Phase 3 закрыта.** Следующее — Phase 4 (cron worker для напоминаний и daily/weekly digest).
+
+---
+
 ## 2026-05-08 — Phase 3c: /settings command with inline buttons (PR #29)
 
 **Сделано:**
