@@ -63,3 +63,19 @@ def test_no_reminder_flag() -> None:
     result = resolve_time("завтра в 11:00 совещание", _TZ, now=_NOW)
     assert result is not None
     assert result.is_reminder is False
+
+
+def test_cherez_chas() -> None:
+    result = resolve_time("через час позвонить маме", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    diff = (result.resolved_dt - _NOW).total_seconds()
+    assert 59 * 60 <= diff <= 61 * 60
+
+
+def test_cherez_nedelyu() -> None:
+    result = resolve_time("через неделю сдать отчёт", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    diff = (result.resolved_dt - _NOW).total_seconds()
+    assert 6.9 * 86400 <= diff <= 7.1 * 86400
