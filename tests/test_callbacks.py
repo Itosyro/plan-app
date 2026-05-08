@@ -1,0 +1,162 @@
+"""Tests for Phase 3b inline-button callback handlers."""
+
+from __future__ import annotations
+
+import pytest
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.bot.routers.callbacks import (
+    horizon_picker_keyboard,
+    task_action_keyboard,
+)
+from app.bot.services import (
+    delete_task,
+    get_or_create_category,
+    get_or_create_horizon,
+    get_or_create_user,
+    get_task_by_id,
+    get_tasks_by_horizon,
+    mark_task_done,
+    update_task_horizon,
+)
+from app.db.models import Task
+
+# ── Keyboard builder tests ───────────────────────────────────────────
+
+
+def test_task_action_keyboard_structure() -> None:
+    kb = task_action_keyboard(42)
+    assert len(kb.inline_keyboard) == 1
+    row = kb.inline_keyboard[0]
+    assert len(row) == 3
+    assert row[0].text == "✅ Готово"
+    assert row[0].callback_data == "task:done:42"
+    assert row[1].text == "🔄 Перенести"
+    assert row[1].callback_data == "task:pick_move:42"
+    assert row[2].text == "🗑 Удалить"
+    assert row[2].callback_data == "task:delete:42"
+
+
+def test_horizon_picker_keyboard_structure() -> None:
+    kb = horizon_picker_keyboard(7)
+    buttons = [btn for row in kb.inline_keyboard for btn in row]
+    data_values = [btn.callback_data for btn in buttons]
+    assert "task:move:7:today" in data_values
+    assert "task:move:7:tomorrow" in data_values
+    assert "task:move:7:week" in data_values
+    assert "task:move:7:month" in data_values
+    assert "task:move:7:year" in data_values
+    assert "task:move:7:someday" in data_values
+    assert "task:cancel:7" in data_values
+
+
+# ── Service-level tests for callback operations ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mark_task_done_via_callback(session: AsyncSession) -> None:
+    user, _ = await get_or_create_user(session, telegram_id=200)
+    await session.commit()
+    assert user.id is not None
+
+    cat = await get_or_create_category(session, user.id, "Работа")
+    hor = await get_or_create_horizon(session, user.id, "today")
+    task = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="Задача для кнопки",
+        priority="high",
+    )
+    session.add(task)
+    await session.commit()
+    assert task.id is not None
+
+    updated = await mark_task_done(session, task, user.id)
+    assert updated.status == "done"
+    await session.commit()
+
+    remaining = await get_tasks_by_horizon(session, user.id, "today")
+    assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_task_via_callback(session: AsyncSession) -> None:
+    user, _ = await get_or_create_user(session, telegram_id=201)
+    await session.commit()
+    assert user.id is not None
+
+    cat = await get_or_create_category(session, user.id, "Дом")
+    hor = await get_or_create_horizon(session, user.id, "week")
+    task = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="Удалить меня",
+        priority="low",
+    )
+    session.add(task)
+    await session.commit()
+    assert task.id is not None
+    task_id = task.id
+
+    await delete_task(session, task, user.id)
+    await session.commit()
+
+    found = await get_task_by_id(session, user.id, task_id)
+    assert found is None
+
+
+@pytest.mark.asyncio
+async def test_move_task_to_different_horizon(session: AsyncSession) -> None:
+    user, _ = await get_or_create_user(session, telegram_id=202)
+    await session.commit()
+    assert user.id is not None
+
+    cat = await get_or_create_category(session, user.id, "Работа")
+    hor_today = await get_or_create_horizon(session, user.id, "today")
+    task = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor_today.id,
+        title="Перенести на неделю",
+        priority="medium",
+    )
+    session.add(task)
+    await session.commit()
+    assert task.id is not None
+
+    await update_task_horizon(session, task, "week", user.id)
+    await session.commit()
+
+    today_tasks = await get_tasks_by_horizon(session, user.id, "today")
+    assert len(today_tasks) == 0
+
+    week_tasks = await get_tasks_by_horizon(session, user.id, "week")
+    assert len(week_tasks) == 1
+    assert week_tasks[0].title == "Перенести на неделю"
+
+
+@pytest.mark.asyncio
+async def test_get_task_by_id_wrong_user(session: AsyncSession) -> None:
+    user1, _ = await get_or_create_user(session, telegram_id=203)
+    user2, _ = await get_or_create_user(session, telegram_id=204)
+    await session.commit()
+    assert user1.id is not None
+    assert user2.id is not None
+
+    cat = await get_or_create_category(session, user1.id, "Личное")
+    hor = await get_or_create_horizon(session, user1.id, "today")
+    task = Task(
+        user_id=user1.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="Чужая задача",
+        priority="low",
+    )
+    session.add(task)
+    await session.commit()
+    assert task.id is not None
+
+    found = await get_task_by_id(session, user2.id, task.id)
+    assert found is None

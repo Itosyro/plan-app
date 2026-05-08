@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.routers.callbacks import task_action_keyboard
 from app.bot.services import (
     get_all_notes,
     get_categories_with_counts,
@@ -91,7 +92,17 @@ def create_router() -> Router:
             tasks = await get_tasks_by_horizon(session, user.id, slug)
 
         title = HORIZON_TITLES.get(slug, slug)
+        if not tasks:
+            await message.answer(_format_task_list(tasks, title), parse_mode="Markdown")
+            return
+
         await message.answer(_format_task_list(tasks, title), parse_mode="Markdown")
+        for task in tasks:
+            if task.id is not None:
+                await message.answer(
+                    f"{task.title}",
+                    reply_markup=task_action_keyboard(task.id),
+                )
 
     @router.message(Command("today"))
     async def cmd_today(message: Message) -> None:
