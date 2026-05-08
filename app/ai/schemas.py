@@ -7,6 +7,7 @@ Phase 2.2: Classifier + ResolvedTime schemas.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -33,10 +34,12 @@ class ClassifierResult(BaseModel):
     """Output of the Classifier LLM call."""
 
     category_name: str = Field(description="Category name in Russian")
-    horizon: str = Field(
+    horizon: Literal["today", "tomorrow", "week", "month", "year", "someday"] = Field(
         description="Horizon slug: today/tomorrow/week/month/year/someday",
     )
-    priority: str = Field(description="Priority: low/medium/high")
+    priority: Literal["low", "medium", "high"] = Field(
+        description="Priority: low/medium/high",
+    )
     is_task: bool = Field(description="True if task, False if note")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score")
     title: str = Field(description="Short title in Russian, max 50 chars")
