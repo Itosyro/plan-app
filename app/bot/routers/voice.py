@@ -3,6 +3,7 @@
 Phase 2.3a: download voice file from Telegram, transcribe via Groq Whisper,
 then run the same pipeline as text (split → time → classify → persist → reply).
 Phase 2.3c: reply via Courier instead of deterministic text.
+Phase 2.3d: reorder detection inherited from text._run_pipeline.
 """
 
 from __future__ import annotations

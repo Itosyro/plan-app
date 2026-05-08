@@ -263,6 +263,67 @@ async def persist_classification(
     return row
 
 
+# ── Phase 2.3d reorder ────────────────────────────────────────────────
+
+
+async def find_task_by_query(
+    session: AsyncSession,
+    user_id: int,
+    query: str,
+) -> Task | None:
+    """Find a user's task whose title best matches *query*.
+
+    Uses a simple case-insensitive LIKE search.  Returns the most
+    recently created match, or ``None`` if nothing found.
+    """
+    pattern = f"%{query}%"
+    result = await session.exec(
+        select(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.title.ilike(pattern),  # type: ignore[union-attr]
+            Task.status != "done",
+        )
+        .order_by(Task.created_at.desc()),  # type: ignore[union-attr]
+    )
+    return result.first()
+
+
+async def update_task_horizon(
+    session: AsyncSession,
+    task: Task,
+    new_horizon_slug: str,
+    user_id: int,
+) -> Task:
+    """Move a task to a different horizon and log the event."""
+    old_horizon_id = task.horizon_id
+    new_horizon = await get_or_create_horizon(session, user_id, new_horizon_slug)
+    task.horizon_id = new_horizon.id
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="reordered",
+                payload_json={
+                    "old_horizon_id": old_horizon_id,
+                    "new_horizon_slug": new_horizon_slug,
+                },
+            ),
+        )
+        await session.flush()
+
+    logger.info(
+        "task.reordered",
+        task_id=task.id,
+        user_id=user_id,
+        new_horizon=new_horizon_slug,
+    )
+    return task
+
+
 async def log_ai_run(
     session: AsyncSession,
     *,
