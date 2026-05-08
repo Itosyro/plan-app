@@ -3,6 +3,7 @@
 Phase 1: ``users``, ``user_settings``, ``inbox_entries``, ``telegram_updates``.
 Phase 2.2: ``categories``, ``horizons``, ``tasks``, ``notes``, ``ai_runs``,
 ``task_events``.
+Phase 4a: ``reminders``.
 """
 
 from __future__ import annotations
@@ -193,4 +194,28 @@ class TaskEvent(SQLModel, table=True):
         default=None,
         sa_column=Column(JSON, nullable=True),
     )
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+# ── Phase 4a ─────────────────────────────────────────────────────────
+
+
+class Reminder(SQLModel, table=True):
+    """Scheduled reminder for a task.
+
+    The cron worker (``app/workers/scheduler.py``, Phase 4b) polls this table
+    every minute, sends Telegram messages for rows where ``status='pending'``
+    and ``fire_at <= now()``, and flips them to ``sent``/``failed``.
+    """
+
+    __tablename__ = "reminders"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    fire_at: datetime = Field(index=True)  # UTC, no tz offset stored
+    status: str = Field(default="pending", max_length=16, index=True)
+    attempts: int = Field(default=0)
+    last_error: str | None = Field(default=None)
+    sent_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)

@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-05-08 — Phase 4a: Reminder model + migration + persist extension
+
+**Сделано:**
+- `app/db/models.py` — модель `Reminder` (table=`reminders`):
+  - `id`, `user_id` (FK→users.id, indexed), `task_id` (FK→tasks.id, indexed), `fire_at` (DateTime UTC, indexed), `status` (`pending|sent|failed|cancelled`, default `pending`, indexed, max_length 16), `attempts` (default 0), `last_error`, `sent_at`, `created_at`.
+- `alembic/versions/2026_05_08_2015-0003_phase_4_reminders.py` — миграция: `CREATE TABLE reminders` + 4 индекса (`user_id`, `task_id`, `fire_at`, `status`).
+- `app/bot/services.py`:
+  - `DEFAULT_REMINDER_OFFSETS = {"same_day": [60, 15], "multi_day": [1440, 60]}` — фолбэк, если у пользователя нет своих.
+  - `_select_reminder_offsets(cr, defaults)` — explicit `cr.reminder_offsets` побеждают defaults; иначе `same_day` для today/tomorrow, `multi_day` для остальных горизонтов.
+  - `_to_naive_utc(dt)` — нормализация tz (DateTime в БД хранится без offset).
+  - `schedule_reminders(...)` — создаёт `Reminder` rows, пропуская офсеты, у которых `fire_at <= now`.
+  - `persist_classification(...)` теперь принимает `default_reminder_offsets` и после `Task.flush()` планирует `Reminder` rows, если `due_at is not None`.
+- `app/bot/routers/text.py` — `_run_pipeline` пробрасывает `default_reminder_offsets` (читается из `UserSettings.default_reminder_offsets`) в `persist_classification`.
+- `tests/test_reminders.py` — 13 новых тестов: офсетная логика (5), `schedule_reminders` rows/skip-past/empty (3), `persist_classification` create/no-due_at/notes/explicit/multi-day (5).
+
+**Верификация:**
+- `uv run ruff format .` + `uv run ruff check .` — чисто.
+- `uv run pytest -q` — 145 passed (132 + 13 новых).
+- PR ~340 LOC.
+
+**Не сделано (Phase 4b, отдельный PR):**
+- `app/workers/scheduler.py` (cron tick: shipping pending reminders, retry/fail mark).
+- `app/bot/digest.py` (morning/evening daily digest builders).
+- `render.yaml` cron job для tick'ов раз в минуту.
+- e2e Phase 4 (digest + reminders end-to-end).
+
+---
+
 ## 2026-05-08 — Code review: critical & important fixes + skills bundle
 
 **Сделано:**
