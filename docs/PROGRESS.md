@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-05-08 — e2e Pipeline Tests (PR #25)
+
+**Сделано:**
+- `tests/test_e2e_pipeline.py` — 8 end-to-end тестов, проверяющих полный pipeline (reorder detect → split → time → classify → persist → courier reply) с мокнутыми LLM-вызовами и in-memory БД.
+- Тест-кейсы:
+  1. Одна задача: «утром пробежка» → 1 task Здоровье/today.
+  2. Две задачи: «купить хлеб и молоко, записаться к врачу» → 2 tasks.
+  3. Задача + заметка: «позвонить Олегу, книга про AI» → 1 task + 1 note.
+  4. Рабочие дедлайны: «до пятницы отчёт, в 11 совещание» → 2 tasks Работа.
+  5. Филлер: «ну так, окей» → 0 задач.
+  6. Три элемента: «йога, ужин, идея про стартап» → 2 tasks + 1 note.
+  7. Одна заметка: «мысль про архитектуру» → 1 note.
+  8. Срочная задача: «срочно! позвонить в банк» → 1 high-priority task.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 91 passed (83 + 8 новых).
+- PR ~500 LOC (только тесты).
+
+---
+
 ## 2026-05-08 — Phase 2.3d: Reorder — detect and execute task rescheduling (PR #23)
 
 **Сделано:**
