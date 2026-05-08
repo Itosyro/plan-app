@@ -25,6 +25,7 @@ from app.bot.services import is_update_processed, record_update
 from app.db.base import dispose_engine, init_engine, session_scope
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
+from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        scheduler_handle: tuple[object, object] | None = None
         if settings.database_url:
             init_engine(settings.database_url)
             logger.info("db.engine.init")
@@ -56,9 +58,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 drop_pending_updates=True,
             )
             logger.info("bot.webhook.set", url=settings.webhook_url)
+        if bot is not None and settings.database_url and settings.scheduler_inproc_enabled:
+            task, stop = start_inproc_scheduler(
+                bot,
+                interval=settings.scheduler_tick_interval_seconds,
+            )
+            scheduler_handle = (task, stop)
+            logger.info(
+                "scheduler.inproc.start",
+                interval=settings.scheduler_tick_interval_seconds,
+            )
         try:
             yield
         finally:
+            if scheduler_handle is not None:
+                task, stop = scheduler_handle
+                # mypy: handle is Any-typed because of the AsyncIterator boundary
+                await stop_inproc_scheduler(task, stop)  # type: ignore[arg-type]
             if bot is not None:
                 await bot.session.close()
             await dispose_engine()
