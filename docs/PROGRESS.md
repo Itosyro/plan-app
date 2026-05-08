@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-05-08 — Phase 1.5: GitHub Actions CI + driver hotfix
+
+**Сделано:**
+- `.github/workflows/ci.yml` — pipeline на каждый push в `main` и на каждый PR: чекаут → `astral-sh/setup-uv` (с кэшом по `uv.lock`) → `uv sync --frozen` → `ruff format --check` → `ruff check` → `pytest -q`. Concurrency: новая попытка отменяет предыдущую на той же ветке.
+- БД-драйвер: бэквард-совместимая нормализация URL в `app/db/base.py` и `alembic/env.py` — голый `postgresql://` (вид Neon copy-paste) теперь автоматически становится `postgresql+psycopg://`. Это снимает требование вручную править connection-string и даёт использовать один драйвер (psycopg v3) и для async-движка приложения, и для синхронного раннера Alembic. SQLite URL получает суффикс `+aiosqlite`.
+- `tests/test_smoke.py` — `monkeypatch`-фикстура `_clean_env`, чтобы тесты дефолтных настроек не падали на дев-машинах с уже экспортированными `TELEGRAM_BOT_TOKEN`/`DATABASE_URL`/`GROQ_API_KEYS`.
+- Карта проекта (`.agents/skills/plan-app-internal/SKILL.md`): добавлены §11 «Merge-workflow» и §12 «PR tooling» — фиксируют, что мердж делает AI-агент через REST API + user-PAT, а не юзер через GitHub UI.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто.
+- `uv run pytest -q` — 14 passed.
+- `uv run alembic upgrade head` против настоящей Neon-БД — 5 таблиц созданы.
+
+**Не сделано (намеренно):**
+- Никаких бизнес-изменений в коде бота / API.
+- Render-деплой и e2e-проверка живого бота — отдельным шагом.
+
+---
+
 ## 2026-05-08 — Phase 1: Minimal bot (webhook + DB + onboarding)
 
 **Сделано:**
