@@ -1,21 +1,55 @@
 """Catch-all router for plain-text messages (after onboarding).
 
-Phase 1 just stores the message in ``inbox_entries`` and replies with a
-short acknowledgement. Phase 2 will hand the entry off to the AI pipeline
-(Splitter → Classifier → Critic).
+Phase 1 stored the message in ``inbox_entries`` and replied with a stub.
+Phase 2.1 adds the Splitter: after storing the message, we run the AI
+splitter in the background and reply with a short acknowledgement.
 """
 
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.ai.router import GroqKeyRouter
+from app.ai.splitter import split_message
 from app.bot.courier_templates import NOT_ONBOARDED, TEXT_ACK_PHASE1
 from app.bot.services import get_or_create_user, store_inbox_text
 from app.db.base import session_scope
+from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _get_router() -> GroqKeyRouter | None:
+    """Build a GroqKeyRouter from settings, or None if no keys configured."""
+    keys = get_settings().groq_keys_list
+    if not keys:
+        return None
+    return GroqKeyRouter(keys=keys)
+
+
+async def _run_splitter(groq_router: GroqKeyRouter, text: str, tg_user_id: int) -> None:
+    """Run the splitter and log the result.
+
+    Exceptions are caught so a splitter failure never crashes the webhook.
+    """
+    try:
+        result = await split_message(groq_router, text)
+        logger.info(
+            "splitter.result",
+            tg_user_id=tg_user_id,
+            units_count=len(result.units),
+            text_len=len(text),
+        )
+    except Exception:
+        logger.exception(
+            "splitter.error",
+            tg_user_id=tg_user_id,
+            text_len=len(text),
+        )
 
 
 def create_router() -> Router:
@@ -24,7 +58,7 @@ def create_router() -> Router:
 
     @router.message(F.text)
     async def handle_text(message: Message) -> None:
-        """Persist incoming text and acknowledge."""
+        """Persist incoming text, run Splitter in background, acknowledge."""
         if message.from_user is None or message.text is None:
             return
 
@@ -51,6 +85,16 @@ def create_router() -> Router:
             user_id=message.from_user.id,
             text_len=len(message.text),
         )
+
+        # Phase 2.1: fire splitter in background so webhook responds fast.
+        groq_router = _get_router()
+        if groq_router is not None:
+            task = asyncio.create_task(
+                _run_splitter(groq_router, message.text, message.from_user.id),
+            )
+            # Prevent the task from being garbage-collected before completion.
+            task.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
+
         await message.answer(TEXT_ACK_PHASE1)
 
     return router
