@@ -20,6 +20,7 @@ from aiogram.types import Message
 
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.quote_replies import reply_to
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
@@ -105,7 +106,14 @@ def create_router() -> Router:
         # Send a placeholder and edit it progressively once the
         # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
         # then the real reply types itself line-by-line.
-        placeholder = await message.answer("⏳ Разбираю…")
+        # ``reply_parameters`` anchors the entire reply chain to the
+        # user's message — Telegram clients render a "↗" link the user
+        # can tap to scroll back to what they originally said. Bot API
+        # 7.0+ feature, harmless on older clients.
+        placeholder = await message.answer(
+            "⏳ Разбираю…",
+            reply_parameters=reply_to(chat_id=chat_id, message_id=user_message_id),
+        )
 
         async def _background() -> None:
             try:
