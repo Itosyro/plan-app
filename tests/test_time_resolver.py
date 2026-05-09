@@ -108,3 +108,50 @@ def test_utrom_custom_anchor() -> None:
     assert result is not None
     assert result.resolved_dt is not None
     assert result.resolved_dt.hour == 8
+
+
+# ── R-NEW-C-2: «сегодня в HH:MM» past now must NOT roll forward ──────
+
+
+def test_segodnya_v_hhmm_past_stays_today() -> None:
+    """Regression: «сегодня в 10:00» when *now* is 14:00 must resolve
+    to TODAY at 10:00 — NOT next week.
+
+    Before the fix the rollover branch (originally meant for «во
+    вторник» on Tuesday) added 7 days for any past same-day datetime.
+    Users who said «сегодня в 10:00» retroactively saw a task scheduled
+    seven days later.
+    """
+    now = datetime(2026, 5, 9, 14, 0, tzinfo=ZoneInfo(_TZ))
+    result = resolve_time("сегодня в 10:00 позвонить маме", _TZ, now=now)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.date() == now.date(), (
+        f"expected today ({now.date()}), got {result.resolved_dt.date()}"
+    )
+    assert result.resolved_dt.hour == 10
+    assert result.horizon_hint == "today"
+
+
+def test_segodnya_v_hhmm_future_still_today() -> None:
+    """«сегодня в 16:00» at 14:00 must keep horizon=today (sanity)."""
+    now = datetime(2026, 5, 9, 14, 0, tzinfo=ZoneInfo(_TZ))
+    result = resolve_time("сегодня в 16:00 встреча", _TZ, now=now)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.date() == now.date()
+    assert result.resolved_dt.hour == 16
+    assert result.horizon_hint == "today"
+
+
+def test_weekday_on_same_weekday_still_rolls_forward() -> None:
+    """«во вторник» when today *is* Tuesday must still resolve to NEXT
+    Tuesday — preserves the original intent of the rollover branch.
+    """
+    # 12 May 2026 is a Tuesday.
+    now_tue = datetime(2026, 5, 12, 14, 0, tzinfo=ZoneInfo(_TZ))
+    result = resolve_time("во вторник зайти к врачу", _TZ, now=now_tue)
+    assert result is not None
+    assert result.resolved_dt is not None
+    delta_days = (result.resolved_dt.date() - now_tue.date()).days
+    assert delta_days == 7, f"expected next Tuesday (+7d), got +{delta_days}d"

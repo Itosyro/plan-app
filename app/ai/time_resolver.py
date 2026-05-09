@@ -169,8 +169,16 @@ def resolve_time(
         logger.debug("time_resolver.no_parse", fragment=fragment, preprocessed=preprocessed)
         return None
 
-    # «во вторник» (если сегодня вторник) -> следующий вторник
-    if dt.date() == now.date() and dt <= now and "через" not in text.lower():
+    # «во вторник» (если сегодня вторник) -> следующий вторник.
+    # НО — не для явного «сегодня в HH:MM»: пользователь сам сказал,
+    # что речь про сегодня, и подкидывать ему +7 дней категорически
+    # неверно (раньше «сегодня в 10:00» в 14:00 → задача через
+    # неделю). Если время уже прошло, оставляем дату сегодняшней —
+    # вызывающая сторона/UI решит, что показать («уже прошло» или
+    # ничего). См. ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-2``.
+    text_lower = text.lower()
+    explicit_today = bool(re.search(r"\b(сегодня|сейчас|today)\b", text_lower))
+    if dt.date() == now.date() and dt <= now and "через" not in text_lower and not explicit_today:
         dt = dt + timedelta(days=7)
 
     horizon_hint = _horizon_from_delta(now, dt)
