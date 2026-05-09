@@ -11,7 +11,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.bot.courier_templates import NOT_ONBOARDED
-from app.bot.routers.callbacks import task_action_keyboard
+from app.bot.routers.callbacks import horizon_list_keyboard
 from app.bot.services import (
     get_all_notes,
     get_categories_with_counts,
@@ -22,6 +22,13 @@ from app.db.base import session_scope
 from app.db.models import Note, Task
 from app.shared.logging import get_logger
 from app.shared.time import format_due_local
+
+# Cap the number of tasks shown per /today-like command. With four
+# action buttons per row, 25 tasks fills 100 inline-keyboard buttons,
+# Telegram's hard limit. We pick a tighter cap so the overflow note
+# is rare-but-helpful and the keyboard stays readable on mobile. See
+# docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6.
+HORIZON_PAGE_SIZE = 20
 
 logger = get_logger(__name__)
 
@@ -41,7 +48,13 @@ PRIORITY_ICONS: dict[str, str] = {
 }
 
 
-def _format_task_list(tasks: list[Task], title: str, user_tz: str) -> str:
+def _format_task_list(
+    tasks: list[Task],
+    title: str,
+    user_tz: str,
+    *,
+    total_count: int | None = None,
+) -> str:
     """Format a list of tasks into a readable plain-text message.
 
     Plain text only — ``parse_mode`` is intentionally **not** set on send,
@@ -51,6 +64,11 @@ def _format_task_list(tasks: list[Task], title: str, user_tz: str) -> str:
 
     ``task.due_at`` is naive UTC; rendered in *user_tz* so the user sees
     their own clock-time. See ``docs/REVIEW-2026-05-09.md::C-2``.
+
+    ``total_count`` is the unfiltered task count for the horizon. When
+    larger than ``len(tasks)``, the message includes an overflow line
+    so the user knows there are more tasks than rendered (paged out
+    by ``HORIZON_PAGE_SIZE``). See R-NEW-I-6.
     """
     if not tasks:
         return f"📋 {title}\n\nПусто — ни одной задачи."
@@ -65,7 +83,14 @@ def _format_task_list(tasks: list[Task], title: str, user_tz: str) -> str:
                 due_part = f" · {local}"
         lines.append(f"{i}. {icon} {task.title}{due_part}")
 
-    lines.append(f"\nВсего: {len(tasks)}")
+    shown = len(tasks)
+    if total_count is not None and total_count > shown:
+        lines.append(
+            f"\nПоказано {shown} из {total_count}. "
+            "Используй /search или фильтр по категории, чтобы найти остальные."
+        )
+    else:
+        lines.append(f"\nВсего: {shown}")
     return "\n".join(lines)
 
 
@@ -90,7 +115,14 @@ def create_router() -> Router:
     router = Router(name="commands")
 
     async def _horizon_handler(message: Message, slug: str) -> None:
-        """Generic handler for horizon-based commands."""
+        """Generic handler for horizon-based commands.
+
+        Sends *one* message per call: the formatted task list with a
+        single compact action keyboard listing all visible tasks.
+        Replaces the previous N+1 message blast (1 summary + N
+        per-task messages with their own keyboards). See
+        ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6``.
+        """
         if message.from_user is None:
             return
 
@@ -105,20 +137,22 @@ def create_router() -> Router:
             if user.id is None:
                 return
             user_tz = user.tz
-            tasks = await get_tasks_by_horizon(session, user.id, slug)
+            all_tasks = await get_tasks_by_horizon(session, user.id, slug)
 
         title = HORIZON_TITLES.get(slug, slug)
-        if not tasks:
-            await message.answer(_format_task_list(tasks, title, user_tz))
+        if not all_tasks:
+            await message.answer(_format_task_list(all_tasks, title, user_tz))
             return
 
-        await message.answer(_format_task_list(tasks, title, user_tz))
-        for task in tasks:
-            if task.id is not None:
-                await message.answer(
-                    f"{task.title}",
-                    reply_markup=task_action_keyboard(task.id),
-                )
+        # Cap the visible page so the inline keyboard stays under
+        # Telegram's 100-button limit and the message is readable.
+        visible = all_tasks[:HORIZON_PAGE_SIZE]
+        text = _format_task_list(visible, title, user_tz, total_count=len(all_tasks))
+        indices = [(i, t.id) for i, t in enumerate(visible, 1) if t.id is not None]
+        if indices:
+            await message.answer(text, reply_markup=horizon_list_keyboard(indices))
+        else:
+            await message.answer(text)
 
     @router.message(Command("today"))
     async def cmd_today(message: Message) -> None:

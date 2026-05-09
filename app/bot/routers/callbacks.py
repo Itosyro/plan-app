@@ -80,6 +80,34 @@ def task_action_keyboard(task_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def horizon_list_keyboard(tasks_with_indices: list[tuple[int, int]]) -> InlineKeyboardMarkup:
+    """Build a compact action keyboard listing every task in a horizon view.
+
+    Each task gets one keyboard row of four emoji-only buttons:
+    ``N ✅``, ``N 🔄``, ``N 🗑``, ``N 🏷`` (where ``N`` is the
+    1-based row number shown in the summary). The callback_data
+    payload is identical to :func:`task_action_keyboard` so all
+    existing handlers work unchanged. Replaces the per-task message
+    spam in ``/today``-style commands. See
+    ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6``.
+
+    ``tasks_with_indices`` is a list of ``(index, task_id)`` pairs.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, task_id in tasks_with_indices:
+        rows.append(
+            [
+                InlineKeyboardButton(text=f"{idx} ✅", callback_data=f"task:done:{task_id}"),
+                InlineKeyboardButton(text=f"{idx} 🔄", callback_data=f"task:pick_move:{task_id}"),
+                InlineKeyboardButton(text=f"{idx} 🗑", callback_data=f"task:delete:{task_id}"),
+                InlineKeyboardButton(
+                    text=f"{idx} 🏷", callback_data=f"task:pick_category:{task_id}"
+                ),
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def category_picker_keyboard(task_id: int, categories: list[Category]) -> InlineKeyboardMarkup:
     """Build the category-selection keyboard for changing task category."""
     rows: list[list[InlineKeyboardButton]] = []
