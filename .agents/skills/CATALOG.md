@@ -22,6 +22,8 @@
 | [`using-uv/SKILL.md`](./using-uv/SKILL.md) | Cheat-sheet по uv: sync / add / lock / run, что коммитить, как чинит CI. |
 | [`requesting-code-review/SKILL.md`](./requesting-code-review/SKILL.md) | Перед отправкой работы на review (sub-agent или fresh chat). |
 | [`socraticode-principles/SKILL.md`](./socraticode-principles/SKILL.md) | Перед навигацией по незнакомому коду / большим рефактором. Hybrid search + dependency graph + blast-radius. |
+| [`tg-bot-api/SKILL.md`](./tg-bot-api/SKILL.md) | Перед добавлением новой Telegram-фичи. Что есть в Bot API 10.0, чего раньше не было. |
+| [`python-best-practices/SKILL.md`](./python-best-practices/SKILL.md) | Перед написанием/правкой Python кода. Async, типы, FastAPI, SQLAlchemy 2.0 async, Pydantic v2, pytest, ruff, mypy. |
 
 ---
 
@@ -62,6 +64,67 @@
 | [`obra/dispatching-parallel-agents/SKILL.md`](./obra/dispatching-parallel-agents/SKILL.md) | Запуск нескольких суб-агентов параллельно. |
 | [`obra/subagent-driven-development/SKILL.md`](./obra/subagent-driven-development/SKILL.md) | Делегировать sub-agent'у целые этапы. |
 | [`obra/using-git-worktrees/SKILL.md`](./obra/using-git-worktrees/SKILL.md) | Параллельная работа над несколькими ветками без stash. |
+
+---
+
+## Скиллы из `VoltAgent/awesome-claude-code-subagents` (бандл)
+
+Кураторская подборка из самой популярной коллекции subagent'ов
+(20K+ stars). Лицензия MIT. Источник + commit зафиксированы в
+`voltagent/SOURCE.md`.
+
+26 файлов под наш стек. Эти .md написаны как Claude Code subagent'ы
+с YAML frontmatter, но в Devin читай их **как обычные методички**.
+
+### Language / framework
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/python-pro.md`](./voltagent/python-pro.md) | Глубокий Python: типы, async, packaging, ruff, mypy. |
+| [`voltagent/fastapi-developer.md`](./voltagent/fastapi-developer.md) | FastAPI deep-dive: lifespan, DI, Pydantic v2. |
+| [`voltagent/sql-pro.md`](./voltagent/sql-pro.md) | Сложный SQL: оконные функции, CTE, оптимизация. |
+
+### Quality & security
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/code-reviewer.md`](./voltagent/code-reviewer.md) | Расширенный чек-лист для PR review. |
+| [`voltagent/architect-reviewer.md`](./voltagent/architect-reviewer.md) | Ревью архитектурных решений. |
+| [`voltagent/debugger.md`](./voltagent/debugger.md) | Подходы к дебагу как у профи. |
+| [`voltagent/error-detective.md`](./voltagent/error-detective.md) | Root-cause analysis по логам/трейсам. |
+| [`voltagent/qa-expert.md`](./voltagent/qa-expert.md) | QA-планирование, тест-стратегии. |
+| [`voltagent/test-automator.md`](./voltagent/test-automator.md) | Автоматизация тестов на разных уровнях. |
+| [`voltagent/security-auditor.md`](./voltagent/security-auditor.md) | Security review с OWASP/CWE. |
+| [`voltagent/performance-engineer.md`](./voltagent/performance-engineer.md) | Профайлинг и оптимизация. |
+
+### Data / AI
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/postgres-pro.md`](./voltagent/postgres-pro.md) | Postgres tuning, индексы, EXPLAIN. |
+| [`voltagent/database-optimizer.md`](./voltagent/database-optimizer.md) | Оптимизация запросов и схем. |
+| [`voltagent/ai-engineer.md`](./voltagent/ai-engineer.md) | LLM продакшн (RAG, vector DB, prompt eng). |
+| [`voltagent/llm-architect.md`](./voltagent/llm-architect.md) | Высокоуровневая архитектура LLM-приложений. |
+| [`voltagent/prompt-engineer.md`](./voltagent/prompt-engineer.md) | Техники промптинга (CoT, few-shot, etc). |
+
+### Core development
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/backend-developer.md`](./voltagent/backend-developer.md) | Backend паттерны общего назначения. |
+| [`voltagent/api-designer.md`](./voltagent/api-designer.md) | REST/GraphQL дизайн. |
+| [`voltagent/frontend-developer.md`](./voltagent/frontend-developer.md) | Phase 5 mini-app. |
+| [`voltagent/fullstack-developer.md`](./voltagent/fullstack-developer.md) | Phase 5 mini-app FE+BE. |
+
+### Infrastructure
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/docker-expert.md`](./voltagent/docker-expert.md) | Docker best practices. |
+| [`voltagent/database-administrator.md`](./voltagent/database-administrator.md) | Backup, replication, monitoring. |
+| [`voltagent/security-engineer.md`](./voltagent/security-engineer.md) | Infra security (secrets, IAM, network). |
+| [`voltagent/devops-incident-responder.md`](./voltagent/devops-incident-responder.md) | Инциденты и постмортемы. |
+
+### Developer experience
+| Скилл | Применимость |
+|---|---|
+| [`voltagent/refactoring-specialist.md`](./voltagent/refactoring-specialist.md) | Методы рефакторинга. |
+| [`voltagent/documentation-engineer.md`](./voltagent/documentation-engineer.md) | Техническая документация. |
 
 ---
 
@@ -120,7 +183,8 @@
 └── writing-prs/SKILL.md                ~5 KB
 ```
 
-Итого ~600 КБ. Норм.
+Итого ~2.6 МБ после бандлинга anthropic/, obra/, voltagent/.
+35+ SKILL.md файлов на момент 2026-05-09.
 
 ---
 

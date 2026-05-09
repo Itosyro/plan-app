@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-05-09 — Skills bundle expansion + полный merge train
+
+**PR #60 (этот)** — расширение `.agents/skills/` для будущих агентов.
+**PR'ы #50..#59** — все смержены в main (см. предыдущую запись).
+
+* Добавлен `.agents/skills/voltagent/` — кураторская подборка из
+  [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents)
+  (20K+ stars, MIT, commit `6f804f0c`). 26 .md файлов под наш стек:
+  python-pro, fastapi-developer, sql-pro, code-reviewer,
+  architect-reviewer, debugger, error-detective, qa-expert,
+  test-automator, security-auditor, performance-engineer,
+  postgres-pro, database-optimizer, ai-engineer, llm-architect,
+  prompt-engineer, backend-developer, api-designer, frontend-developer,
+  fullstack-developer, docker-expert, database-administrator,
+  security-engineer, devops-incident-responder, refactoring-specialist,
+  documentation-engineer.
+* Добавлен `tg-bot-api/SKILL.md` — выжимка по актуальной (Bot API 10.0,
+  8 мая 2026) Telegram Bot API: что есть, что используем, что НЕ
+  используем, наши гочки G-1..G-10 для бота, ссылки на core.telegram.org/bots/api.
+* Добавлен `python-best-practices/SKILL.md` — 12 секций конкретных
+  правил для Python в этом проекте: async/await, типы (нет Any/getattr),
+  Pydantic v2, SQLAlchemy 2.0 async, pytest async, ruff/mypy, uv,
+  structlog, naive UTC, security, perf, CI.
+* Полностью переписан `docs/PROMPT-FOR-NEXT-SESSION.md`: 730+ строк
+  вместо 400. Главные правила первыми (в т.ч. «ты делаешь всё сам:
+  мержишь, пушишь, обновляешь docs»), ASCII-диаграмма архитектуры,
+  workflow A/B/C/D для разных типов задач, расширенные грабли
+  (G-1..G-18), шаблоны HANDOFF и PR описаний, контрольные чек-листы.
+* Обновлён `.agents/skills/CATALOG.md`: добавлены строки для новых
+  custom skills и целая новая секция voltagent/ (5 подкатегорий).
+* Создан `docs/HANDOFF-2026-05-09-v6.md` (этот хэндофф).
+* CI: ruff format + check clean, mypy 0 errors, **217 tests passed**.
+* Прод после мержа: https://plan-app-t6nx.onrender.com/healthz → 200 OK.
+
+Размер `.agents/skills/`: ~600 КБ → ~2.6 МБ. SKILL.md файлов: 17 → 35+.
+
+---
+
 ## 2026-05-09 — Super-review v2: 6 critical findings closed
 
 **PRs #50 .. #58** — глубокое второе ревью поверх первого + фиксы.
