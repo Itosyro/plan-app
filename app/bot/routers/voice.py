@@ -70,6 +70,15 @@ def create_router() -> Router:
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
             courier_mode = settings.response_style_source if settings else "mix"
             courier_style = settings.courier_template_style if settings else "neutral"
+            # Зеркалит ``text.py`` — без этого голосовые юзеры всегда
+            # получали глобальный default reminder preset, игнорируя
+            # пользовательскую настройку ``reminder_preset``.
+            # См. ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-6``.
+            default_offsets: dict[str, list[int]] | None = (
+                {k: list(v) for k, v in settings.default_reminder_offsets.items()}
+                if settings
+                else None
+            )
             morning_anchor = settings.morning_anchor if settings else "09:00"
             evening_anchor = settings.evening_anchor if settings else "19:00"
 
@@ -136,6 +145,7 @@ def create_router() -> Router:
                     confidence_threshold=critic_threshold,
                     courier_mode=courier_mode,
                     courier_style=courier_style,
+                    default_reminder_offsets=default_offsets,
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
                 )
