@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-05-09 — Super-review всего репо перед Phase 5
+
+**Контекст:**
+Юзер попросил сделать «супер-ревью» всего проекта по чек-листу из
+`.agents/skills/code-review/SKILL.md` перед тем как стартовать Phase 5
+(mini-app). Прошлое мега-ревью было 2026-05-08
+(`docs/REVIEW-findings.md`, PR #37) — все его C/I пункты починены и
+закрыты. Этот PR — **только документ с новыми находками**, никакого
+production-кода не правит.
+
+**Сделано:**
+- Прогнал по всем 10 категориям из `code-review/SKILL.md`: соответствие
+  плану, архитектура, БД/миграции, AI-код, безопасность, качество кода,
+  тесты, документация, UX, перформанс.
+- Собрал findings в `docs/REVIEW-2026-05-09.md` в стиле
+  `docs/REVIEW-findings.md`: severity ladder C-x / I-x / M-x / P-x,
+  каждая запись с `path:line` ссылками и конкретным fix-sketch'ем.
+- Verifications прогнал: `uv run ruff format --check` чисто,
+  `uv run ruff check` чисто, `uv run pytest -q` → 177 passed,
+  `uv run mypy app` → **35 errors в 9 файлах** (I-2).
+
+**Сводка findings (всего 22):**
+- **3 Critical**:
+  - **C-1** — `response_style_source` setting silently inert: UI шлёт
+    `formal/casual/mix`, courier ждёт `template_only/llm_only/mix` →
+    две из трёх кнопок не работают, `courier_style` захардкожен в
+    `"neutral"` в обоих роутерах.
+  - **C-2** — `Task.due_at` хранится в local-time юзера, а не в UTC
+    (dateparser возвращает aware-MSK, SQLAlchemy strip'ит tz при
+    insert'е → naive-MSK в naive-UTC колонке). `Reminder.fire_at`
+    защищён через `_to_naive_utc`, `Task.due_at` — нет.
+  - **C-3** — `tick_digests` может задвоить отправку, если
+    `SCHEDULER_TICK_INTERVAL_SECONDS` < 60 секунд: нет ни
+    `last_morning_digest_on`, ни эквивалента
+    `Reminder.status='pending'→'sent'` гварда.
+- **7 Important**: `GroqKeyRouter.advance()` нигде не вызывается (key
+  rotation мёртв), mypy не в CI и даёт 35 ошибок, `voice.py` импортит
+  `_get_router` / `_run_pipeline` / `_log_task_exception` из `text.py`,
+  `app/ai/reminder_extractor.py` — dead code, доки протухли (README в
+  Phase 0, HANDOFF в 172 passed, `.env.example` рекомендует +asyncpg
+  при том что код требует +psycopg), `parse_mode="Markdown"` ещё в
+  `settings.py` (пока безопасно, но fragile), `record_update` всегда
+  пишет `user_id=None`.
+- **8 Minor**: unused deps (pymorphy3, razdel, asyncpg), services.py
+  723 LOC, structlog warning про format_exc_info, единственный
+  `getattr` в `app/shared/logging.py`, hard-coded `вечером`/`утром` в
+  `time_resolver`, `app/api/__init__.py` пустая папка-заглушка, slow
+  test (2.78s).
+- **6 Positive**: naive-UTC discipline, parse_mode discipline,
+  allow-list validation, reminder retry/failure semantics, double-secret
+  webhook idempotency, fast & isolated tests.
+
+**Верификация:**
+- `uv run ruff format/check` — чисто (документ-only PR).
+- `uv run pytest -q` — 177 passed без регрессий.
+
+**Не сделано (вынесено за рамки PR):**
+- Сами правки кода — это следующий PR (или серия PR), порядок
+  предложен в `docs/REVIEW-2026-05-09.md::Suggested fix order`. Юзер
+  решит, какие findings берём в работу первыми.
+- Phase 5 (mini-app) ждёт пока починим C-1/C-2/C-3 — иначе они
+  всплывут в JSON-API.
+
+---
+
 ## 2026-05-09 — Phase 4c: e2e-тесты сквозной цепочки сообщение → Task → Reminder → Digest
 
 **Контекст:**
