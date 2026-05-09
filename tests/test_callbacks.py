@@ -11,6 +11,7 @@ from app.bot.routers import callbacks as callbacks_module
 from app.bot.routers.callbacks import (
     category_picker_keyboard,
     horizon_picker_keyboard,
+    parse_task_callback,
     task_action_keyboard,
 )
 from app.bot.services import (
@@ -262,6 +263,84 @@ async def test_find_task_by_query_escapes_like_wildcards(
     found = await find_task_by_query(session, user.id, "_foo")
     assert found is not None
     assert found.title == "купить _foo"
+
+
+def test_parse_task_callback_round_trips_keyboards() -> None:
+    """Regression for R-NEW-I-1: every ``callback_data`` produced by the
+    keyboard builders must be parseable back into ``(task_id, extras)``
+    by ``parse_task_callback`` (which is what every ``cb_task_*`` calls).
+    """
+    action_kb = task_action_keyboard(42)
+    horizon_kb = horizon_picker_keyboard(7)
+    from app.db.models import Category
+
+    cat_kb = category_picker_keyboard(99, [Category(id=10, user_id=1, name="A")])
+
+    # Each button declares (action, arity)
+    expectations = {
+        "task:done:": ("done", 3),
+        "task:delete:": ("delete", 3),
+        "task:pick_move:": ("pick_move", 3),
+        "task:pick_category:": ("pick_category", 3),
+        "task:cancel:": ("cancel", 3),
+        "task:move:": ("move", 4),
+        "task:set_category:": ("set_category", 4),
+    }
+    seen: set[str] = set()
+    for kb in (action_kb, horizon_kb, cat_kb):
+        for row in kb.inline_keyboard:
+            for btn in row:
+                data = btn.callback_data
+                if data is None:
+                    continue
+                for prefix, (action, arity) in expectations.items():
+                    if data.startswith(prefix):
+                        parsed = parse_task_callback(data, action, arity=arity)
+                        assert parsed is not None, f"could not parse {data!r}"
+                        seen.add(action)
+                        break
+    # Sanity check: we covered every action defined by the keyboards.
+    assert seen == {expectations[p][0] for p in expectations}
+
+
+def test_parse_task_callback_rejects_malformed_input() -> None:
+    """``parse_task_callback`` returns ``None`` for prefix / arity / int
+    failures so the handler answers "Неверный формат." instead of
+    letting ``ValueError`` propagate up to aiogram → 500 → Telegram retry.
+    """
+    # Wrong prefix (not "task:").
+    assert parse_task_callback("foo:done:1", "done") is None
+    # Wrong action.
+    assert parse_task_callback("task:done:1", "delete") is None
+    # Wrong arity (3-part action sees 4 parts).
+    assert parse_task_callback("task:done:1:extra", "done") is None
+    # Wrong arity (4-part action sees 3 parts).
+    assert parse_task_callback("task:move:1", "move", arity=4) is None
+    # task_id is not an int (e.g., stale link, deep-link tampering).
+    assert parse_task_callback("task:done:abc", "done") is None
+    assert parse_task_callback("task:done:", "done") is None
+    assert parse_task_callback("task:set_category:1:abc", "set_category", arity=4) == (
+        1,
+        ["abc"],
+    )  # task_id ok, extra is parsed by handler with its own try/except
+
+
+def test_callback_handlers_no_unguarded_int_parts() -> None:
+    """Regression for R-NEW-I-1: the closure of ``create_router`` in
+    ``callbacks.py`` must not contain any direct ``int(parts[N])`` call —
+    every ID extraction must go through ``parse_task_callback`` so a
+    malformed payload yields a clean "Неверный формат." answer instead
+    of crashing the handler with ``ValueError``.
+
+    The single legitimate ``int(parts[2])`` inside ``parse_task_callback``
+    itself is wrapped in ``try/except ValueError``; we exclude that
+    function from the source we scan.
+    """
+    import re
+
+    src = inspect.getsource(callbacks_module.create_router)
+    matches = re.findall(r"int\(parts\[\d+\]\)", src)
+    assert matches == [], f"unguarded int(parts[N]) calls remain in create_router(): {matches}"
 
 
 @pytest.mark.asyncio

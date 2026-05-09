@@ -174,11 +174,24 @@ async def _onboard(
     tz: str,
     morning: str = "08:00",
     evening: str = "21:00",
+    onboarded_at: datetime | None = None,
 ) -> None:
-    """Helper: create user, run onboarding, then tweak digest slots."""
+    """Helper: create user, run onboarding, then tweak digest slots.
+
+    ``onboarded_at`` defaults to a value ~10 days before any of the
+    fixed ``now`` timestamps used in the tests below, so the day-1
+    catch-up suppression introduced for R-NEW-I-4 doesn't fire and
+    the existing tests keep their semantics. Pass an explicit value
+    when verifying the day-1 behaviour itself.
+    """
     user, _ = await get_or_create_user(session, telegram_id=telegram_id)
     await session.flush()
     await complete_onboarding(session, user, display_name="Tester", tz=tz)
+    # Override the wall-clock onboarded_at with a deterministic past
+    # value so tests can use fixed ``now`` parameters in tick_digests
+    # without colliding with the day-1 fresh-user safeguard.
+    user.onboarded_at = onboarded_at or datetime(2026, 4, 28, 0, 0)
+    session.add(user)
     settings = (
         await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
     ).first()
@@ -205,15 +218,160 @@ async def test_tick_digests_sends_morning_at_local_match(session: AsyncSession) 
 
 
 @pytest.mark.asyncio
-async def test_tick_digests_skips_off_minute(session: AsyncSession) -> None:
+async def test_tick_digests_skips_before_scheduled(session: AsyncSession) -> None:
+    """Before the scheduled HH:MM, no digest fires. The catch-up window
+    is forward-only: ``local_now >= scheduled_time``.
+    """
     await _onboard(session, telegram_id=1106, tz="Europe/Moscow")
 
     bot = _FakeBot()
-    # 05:30 UTC == 08:30 MSK — not 08:00.
-    result = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 30, tzinfo=UTC))
+    # 04:30 UTC == 07:30 MSK — before the 08:00 scheduled time.
+    result = await tick_digests(bot, now=datetime(2026, 5, 8, 4, 30, tzinfo=UTC))
 
     assert result == {"morning": 0, "evening": 0, "errors": 0}
     assert bot.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_catches_up_after_drift(session: AsyncSession) -> None:
+    """Regression for R-NEW-I-4: a tick that arrives 90 s after the
+    scheduled minute (cold-start, GC pause, slow earlier tick) must
+    still deliver the digest. The strict-minute predecessor would
+    silently drop it for the rest of the day.
+    """
+    await _onboard(session, telegram_id=1113, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    # 05:01:30 UTC == 08:01:30 MSK — 90 seconds past the scheduled 08:00.
+    result = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 1, 30, tzinfo=UTC))
+
+    assert result == {"morning": 1, "evening": 0, "errors": 0}
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_catches_up_after_long_outage(
+    session: AsyncSession,
+) -> None:
+    """Regression for R-NEW-I-4: even hours-late, the digest fires —
+    once per day. Render free-tier cold-starts can take several minutes
+    for the worker to spin back up; the digest should still land that
+    day rather than being lost forever.
+    """
+    await _onboard(session, telegram_id=1114, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    # 06:30 UTC == 09:30 MSK — 90 minutes past the 08:00 scheduled time.
+    result = await tick_digests(bot, now=datetime(2026, 5, 8, 6, 30, tzinfo=UTC))
+
+    assert result == {"morning": 1, "evening": 0, "errors": 0}
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_should_fire_digest_helper() -> None:
+    """Direct unit tests on the catch-up predicate."""
+    from datetime import date as _date
+
+    from app.bot.digest import _should_fire_digest
+
+    today = _date(2026, 5, 8)
+    yesterday = _date(2026, 5, 7)
+
+    # Before scheduled — no fire.
+    assert _should_fire_digest(datetime(2026, 5, 8, 7, 30), "08:00", None) is False
+    # Exactly at scheduled — fire.
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "08:00", None) is True
+    # 90 seconds past — fire (catch-up).
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 1, 30), "08:00", None) is True
+    # 90 minutes past — fire (catch-up).
+    assert _should_fire_digest(datetime(2026, 5, 8, 9, 30), "08:00", None) is True
+    # Already fired today — skip.
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 1, 30), "08:00", today) is False
+    # Already fired *yesterday* — fire today.
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "08:00", yesterday) is True
+    # Malformed / missing config — no fire.
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), None, None) is False
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "", None) is False
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "8:00", None) is False
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "ab:cd", None) is False
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "25:00", None) is False
+    assert _should_fire_digest(datetime(2026, 5, 8, 8, 0), "08:60", None) is False
+
+    # Day-1 safeguard — onboarded after today's scheduled slot:
+    # would have fired (catch-up) but the safeguard skips today.
+    onboarded_after = datetime(2026, 5, 8, 17, 0)
+    assert (
+        _should_fire_digest(
+            datetime(2026, 5, 8, 21, 0),
+            "08:00",
+            None,
+            onboarded_local=onboarded_after,
+        )
+        is False
+    )
+    # Onboarded *before* today's scheduled slot — fires normally.
+    onboarded_before = datetime(2026, 5, 8, 7, 0)
+    assert (
+        _should_fire_digest(
+            datetime(2026, 5, 8, 21, 0),
+            "08:00",
+            None,
+            onboarded_local=onboarded_before,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_skips_first_day_for_late_onboarding(
+    session: AsyncSession,
+) -> None:
+    """Regression for R-NEW-I-4 day-1 UX: a user who finishes
+    onboarding at 17:00 local with morning_digest_at=08:00 must NOT
+    receive a "good morning" message that same evening, even though
+    the catch-up rule would otherwise trigger it.
+    """
+    # Onboarded at 14:00 UTC == 17:00 MSK on day 1.
+    onboarded_utc = datetime(2026, 5, 8, 14, 0)
+    await _onboard(
+        session,
+        telegram_id=1115,
+        tz="Europe/Moscow",
+        onboarded_at=onboarded_utc,
+    )
+
+    bot = _FakeBot()
+    # Tick 4 hours later, 21:00 MSK on the same day.
+    result = await tick_digests(bot, now=datetime(2026, 5, 8, 18, 0, tzinfo=UTC))
+
+    # The 08:00 morning digest is suppressed (onboarded after the slot);
+    # the 21:00 evening digest fires (onboarded before the slot).
+    assert result == {"morning": 0, "evening": 1, "errors": 0}
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_fires_first_day_when_onboarded_early(
+    session: AsyncSession,
+) -> None:
+    """Regression for R-NEW-I-4 day-1 UX: a user who finishes
+    onboarding at 06:00 local (before the 08:00 morning slot) must
+    still receive that day's morning digest at 08:00.
+    """
+    # Onboarded at 03:00 UTC == 06:00 MSK on day 1.
+    onboarded_utc = datetime(2026, 5, 8, 3, 0)
+    await _onboard(
+        session,
+        telegram_id=1116,
+        tz="Europe/Moscow",
+        onboarded_at=onboarded_utc,
+    )
+
+    bot = _FakeBot()
+    result = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 0, tzinfo=UTC))
+    assert result == {"morning": 1, "evening": 0, "errors": 0}
+    assert len(bot.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -290,8 +448,26 @@ async def test_tick_digests_skips_second_call_in_same_minute(
 async def test_tick_digests_skips_repeat_within_same_minute_evening(
     session: AsyncSession,
 ) -> None:
-    """C-3 companion: same guard applies to the evening digest."""
+    """C-3 companion: same guard applies to the evening digest.
+
+    Pre-arms ``last_morning_digest_on`` to today so the catch-up
+    rule doesn't also fire the morning digest at 21:00 (a separate
+    feature added for R-NEW-I-4).
+    """
+    from datetime import date as _date
+
+    from app.db.models import User
+
     await _onboard(session, telegram_id=1111, tz="Europe/Moscow")
+    user = (await session.exec(select(User).where(User.telegram_id == 1111))).first()
+    assert user is not None and user.id is not None
+    settings = (
+        await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+    ).first()
+    assert settings is not None
+    settings.last_morning_digest_on = _date(2026, 5, 8)
+    session.add(settings)
+    await session.commit()
 
     bot = _FakeBot()
     now = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)  # 21:00 MSK

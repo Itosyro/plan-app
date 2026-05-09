@@ -100,11 +100,16 @@ async def _onboard_user(
 
     ``complete_onboarding`` stamps ``onboarded_at`` and creates the
     ``UserSettings`` row with documented defaults; we then tweak the digest
-    HH:MM slots so each test pins them deterministically.
+    HH:MM slots so each test pins them deterministically. Also override
+    ``onboarded_at`` to a deterministic past value so the day-1 catch-up
+    safeguard (R-NEW-I-4) doesn't suppress digests when tests use a
+    fixed ``now=2026-05-08`` parameter.
     """
     user, _ = await get_or_create_user(session, telegram_id=telegram_id)
     await session.flush()
     settings = await complete_onboarding(session, user, display_name=f"User-{telegram_id}", tz=tz)
+    user.onboarded_at = datetime(2026, 4, 28, 0, 0)
+    session.add(user)
     settings.morning_digest_at = morning
     settings.evening_digest_at = evening
     session.add(settings)

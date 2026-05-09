@@ -40,6 +40,26 @@ HORIZON_OPTIONS: list[tuple[str, str]] = [
 ]
 
 
+def parse_task_callback(data: str, action: str, *, arity: int = 3) -> tuple[int, list[str]] | None:
+    """Parse a ``task:<action>:<task_id>[:<extra>...]`` callback string.
+
+    Returns ``(task_id, extra_parts)`` where ``extra_parts`` are the raw
+    string components after ``task_id`` (length ``arity - 3``). Returns
+    ``None`` when the prefix, action, arity check, or ``int()`` parse of
+    ``task_id`` fails — the handler should answer "Неверный формат." in
+    that case instead of letting ``ValueError`` propagate. Regression
+    fix for ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-1``.
+    """
+    parts = data.split(":")
+    if len(parts) != arity or parts[0] != "task" or parts[1] != action:
+        return None
+    try:
+        task_id = int(parts[2])
+    except ValueError:
+        return None
+    return task_id, parts[3:]
+
+
 def task_action_keyboard(task_id: int) -> InlineKeyboardMarkup:
     """Build the inline keyboard shown under each task."""
     return InlineKeyboardMarkup(
@@ -58,6 +78,34 @@ def task_action_keyboard(task_id: int) -> InlineKeyboardMarkup:
             ],
         ],
     )
+
+
+def horizon_list_keyboard(tasks_with_indices: list[tuple[int, int]]) -> InlineKeyboardMarkup:
+    """Build a compact action keyboard listing every task in a horizon view.
+
+    Each task gets one keyboard row of four emoji-only buttons:
+    ``N ✅``, ``N 🔄``, ``N 🗑``, ``N 🏷`` (where ``N`` is the
+    1-based row number shown in the summary). The callback_data
+    payload is identical to :func:`task_action_keyboard` so all
+    existing handlers work unchanged. Replaces the per-task message
+    spam in ``/today``-style commands. See
+    ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6``.
+
+    ``tasks_with_indices`` is a list of ``(index, task_id)`` pairs.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, task_id in tasks_with_indices:
+        rows.append(
+            [
+                InlineKeyboardButton(text=f"{idx} ✅", callback_data=f"task:done:{task_id}"),
+                InlineKeyboardButton(text=f"{idx} 🔄", callback_data=f"task:pick_move:{task_id}"),
+                InlineKeyboardButton(text=f"{idx} 🗑", callback_data=f"task:delete:{task_id}"),
+                InlineKeyboardButton(
+                    text=f"{idx} 🏷", callback_data=f"task:pick_category:{task_id}"
+                ),
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def category_picker_keyboard(task_id: int, categories: list[Category]) -> InlineKeyboardMarkup:
@@ -119,11 +167,11 @@ def create_router() -> Router:
         """Mark a task as completed."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 3:
+        parsed = parse_task_callback(callback.data, "done")
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
+        task_id, _ = parsed
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(
@@ -150,11 +198,11 @@ def create_router() -> Router:
         """Delete a task."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 3:
+        parsed = parse_task_callback(callback.data, "delete")
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
+        task_id, _ = parsed
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(
@@ -180,11 +228,11 @@ def create_router() -> Router:
         """Show horizon picker for moving a task."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 3:
+        parsed = parse_task_callback(callback.data, "pick_move")
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
+        task_id, _ = parsed
 
         await callback.answer()
         if isinstance(callback.message, Message):
@@ -197,12 +245,12 @@ def create_router() -> Router:
         """Move a task to a chosen horizon."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 4:
+        parsed = parse_task_callback(callback.data, "move", arity=4)
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
-        target_horizon = parts[3]
+        task_id, extras = parsed
+        target_horizon = extras[0]
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(
@@ -229,11 +277,11 @@ def create_router() -> Router:
         """Cancel horizon / category picker — restore action buttons."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 3:
+        parsed = parse_task_callback(callback.data, "cancel")
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
+        task_id, _ = parsed
 
         await callback.answer()
         if isinstance(callback.message, Message):
@@ -246,11 +294,11 @@ def create_router() -> Router:
         """Show category picker for changing task category."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 3:
+        parsed = parse_task_callback(callback.data, "pick_category")
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
+        task_id, _ = parsed
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(
@@ -277,12 +325,16 @@ def create_router() -> Router:
         """Apply a chosen category to the task."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 4:
+        parsed = parse_task_callback(callback.data, "set_category", arity=4)
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        task_id = int(parts[2])
-        new_category_id = int(parts[3])
+        task_id, extras = parsed
+        try:
+            new_category_id = int(extras[0])
+        except ValueError:
+            await callback.answer("Неверный формат.")
+            return
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(

@@ -7,7 +7,12 @@ from datetime import datetime
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.bot.routers.commands import _format_note_list, _format_task_list
+from app.bot.routers.callbacks import horizon_list_keyboard
+from app.bot.routers.commands import (
+    HORIZON_PAGE_SIZE,
+    _format_note_list,
+    _format_task_list,
+)
 from app.bot.services import (
     get_all_notes,
     get_categories_with_counts,
@@ -253,3 +258,88 @@ def test_format_note_list_with_notes() -> None:
     assert "Идея проекта" in result
     assert "Рецепт пирога" in result
     assert "Всего: 2" in result
+
+
+# ── R-NEW-I-6 regression: single-message horizon view ──────────────
+
+
+def test_format_task_list_overflow_message_shown_when_paged() -> None:
+    """When ``total_count > len(tasks)`` (i.e. more tasks than fit
+    on the page), the formatter must surface the overflow line so
+    the user knows *some* tasks are hidden — and the line includes
+    the actual numbers and a hint to /search.
+
+    Regression for ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6``.
+    """
+    visible = [
+        Task(
+            id=i,
+            user_id=1,
+            title=f"Task {i}",
+            priority="medium",
+            category_id=1,
+            horizon_id=1,
+        )
+        for i in range(1, 6)
+    ]
+    result = _format_task_list(visible, "Сегодня", "UTC", total_count=42)
+    assert "Показано 5 из 42" in result
+    assert "/search" in result
+    # The literal "Всего: 5" line should be replaced by the
+    # overflow message — never both.
+    assert "Всего:" not in result
+
+
+def test_format_task_list_no_overflow_when_total_equals_visible() -> None:
+    visible = [
+        Task(
+            id=i,
+            user_id=1,
+            title=f"Task {i}",
+            priority="medium",
+            category_id=1,
+            horizon_id=1,
+        )
+        for i in range(1, 4)
+    ]
+    result = _format_task_list(visible, "Сегодня", "UTC", total_count=3)
+    assert "Показано" not in result
+    assert "Всего: 3" in result
+
+
+def test_horizon_list_keyboard_compact_layout() -> None:
+    """One row per task, four buttons per row (✅ 🔄 🗑 🏷). The
+    callback_data of each button is identical to the per-task
+    keyboard (``task:done:<id>``, etc.), so existing handlers in
+    ``app/bot/routers/callbacks.py`` work unchanged.
+
+    Regression for R-NEW-I-6: the previous N+1 message blast is
+    replaced by a single message with a compact keyboard.
+    """
+    indices = [(1, 100), (2, 101), (3, 102)]
+    kb = horizon_list_keyboard(indices)
+    assert len(kb.inline_keyboard) == 3
+    for row in kb.inline_keyboard:
+        assert len(row) == 4
+
+    # First row: index 1, task_id 100.
+    row0 = kb.inline_keyboard[0]
+    assert row0[0].text == "1 ✅"
+    assert row0[0].callback_data == "task:done:100"
+    assert row0[1].callback_data == "task:pick_move:100"
+    assert row0[2].callback_data == "task:delete:100"
+    assert row0[3].callback_data == "task:pick_category:100"
+
+    # Last row picks up the third task's id.
+    last = kb.inline_keyboard[2]
+    assert last[0].text == "3 ✅"
+    assert last[0].callback_data == "task:done:102"
+
+
+def test_horizon_page_size_fits_telegram_keyboard_limit() -> None:
+    """``HORIZON_PAGE_SIZE`` × 4 buttons must fit Telegram's 100-button
+    inline-keyboard limit. R-NEW-I-6: catches accidental future
+    increases past the platform ceiling.
+    """
+    assert HORIZON_PAGE_SIZE > 0
+    assert HORIZON_PAGE_SIZE * 4 <= 100

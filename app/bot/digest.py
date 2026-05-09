@@ -14,7 +14,7 @@ timezone (``User.tz``) and the digest is built and sent on an exact match.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -46,7 +46,12 @@ def _user_local_now(user_tz: str, now_utc: datetime | None = None) -> datetime:
 
 
 def _matches_hhmm(local_dt: datetime, hhmm: str | None) -> bool:
-    """Strict ``HH:MM`` match against *local_dt* (no minute slack)."""
+    """Strict ``HH:MM`` match against *local_dt* (no minute slack).
+
+    Kept for backwards compatibility with existing callers and tests;
+    new code should prefer :func:`_should_fire_digest`, which adds
+    catch-up semantics for delayed scheduler ticks.
+    """
     if not hhmm or len(hhmm) != 5 or hhmm[2] != ":":
         return False
     try:
@@ -54,6 +59,68 @@ def _matches_hhmm(local_dt: datetime, hhmm: str | None) -> bool:
     except ValueError:
         return False
     return local_dt.hour == hh and local_dt.minute == mm
+
+
+def _parse_hhmm(hhmm: str | None) -> tuple[int, int] | None:
+    """Parse a strict zero-padded ``HH:MM`` into ``(hh, mm)`` or ``None``.
+
+    Centralises validation so the catch-up predicate, the strict-match
+    helper, and any future caller agree on what a malformed slot looks
+    like.
+    """
+    if not hhmm or len(hhmm) != 5 or hhmm[2] != ":":
+        return None
+    try:
+        hh, mm = int(hhmm[:2]), int(hhmm[3:])
+    except ValueError:
+        return None
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    return hh, mm
+
+
+def _should_fire_digest(
+    local_dt: datetime,
+    hhmm: str | None,
+    last_sent_on: date | None,
+    onboarded_local: datetime | None = None,
+) -> bool:
+    """Return ``True`` if a digest scheduled at ``hhmm`` should fire now.
+
+    Catch-up logic: fires when the user's local time has reached or
+    passed the scheduled HH:MM **and** we have not yet fired this
+    digest today (per the ``last_sent_on`` gate). This survives
+    scheduler tick drift > 60 s — the strict HH:MM match would
+    otherwise silently skip the digest if the worker happened to tick
+    at 08:00:00 and then 08:01:30. See
+    ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-4``.
+
+    The optional ``onboarded_local`` argument suppresses the catch-up
+    on the user's first day if they finished onboarding *after* the
+    scheduled slot. Without this guard, a user who signs up at
+    21:00 local with morning_digest_at=08:00 would immediately
+    receive a "good morning" message; their first morning digest
+    should land the following day instead.
+
+    Returns ``False`` for malformed ``hhmm`` (None / wrong shape /
+    non-numeric); the caller treats that as "no digest configured".
+    """
+    parsed = _parse_hhmm(hhmm)
+    if parsed is None:
+        return False
+    hh, mm = parsed
+    if last_sent_on == local_dt.date():
+        # Already fired today — idempotency gate.
+        return False
+    if (local_dt.hour, local_dt.minute) < (hh, mm):
+        return False
+    if onboarded_local is not None:
+        scheduled_today = local_dt.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if onboarded_local > scheduled_today:
+            # User onboarded after today's scheduled slot — first
+            # digest of this kind should land tomorrow.
+            return False
+    return True
 
 
 def _format_task_line(task: Task, user_tz: str) -> str:
@@ -158,15 +225,26 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
                 continue
             local = _user_local_now(user.tz, now_utc=now)
             local_date = local.date()
-            morning = _matches_hhmm(local, settings.morning_digest_at)
-            evening = _matches_hhmm(local, settings.evening_digest_at)
-            if not morning and not evening:
-                continue
-            # Skip if we already delivered this digest today (user-local).
-            if morning and settings.last_morning_digest_on == local_date:
-                morning = False
-            if evening and settings.last_evening_digest_on == local_date:
-                evening = False
+            # Convert onboarded_at (naive UTC) to user-local so
+            # _should_fire_digest can suppress the catch-up on day 1
+            # for users who joined after today's scheduled slot.
+            onboarded_local = _user_local_now(user.tz, now_utc=user.onboarded_at)
+            # Catch-up semantics: fire whenever user-local time has
+            # reached the scheduled HH:MM and we haven't fired yet today.
+            # The idempotency gate (last_*_digest_on) prevents double-sends
+            # within the same user-local day. See R-NEW-I-4.
+            morning = _should_fire_digest(
+                local,
+                settings.morning_digest_at,
+                settings.last_morning_digest_on,
+                onboarded_local=onboarded_local,
+            )
+            evening = _should_fire_digest(
+                local,
+                settings.evening_digest_at,
+                settings.last_evening_digest_on,
+                onboarded_local=onboarded_local,
+            )
             if not morning and not evening:
                 continue
             try:
