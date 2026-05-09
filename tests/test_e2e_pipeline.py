@@ -22,7 +22,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
 from app.bot.routers._pipeline import run_pipeline
-from app.bot.services import get_or_create_user
+from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import Note, Task
 
 _FAKE_KEYS = ["gsk_test_key_1"]
@@ -584,3 +584,73 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
     assert tasks[0].priority == "high"
+
+
+# ── e2e: classifier receives existing categories (R-NEW-C-4) ─────────
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_classifier_receives_user_existing_categories(
+    session: AsyncSession,
+) -> None:
+    """Regression for R-NEW-C-4: ``run_pipeline`` must fetch the user's
+    existing categories and pass them to ``classify_intent`` so the LLM
+    can reuse them instead of inventing duplicates ("Работа" /
+    "работа" / "Рабочее"). Before the fix the call site hard-coded an
+    empty list and the categories table grew unbounded.
+
+    We pre-seed two categories, run the pipeline against a captured
+    Groq endpoint, and assert the classifier's request body includes
+    both names.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=400)
+    await session.commit()
+    assert user.id is not None
+
+    # Seed two existing categories. The classifier prompt must surface
+    # both so the LLM can reuse them.
+    await get_or_create_category(session, user.id, "Работа")
+    await get_or_create_category(session, user.id, "Здоровье")
+    await session.commit()
+
+    captured: list[httpx.Request] = []
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        # First call is the reorder probe, second the splitter, third the classifier.
+        if len(captured) == 1:
+            return httpx.Response(200, json=_reorder_response(False))
+        if len(captured) == 2:
+            return httpx.Response(
+                200, json=_splitter_response([{"text": "доделать отчёт по работе"}])
+            )
+        return httpx.Response(
+            200,
+            json=_classifier_response(
+                _cr_dict(category="Работа", title="Доделать отчёт по работе")
+            ),
+        )
+
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=side_effect)
+
+    await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "доделать отчёт по работе",
+        tg_user_id=400,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=None,
+        courier_mode="template_only",
+    )
+
+    classifier_request = captured[2]
+    body = classifier_request.read().decode()
+    assert "Работа" in body, f"existing category 'Работа' missing from classifier prompt: {body!r}"
+    assert "Здоровье" in body, (
+        f"existing category 'Здоровье' missing from classifier prompt: {body!r}"
+    )
+    # Sanity: the bug ships the literal "existing_categories: []" payload.
+    assert "existing_categories: []" not in body, (
+        "classifier still receives empty user_categories — R-NEW-C-4 not fixed"
+    )
