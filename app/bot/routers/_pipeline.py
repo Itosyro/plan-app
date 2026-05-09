@@ -112,6 +112,8 @@ async def run_pipeline(
     courier_mode: str = "mix",
     courier_style: str = "neutral",
     default_reminder_offsets: dict[str, list[int]] | None = None,
+    morning_anchor: str = "09:00",
+    evening_anchor: str = "19:00",
 ) -> str:
     """Detect reorder or run split → time → classify → critic → persist → reply.
 
@@ -133,7 +135,13 @@ async def run_pipeline(
 
     # Resolve time for each unit (pure Python, fast)
     resolved_list: list[ResolvedTime | None] = [
-        resolve_time(unit.text, user_tz) for unit in split_result.units
+        resolve_time(
+            unit.text,
+            user_tz,
+            morning_anchor=morning_anchor,
+            evening_anchor=evening_anchor,
+        )
+        for unit in split_result.units
     ]
 
     # Classify all units in parallel. ``return_exceptions=True`` keeps a single

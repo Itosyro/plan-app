@@ -74,6 +74,8 @@ def create_router() -> Router:
                 if settings
                 else None
             )
+            morning_anchor = settings.morning_anchor if settings else "09:00"
+            evening_anchor = settings.evening_anchor if settings else "19:00"
 
         logger.info(
             "inbox.text_stored",
@@ -105,6 +107,8 @@ def create_router() -> Router:
                     courier_mode=courier_mode,
                     courier_style=courier_style,
                     default_reminder_offsets=default_offsets,
+                    morning_anchor=morning_anchor,
+                    evening_anchor=evening_anchor,
                 )
                 await message.answer(reply)
             except Exception:

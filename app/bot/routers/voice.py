@@ -70,6 +70,8 @@ def create_router() -> Router:
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
             courier_mode = settings.response_style_source if settings else "mix"
             courier_style = settings.courier_template_style if settings else "neutral"
+            morning_anchor = settings.morning_anchor if settings else "09:00"
+            evening_anchor = settings.evening_anchor if settings else "19:00"
 
         groq_router = get_groq_router()
         if groq_router is None:
@@ -134,6 +136,8 @@ def create_router() -> Router:
                     confidence_threshold=critic_threshold,
                     courier_mode=courier_mode,
                     courier_style=courier_style,
+                    morning_anchor=morning_anchor,
+                    evening_anchor=evening_anchor,
                 )
                 await message.answer(reply)
 
