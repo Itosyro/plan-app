@@ -152,6 +152,22 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def parse_set_callback(data: str) -> tuple[str, str] | None:
+    """Parse a ``settings:set:<field>:<value>`` callback string.
+
+    Returns ``(field, value)`` on success or ``None`` if the prefix /
+    arity check fails. ``maxsplit=3`` keeps ``value`` intact even when
+    it itself contains ``":"`` (e.g. ``"08:00"`` for
+    ``morning_digest_at``). Before this fix the handler used
+    ``split(":")`` and the arity check rejected every time-of-day option
+    as malformed. See ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-1``.
+    """
+    parts = data.split(":", 3)
+    if len(parts) != 4 or parts[0] != "settings" or parts[1] != "set":
+        return None
+    return parts[2], parts[3]
+
+
 def _options_keyboard(field: str) -> InlineKeyboardMarkup:
     """Build the option-selection keyboard for a specific setting."""
     options = SETTING_OPTIONS.get(field, [])
@@ -232,12 +248,11 @@ def create_router() -> Router:
         """Apply a chosen value to a setting."""
         if callback.from_user is None or callback.data is None:
             return
-        parts = callback.data.split(":")
-        if len(parts) != 4:
+        parsed = parse_set_callback(callback.data)
+        if parsed is None:
             await callback.answer("Неверный формат.")
             return
-        field = parts[2]
-        value = parts[3]
+        field, value = parsed
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(

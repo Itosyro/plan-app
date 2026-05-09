@@ -12,6 +12,7 @@ from app.bot.routers.settings import (
     _format_settings,
     _options_keyboard,
     _settings_keyboard,
+    parse_set_callback,
 )
 from app.bot.services import (
     REMINDER_PRESETS,
@@ -46,6 +47,46 @@ def test_options_keyboard_has_all_options() -> None:
         data_values = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         for value, _label in options:
             assert f"settings:set:{field}:{value}" in data_values
+
+
+def test_parse_set_callback_round_trips_every_keyboard_button() -> None:
+    """Regression for R-NEW-C-1: every ``callback_data`` produced by
+    ``_options_keyboard`` must be parseable back into ``(field, value)``
+    by ``parse_set_callback`` (which is what ``cb_settings_set`` calls).
+
+    Before the fix, the handler used ``split(":")`` and rejected every
+    ``HH:MM`` value as malformed — so all 8 morning/evening digest-time
+    buttons were silently inert in the UI.
+    """
+    for field, options in SETTING_OPTIONS.items():
+        kb = _options_keyboard(field)
+        for row in kb.inline_keyboard:
+            for btn in row:
+                data = btn.callback_data
+                if data is None or not data.startswith("settings:set:"):
+                    continue
+                parsed = parse_set_callback(data)
+                assert parsed is not None, f"button data {data!r} did not parse"
+                got_field, got_value = parsed
+                assert got_field == field, f"field round-trip broken for {data!r}"
+                # The value in the keyboard must match what we'll persist.
+                assert any(got_value == v for v, _ in options), (
+                    f"value {got_value!r} not in declared options for {field!r}"
+                )
+
+
+def test_parse_set_callback_rejects_malformed_input() -> None:
+    """``parse_set_callback`` must return ``None`` for prefix or arity
+    mismatches so the handler can answer ``"Неверный формат."`` instead
+    of crashing.
+    """
+    assert parse_set_callback("settings:set") is None
+    assert parse_set_callback("settings:set:critic_mode") is None
+    assert parse_set_callback("foo:set:critic_mode:always") is None
+    assert parse_set_callback("settings:edit:critic_mode") is None
+    # Arity-4 with empty value is technically parseable; service layer
+    # will reject the empty value via ``ALLOWED_SETTING_VALUES``.
+    assert parse_set_callback("settings:set:critic_mode:") == ("critic_mode", "")
 
 
 # ── Formatter tests ──────────────────────────────────────────────────
