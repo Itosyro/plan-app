@@ -1,14 +1,8 @@
-"""Domain services used by handlers.
-
-Handlers stay thin: they collect input, validate it, and delegate to these
-functions. This makes them easier to unit-test (no aiogram fixtures needed)
-and keeps SQL out of the routers.
-"""
+"""Task / Note / Category / Horizon CRUD + classification persistence + reminders."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
 from sqlmodel import select
@@ -16,17 +10,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.schemas import ClassifierResult
 from app.db.models import (
-    AiRun,
     Category,
     Horizon,
-    InboxEntry,
     Note,
     Reminder,
     Task,
     TaskEvent,
-    TelegramUpdate,
-    User,
-    UserSettings,
 )
 from app.shared.logging import get_logger
 from app.shared.time import to_naive_utc, utcnow_naive
@@ -34,135 +23,7 @@ from app.shared.time import to_naive_utc, utcnow_naive
 logger = get_logger(__name__)
 
 
-async def get_or_create_user(
-    session: AsyncSession,
-    telegram_id: int,
-    *,
-    lang_code: str | None = None,
-) -> tuple[User, bool]:
-    """Look up a user by ``telegram_id`` or create a stub.
-
-    Returns ``(user, created)``. The newly-created user has no name and
-    no timezone yet — those are filled in by the onboarding wizard.
-    For an existing user, refresh ``lang_code`` if Telegram now reports a
-    different value (so locale-sensitive features stay in sync).
-    """
-    result = await session.exec(select(User).where(User.telegram_id == telegram_id))
-    user = result.first()
-    if user is not None:
-        if lang_code is not None and lang_code != user.lang_code:
-            user.lang_code = lang_code
-            session.add(user)
-            await session.flush()
-        return user, False
-
-    user = User(telegram_id=telegram_id, lang_code=lang_code)
-    session.add(user)
-    await session.flush()
-    return user, True
-
-
-def is_valid_timezone(tz: str) -> bool:
-    """Return True if ``tz`` is a known IANA timezone name."""
-    try:
-        ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError):
-        return False
-    return True
-
-
-async def complete_onboarding(
-    session: AsyncSession,
-    user: User,
-    *,
-    display_name: str,
-    tz: str,
-) -> UserSettings:
-    """Persist the onboarding result.
-
-    Sets the user's name + timezone, marks ``onboarded_at``, and creates a
-    fresh ``UserSettings`` row with the documented defaults.
-    """
-    user.display_name = display_name
-    user.tz = tz
-    user.onboarded_at = utcnow_naive()
-    session.add(user)
-
-    assert user.id is not None, "user must be flushed before complete_onboarding()"
-    settings = UserSettings(user_id=user.id)
-    session.add(settings)
-    await session.flush()
-    return settings
-
-
-async def is_update_processed(session: AsyncSession, update_id: int) -> bool:
-    """Idempotency guard — return True if we've already seen this update_id."""
-    result = await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == update_id))
-    return result.first() is not None
-
-
-async def record_update(
-    session: AsyncSession,
-    *,
-    update_id: int,
-    user_id: int | None,
-    kind: str | None,
-) -> None:
-    """Mark a Telegram update as processed."""
-    session.add(TelegramUpdate(update_id=update_id, user_id=user_id, kind=kind))
-    await session.flush()
-
-
-async def store_inbox_text(
-    session: AsyncSession,
-    *,
-    user_id: int,
-    raw_text: str,
-    telegram_message_id: int | None,
-) -> InboxEntry:
-    """Persist an incoming text message into the inbox."""
-    entry = InboxEntry(
-        user_id=user_id,
-        kind="text",
-        raw_text=raw_text,
-        telegram_message_id=telegram_message_id,
-    )
-    session.add(entry)
-    await session.flush()
-    return entry
-
-
-async def store_inbox_voice(
-    session: AsyncSession,
-    *,
-    user_id: int,
-    transcript: str,
-    telegram_message_id: int | None,
-) -> InboxEntry:
-    """Persist an incoming voice message (with transcript) into the inbox."""
-    entry = InboxEntry(
-        user_id=user_id,
-        kind="voice",
-        transcript=transcript,
-        telegram_message_id=telegram_message_id,
-    )
-    session.add(entry)
-    await session.flush()
-    return entry
-
-
-async def get_user_settings(
-    session: AsyncSession,
-    user_id: int,
-) -> UserSettings | None:
-    """Return the user's settings row, or None if not onboarded yet."""
-    result = await session.exec(
-        select(UserSettings).where(UserSettings.user_id == user_id),
-    )
-    return result.first()
-
-
-# ── Phase 2.2 persistence ────────────────────────────────────────────
+# ── Category / Horizon helpers ────────────────────────────────────────
 
 
 async def get_or_create_category(
@@ -229,6 +90,9 @@ async def get_user_categories_full(
         select(Category).where(Category.user_id == user_id).order_by(Category.name),
     )
     return list(result.all())
+
+
+# ── Reminders ─────────────────────────────────────────────────────────
 
 
 DEFAULT_REMINDER_OFFSETS: dict[str, list[int]] = {
@@ -298,6 +162,9 @@ async def schedule_reminders(
     if created:
         await session.flush()
     return created
+
+
+# ── Classification persistence ────────────────────────────────────────
 
 
 async def persist_classification(
@@ -376,7 +243,7 @@ async def persist_classification(
     return row
 
 
-# ── Phase 2.3d reorder ────────────────────────────────────────────────
+# ── Task search / reorder ─────────────────────────────────────────────
 
 
 def _escape_like(value: str) -> str:
@@ -442,115 +309,6 @@ async def update_task_horizon(
     return task
 
 
-# ── Phase 3c settings ─────────────────────────────────────────────────
-
-
-REMINDER_PRESETS: dict[str, dict[str, list[int]]] = {
-    "minimal": {"same_day": [15], "multi_day": [60]},
-    "default": {"same_day": [60, 15], "multi_day": [1440, 60]},
-    "extra": {"same_day": [180, 60, 15], "multi_day": [1440, 240, 60]},
-}
-
-# Allowed values for each user-editable setting field. Mirrors the options
-# rendered by ``app/bot/routers/settings.py::SETTING_OPTIONS`` and is the
-# authoritative validation gate at the service layer — a malformed callback
-# (replayed, edited, or maliciously crafted) is rejected before it touches
-# the database.
-ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
-    "critic_mode": frozenset({"always", "confidence", "never"}),
-    "morning_digest_at": frozenset({"07:00", "08:00", "09:00", "10:00"}),
-    "evening_digest_at": frozenset({"20:00", "21:00", "22:00", "23:00"}),
-    # Vocabulary must match ``app/ai/courier.py::generate_courier_reply``'s
-    # ``mode`` parameter — pre-2026-05-09 the UI shipped
-    # ``formal``/``casual``/``mix`` which silently fell through both
-    # branches in courier.py and degenerated to ``template_only`` for
-    # the first two. See ``docs/REVIEW-2026-05-09.md::C-1``.
-    "response_style_source": frozenset({"template_only", "llm_only", "mix"}),
-    # Vocabulary must match the keys of ``app/ai/courier.py::TEMPLATES``.
-    "courier_template_style": frozenset(
-        {"neutral", "formal_master", "friendly", "playful", "terse", "respectful"},
-    ),
-    "week_due_semantic": frozenset({"deadline_sunday", "deadline_saturday", "spread_evenly"}),
-}
-
-
-def reminder_preset_from_offsets(offsets: dict[str, list[int]] | dict[str, object]) -> str:
-    """Return the preset name matching ``offsets`` (custom if no match)."""
-    raw_same = offsets.get("same_day") or []
-    raw_multi = offsets.get("multi_day") or []
-    same = list(raw_same) if isinstance(raw_same, list) else []
-    multi = list(raw_multi) if isinstance(raw_multi, list) else []
-    for name, preset in REMINDER_PRESETS.items():
-        if preset["same_day"] == same and preset["multi_day"] == multi:
-            return name
-    return "custom"
-
-
-async def update_user_settings(
-    session: AsyncSession,
-    user_id: int,
-    field: str,
-    value: str,
-) -> UserSettings | None:
-    """Update a single setting and return the latest UserSettings row.
-
-    Most fields live on ``UserSettings``. Two virtual fields are handled
-    specially:
-
-    * ``tz`` — written to ``User.tz`` (after ``is_valid_timezone`` check).
-    * ``reminder_preset`` — expanded via ``REMINDER_PRESETS`` and written
-      to ``UserSettings.default_reminder_offsets``.
-    """
-    settings = await get_user_settings(session, user_id)
-    if settings is None:
-        return None
-
-    if field == "tz":
-        if not is_valid_timezone(value):
-            return None
-        user_result = await session.exec(select(User).where(User.id == user_id))
-        user = user_result.first()
-        if user is None:
-            return None
-        user.tz = value
-        session.add(user)
-        await session.flush()
-        logger.info("settings.updated", user_id=user_id, field=field, value=value)
-        return settings
-
-    if field == "reminder_preset":
-        preset = REMINDER_PRESETS.get(value)
-        if preset is None:
-            return None
-        settings.default_reminder_offsets = dict(preset)
-        session.add(settings)
-        await session.flush()
-        logger.info("settings.updated", user_id=user_id, field=field, value=value)
-        return settings
-
-    if field not in ALLOWED_SETTING_VALUES or value not in ALLOWED_SETTING_VALUES[field]:
-        return None
-
-    if field == "critic_mode":
-        settings.critic_mode = value
-    elif field == "morning_digest_at":
-        settings.morning_digest_at = value
-    elif field == "evening_digest_at":
-        settings.evening_digest_at = value
-    elif field == "response_style_source":
-        settings.response_style_source = value
-    elif field == "courier_template_style":
-        settings.courier_template_style = value
-    elif field == "week_due_semantic":
-        settings.week_due_semantic = value
-    else:  # pragma: no cover - exhaustive above
-        return None
-    session.add(settings)
-    await session.flush()
-    logger.info("settings.updated", user_id=user_id, field=field, value=value)
-    return settings
-
-
 async def update_task_category(
     session: AsyncSession,
     task: Task,
@@ -585,7 +343,7 @@ async def update_task_category(
     return task
 
 
-# ── Phase 3a view queries ─────────────────────────────────────────────
+# ── View queries ──────────────────────────────────────────────────────
 
 
 async def get_tasks_by_horizon(
@@ -707,33 +465,3 @@ async def get_task_by_id(
         select(Task).where(Task.id == task_id, Task.user_id == user_id),
     )
     return result.first()
-
-
-async def log_ai_run(
-    session: AsyncSession,
-    *,
-    user_id: int,
-    inbox_id: int | None,
-    stage: str,
-    model: str,
-    key_index: int = 0,
-    latency_ms: int = 0,
-    tokens: int = 0,
-    status: str = "ok",
-    error: str | None = None,
-) -> AiRun:
-    """Log an AI pipeline call to the ai_runs table."""
-    run = AiRun(
-        user_id=user_id,
-        inbox_id=inbox_id,
-        stage=stage,
-        model=model,
-        key_index=key_index,
-        latency_ms=latency_ms,
-        tokens=tokens,
-        status=status,
-        error=error,
-    )
-    session.add(run)
-    await session.flush()
-    return run
