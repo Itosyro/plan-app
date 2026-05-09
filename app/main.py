@@ -22,7 +22,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from sqlmodel import select
 
 from app.bot import build_dispatcher
-from app.bot.services import is_update_processed, record_update
+from app.bot.services import claim_update
 from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
@@ -151,11 +151,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = await request.json()
         update = Update.model_validate(payload, context={"bot": bot})
 
-        # Идемпотентность: если этот update_id уже обработан — выходим тихо.
+        # Идемпотентность через атомарный INSERT: ``claim_update`` ловит
+        # ``IntegrityError`` на конфликте PK, поэтому два одновременных
+        # доставленных webhook'а с одним ``update_id`` не оба
+        # отдиспатчатся (раньше второй падал в 500 → Telegram retry'ил
+        # вечно). См. ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-5``.
         async with session_scope() as session:
-            if await is_update_processed(session, update.update_id):
-                logger.info("webhook.duplicate", update_id=update.update_id)
-                return {"ok": True}
             user_tg_id = _extract_tg_user_id(update)
             kind = _classify_update(update)
             # Look up our internal users.id so that TelegramUpdate.user_id
@@ -167,9 +168,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if user_tg_id is not None:
                 result = await session.exec(select(User.id).where(User.telegram_id == user_tg_id))
                 internal_user_id = result.first()
-            await record_update(
-                session, update_id=update.update_id, user_id=internal_user_id, kind=kind
+            claimed = await claim_update(
+                session,
+                update_id=update.update_id,
+                user_id=internal_user_id,
+                kind=kind,
             )
+            if not claimed:
+                logger.info("webhook.duplicate", update_id=update.update_id)
+                return {"ok": True}
             logger.info(
                 "webhook.received",
                 update_id=update.update_id,
