@@ -4,10 +4,18 @@
 1. Подтверждение (рандомно): ~50% из шаблонов, ~50% через LLM (llama-3.1-8b-instant)
 2. Резюме сделанного — детерминированно из персистнутых записей (без LLM)
 
-Настройка через ``UserSettings.response_style_source``:
-- ``mix`` (дефолт) — 50/50 шаблоны и LLM
-- ``template_only`` — только шаблоны
-- ``llm_only`` — только LLM
+Две независимые настройки на ``UserSettings``:
+- ``response_style_source`` — *источник* подтверждения. Принимает
+  строго ``template_only`` / ``llm_only`` / ``mix`` (дефолт ``mix``).
+  Любое другое значение → ``use_llm=False`` (см. fallback в
+  :func:`generate_courier_reply`).
+- ``courier_template_style`` — *тон* (ключ из :data:`TEMPLATES`):
+  ``neutral`` (дефолт) / ``formal_master`` / ``friendly`` /
+  ``playful`` / ``terse`` / ``respectful``.
+
+Pre-2026-05-09 настройка источника шла под именами
+``formal``/``casual``/``mix`` и две из трёх кнопок ничего не делали,
+см. ``docs/REVIEW-2026-05-09.md::C-1``.
 """
 
 from __future__ import annotations

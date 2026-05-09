@@ -457,7 +457,16 @@ ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
     "critic_mode": frozenset({"always", "confidence", "never"}),
     "morning_digest_at": frozenset({"07:00", "08:00", "09:00", "10:00"}),
     "evening_digest_at": frozenset({"20:00", "21:00", "22:00", "23:00"}),
-    "response_style_source": frozenset({"formal", "casual", "mix"}),
+    # Vocabulary must match ``app/ai/courier.py::generate_courier_reply``'s
+    # ``mode`` parameter — pre-2026-05-09 the UI shipped
+    # ``formal``/``casual``/``mix`` which silently fell through both
+    # branches in courier.py and degenerated to ``template_only`` for
+    # the first two. See ``docs/REVIEW-2026-05-09.md::C-1``.
+    "response_style_source": frozenset({"template_only", "llm_only", "mix"}),
+    # Vocabulary must match the keys of ``app/ai/courier.py::TEMPLATES``.
+    "courier_template_style": frozenset(
+        {"neutral", "formal_master", "friendly", "playful", "terse", "respectful"},
+    ),
     "week_due_semantic": frozenset({"deadline_sunday", "deadline_saturday", "spread_evenly"}),
 }
 
@@ -525,6 +534,8 @@ async def update_user_settings(
         settings.evening_digest_at = value
     elif field == "response_style_source":
         settings.response_style_source = value
+    elif field == "courier_template_style":
+        settings.courier_template_style = value
     elif field == "week_due_semantic":
         settings.week_due_semantic = value
     else:  # pragma: no cover - exhaustive above

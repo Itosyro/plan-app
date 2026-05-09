@@ -66,7 +66,16 @@ class UserSettings(SQLModel, table=True):
     )
     morning_digest_at: str = Field(default="08:00", max_length=5)
     evening_digest_at: str = Field(default="21:00", max_length=5)
+    # ``response_style_source`` controls the *source* of the courier's
+    # confirmation phrase: ``template_only`` always picks from
+    # ``app/ai/courier.py::TEMPLATES``; ``llm_only`` always calls the LLM;
+    # ``mix`` is 50/50. See ``docs/REVIEW-2026-05-09.md::C-1``.
     response_style_source: str = Field(default="mix", max_length=16)
+    # ``courier_template_style`` picks the *flavour* of template (or LLM
+    # tone): one of the keys of ``app/ai/courier.py::TEMPLATES``
+    # (``neutral`` / ``formal_master`` / ``friendly`` / ``playful`` /
+    # ``terse`` / ``respectful``). See ``docs/REVIEW-2026-05-09.md::C-1``.
+    courier_template_style: str = Field(default="neutral", max_length=24)
     week_due_semantic: str = Field(default="deadline_sunday", max_length=24)
 
 
