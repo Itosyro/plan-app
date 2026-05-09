@@ -32,7 +32,18 @@ services:
     # for us; we just need to invoke it.
     # `.agents/`, `docs/`, and `tests/` are repo-only assets — strip them
     # before uv builds the slug so the free-tier image stays minimal.
-    buildCommand: rm -rf .agents docs tests && uv sync --frozen
+    # The Python build image also has Node.js available, so we build the
+    # Mini-App static bundle (`webapp/dist/`) here. ``app/main.py`` mounts
+    # it at ``/app`` only when the directory exists, so dev runs without
+    # the npm step still work.
+    buildCommand: |
+      set -eux
+      rm -rf .agents docs tests
+      uv sync --frozen
+      cd webapp
+      npm ci --no-audit --no-fund
+      npm run build
+      cd ..
     startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ENV
