@@ -8,7 +8,12 @@ Callback data format: ``task:<action>:<task_id>[:<extra>]``.
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from app.bot.services import (
     delete_task,
@@ -135,7 +140,7 @@ def create_router() -> Router:
             await mark_task_done(session, task, user.id)
 
         await callback.answer("✅ Выполнено!")
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             # No parse_mode: task.title is user-controlled and can contain
             # Markdown metachars that crash Telegram's parser.
             await callback.message.edit_text(f"✅ Выполнено: «{task.title}»")
@@ -167,7 +172,7 @@ def create_router() -> Router:
             await delete_task(session, task, user.id)
 
         await callback.answer("🗑 Удалено!")
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(f"🗑 Удалено: «{title}»")
 
     @router.callback_query(F.data.startswith("task:pick_move:"))
@@ -182,7 +187,7 @@ def create_router() -> Router:
         task_id = int(parts[2])
 
         await callback.answer()
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_reply_markup(
                 reply_markup=horizon_picker_keyboard(task_id),
             )
@@ -216,7 +221,7 @@ def create_router() -> Router:
         horizon_labels = dict(HORIZON_OPTIONS)
         label = horizon_labels.get(target_horizon, target_horizon)
         await callback.answer(f"Перенесено → {label}")
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(f"🔄 «{task.title}» → {label}")
 
     @router.callback_query(F.data.startswith("task:cancel:"))
@@ -231,7 +236,7 @@ def create_router() -> Router:
         task_id = int(parts[2])
 
         await callback.answer()
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_reply_markup(
                 reply_markup=task_action_keyboard(task_id),
             )
@@ -262,7 +267,7 @@ def create_router() -> Router:
             return
 
         await callback.answer()
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_reply_markup(
                 reply_markup=category_picker_keyboard(task_id, categories),
             )
@@ -299,7 +304,7 @@ def create_router() -> Router:
             await update_task_category(session, task, new_category_id, user.id)
 
         await callback.answer(f"Категория → {cat.name}")
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(
                 f"🏷 «{task.title}» → {cat.name}",
                 reply_markup=task_action_keyboard(task_id),

@@ -89,7 +89,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        scheduler_handle: tuple[object, object] | None = None
+        import asyncio
+
+        scheduler_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
         if settings.database_url:
             init_engine(settings.database_url)
             logger.info("db.engine.init")
@@ -115,8 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if scheduler_handle is not None:
                 task, stop = scheduler_handle
-                # mypy: handle is Any-typed because of the AsyncIterator boundary
-                await stop_inproc_scheduler(task, stop)  # type: ignore[arg-type]
+                await stop_inproc_scheduler(task, stop)
             if bot is not None:
                 await bot.session.close()
             await dispose_engine()

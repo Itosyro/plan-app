@@ -133,7 +133,7 @@ def resolve_time(
         "DATE_ORDER": "DMY",
     }
 
-    dt = dateparser.parse(preprocessed, languages=["ru"], settings=settings)  # type: ignore[arg-type]
+    dt = dateparser.parse(preprocessed, languages=["ru"], settings=settings)
     if dt is None:
         logger.debug("time_resolver.no_parse", fragment=fragment, preprocessed=preprocessed)
         return None

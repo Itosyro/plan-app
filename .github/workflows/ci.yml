@@ -41,5 +41,8 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check .
 
+      - name: Mypy (app/)
+        run: uv run mypy
+
       - name: Pytest
         run: uv run pytest -q
