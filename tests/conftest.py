@@ -23,6 +23,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db.base import dispose_engine, get_sessionmaker, init_engine
 from app.main import create_app
 from app.shared.config import Settings
+from app.shared.logging import configure_logging
+
+# Ensure structlog is configured early — before any test calls
+# ``logger.exception()``. Without this, structlog falls back to its
+# defaults (Rich ConsoleRenderer with ``show_locals=True``) which hangs
+# when formatting tracebacks with complex Groq/instructor objects.
+configure_logging()
 
 # Must match `len > 34` so aiogram's token validator is happy. It's a fake
 # value: we never actually hit api.telegram.org in tests.

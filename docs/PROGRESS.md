@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-05-09 — M-4: drop format_exc_info + code review cleanup
+
+**PR #49** — M-4 + code review fix.
+
+1. **M-4** — Drop `format_exc_info` from structlog processor chain.
+   - **Root cause**: When `configure_logging()` is not called before test
+     code, structlog falls back to defaults — Rich's `ConsoleRenderer`
+     with `show_locals=True`. Rich inspects all local variables in
+     traceback frames; `InstructorRetryException` carries references to
+     `AsyncGroq` / `httpx` transports whose repr hangs indefinitely.
+   - **Fix (a)**: `tests/conftest.py` now calls `configure_logging()` at
+     module level so structlog never uses the Rich default.
+   - **Fix (b)**: `app/shared/logging.py` — removed `format_exc_info`
+     from the processor chain; `ConsoleRenderer` now uses
+     `structlog.dev.plain_traceback` (stdlib-based, no `show_locals`).
+   - All 204 tests pass. No warnings, no hangs.
+
+2. **Code-review fix**: `app/ai/router.py` — replaced
+   `getattr(exc, "status_code", None)` with direct `exc.status_code`
+   access (type-safe; `APIStatusError.__init__` sets the attribute).
+
+Tests: **204 passed**. Lints / mypy clean.
+
+---
+
 ## 2026-05-09 — M-6 + M-3: per-user time anchors + services split
 
 **PR #47** — два коммита:
