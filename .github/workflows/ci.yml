@@ -46,3 +46,30 @@ jobs:
 
       - name: Pytest
         run: uv run pytest -q
+
+  webapp:
+    name: webapp build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install dependencies
+        working-directory: webapp
+        run: npm ci || npm install
+
+      - name: TypeScript typecheck
+        working-directory: webapp
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: webapp
+        run: npm run build

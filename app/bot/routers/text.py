@@ -29,6 +29,7 @@ from app.bot.services import (
     get_user_settings,
     store_inbox_text,
 )
+from app.bot.streaming import stream_reply
 from app.db.base import session_scope
 from app.shared.logging import get_logger
 
@@ -91,7 +92,10 @@ def create_router() -> Router:
         msg_text = message.text
         from_user_id = message.from_user.id
 
-        await message.answer("⏳ Разбираю…")
+        # Send a placeholder and edit it progressively once the
+        # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
+        # then the real reply types itself line-by-line.
+        placeholder = await message.answer("⏳ Разбираю…")
 
         async def _background() -> None:
             try:
@@ -110,14 +114,21 @@ def create_router() -> Router:
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
                 )
-                await message.answer(reply)
+                await stream_reply(placeholder, reply, bot=message.bot)
             except Exception:
                 logger.exception(
                     "pipeline.error",
                     tg_user_id=from_user_id,
                     text_len=len(msg_text),
                 )
-                await message.answer("Ошибка при разборе — сохранил во входящие, разберу позже.")
+                try:
+                    await placeholder.edit_text(
+                        "Ошибка при разборе — сохранил во входящие, разберу позже."
+                    )
+                except Exception:
+                    await message.answer(
+                        "Ошибка при разборе — сохранил во входящие, разберу позже."
+                    )
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)

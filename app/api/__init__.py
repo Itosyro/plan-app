@@ -1,11 +1,10 @@
-"""FastAPI routes for the Telegram mini-app and admin endpoints.
+"""REST API for the Telegram Mini-App (Phase 5.1).
 
-Reserved namespace — populated in **Phase 5** (mini-app JSON API:
-``GET /api/today``, ``GET /api/inbox``, ``POST /api/tasks``, etc.).
-Kept as an empty package so reviewers don't think it's an oversight
-and so future imports (``from app.api import router``) don't break
-during the staged rollout.
-
-See ``docs/REVIEW-2026-05-09.md::M-7`` and ``ARCHITECTURE.md`` for
-the phase plan.
+Routers under ``app/api/routers/`` are mounted at ``/api/...`` from
+``app/main.py``. Authentication is handled by
+``app.api.auth.current_user`` — a FastAPI dependency that validates the
+``X-Telegram-Init-Data`` header (HMAC-SHA256 against the bot token, per
+the Telegram Mini Apps spec).
 """
+
+from __future__ import annotations

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     scheduler_inproc_enabled: bool = True
     scheduler_tick_interval_seconds: float = 60.0
 
+    # Phase 5 — Mini-App URL override. By default we derive it from
+    # ``webhook_base_url`` (same host, ``/app/`` path). Set explicitly
+    # when the Mini-App is hosted on a separate domain (e.g. Cloudflare
+    # Pages) — Telegram requires HTTPS for ``MenuButtonWebApp``.
+    miniapp_url_override: str | None = None
+
     @property
     def groq_keys_list(self) -> list[str]:
         """Parse `GROQ_API_KEYS` into a clean list of keys."""
@@ -58,6 +64,20 @@ class Settings(BaseSettings):
         if not self.webhook_base_url or not self.telegram_webhook_secret:
             return None
         return f"{self.webhook_base_url.rstrip('/')}/tg/{self.telegram_webhook_secret}"
+
+    @property
+    def miniapp_url(self) -> str | None:
+        """Public URL of the Mini-App (used by ``setChatMenuButton``).
+
+        Returns ``miniapp_url_override`` if set, otherwise
+        ``{webhook_base_url}/app/`` if the base URL is available.
+        ``None`` when neither is configured (no menu button is set).
+        """
+        if self.miniapp_url_override:
+            return self.miniapp_url_override.rstrip("/") + "/"
+        if self.webhook_base_url:
+            return self.webhook_base_url.rstrip("/") + "/app/"
+        return None
 
 
 @lru_cache(maxsize=1)
