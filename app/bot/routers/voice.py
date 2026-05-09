@@ -16,6 +16,7 @@ from aiogram.types import Message
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.quote_replies import reply_to
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
@@ -101,8 +102,12 @@ def create_router() -> Router:
             )
 
         # Send a placeholder bubble we'll edit progressively. Mirrors the
-        # text router so both surfaces feel the same.
-        placeholder = await message.answer("🎤 Расшифровываю голосовое…")
+        # text router so both surfaces feel the same; ``reply_parameters``
+        # anchors the bot's reply to the user's voice message.
+        placeholder = await message.answer(
+            "🎤 Расшифровываю голосовое…",
+            reply_parameters=reply_to(chat_id=chat_id, message_id=message.message_id),
+        )
 
         from_user_id = message.from_user.id
         msg_id = message.message_id
