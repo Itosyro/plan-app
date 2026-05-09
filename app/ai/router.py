@@ -66,8 +66,7 @@ def _is_recoverable_groq_error(exc: BaseException) -> bool:
     if isinstance(exc, RateLimitError | InternalServerError):
         return True
     if isinstance(exc, APIStatusError):
-        status = getattr(exc, "status_code", None)
-        return isinstance(status, int) and status >= 500
+        return exc.status_code >= 500
     return False
 
 

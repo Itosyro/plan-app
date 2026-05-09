@@ -42,22 +42,21 @@ def configure_logging() -> None:
     settings = get_settings()
     level = _LOG_LEVELS.get(settings.log_level.upper(), logging.INFO)
 
-    # NB: ``structlog.processors.format_exc_info`` is intentionally kept in
-    # the chain even though structlog 25 emits a ``UserWarning`` recommending
-    # it be removed when ``ConsoleRenderer`` / ``JSONRenderer`` are used. In
-    # this codebase, removing it causes ``tests/test_e2e_pipeline.py::
-    # test_e2e_partial_classify_failure_does_not_kill_batch`` to hang under
-    # certain Groq-retry / chained-exception paths. See
-    # ``REVIEW-2026-05-09.md::M-4`` (deferred to future work).
     processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
     ]
     if settings.env == "development":
-        processors.append(structlog.dev.ConsoleRenderer(colors=False))
+        # ``plain_traceback`` avoids Rich's ``show_locals=True`` which
+        # hangs on complex Groq/instructor exception chains. See M-4.
+        processors.append(
+            structlog.dev.ConsoleRenderer(
+                colors=False,
+                exception_formatter=structlog.dev.plain_traceback,
+            )
+        )
     else:
         processors.append(structlog.processors.JSONRenderer())
 
