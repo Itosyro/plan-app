@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,9 +28,18 @@ from app.db.models import Task, UserSettings
 class _FakeBot:
     def __init__(self) -> None:
         self.calls: list[tuple[int, str]] = []
+        self.pin_calls: list[tuple[int, int]] = []
+        self._next_message_id = 1000
 
-    async def send_message(self, *, chat_id: int, text: str, **_: Any) -> None:
+    async def send_message(self, *, chat_id: int, text: str, **_: Any) -> SimpleNamespace:
         self.calls.append((chat_id, text))
+        msg_id = self._next_message_id
+        self._next_message_id += 1
+        return SimpleNamespace(message_id=msg_id)
+
+    async def pin_chat_message(self, *, chat_id: int, message_id: int, **_: Any) -> bool:
+        self.pin_calls.append((chat_id, message_id))
+        return True
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -396,10 +406,12 @@ async def test_tick_digests_isolates_one_failing_user(session: AsyncSession) -> 
     """A failing send for user A shouldn't stop user B from getting their digest."""
 
     class _PickyBot(_FakeBot):
-        async def send_message(self, *, chat_id: int, text: str, **kw: Any) -> None:
+        async def send_message(  # type: ignore[override]
+            self, *, chat_id: int, text: str, **kw: Any
+        ) -> SimpleNamespace:
             if chat_id == 1108:
                 raise RuntimeError("rate limited")
-            await super().send_message(chat_id=chat_id, text=text, **kw)
+            return await super().send_message(chat_id=chat_id, text=text, **kw)
 
     for tg_id in (1108, 1109):
         await _onboard(session, telegram_id=tg_id, tz="UTC")

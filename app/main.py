@@ -160,6 +160,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispose_engine()
 
     app = FastAPI(title="plan-app", version="0.1.0", lifespan=lifespan)
+    # Phase 6.3: API routes (Mini-App) need to refresh the pinned morning
+    # digest when a task is marked done. Stash the bot on app.state so
+    # the routers can access it via Request.app.state.bot. Tests pass a
+    # fake bot or None — the router gates on this.
+    app.state.bot = bot
 
     # The auth dependency reads ``Settings`` via ``Depends(get_settings)``;
     # because ``get_settings`` is ``lru_cache``-d at module level it would

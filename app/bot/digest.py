@@ -250,8 +250,14 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
             try:
                 if morning:
                     text = await build_morning_digest(session, user)
-                    await bot.send_message(chat_id=user.telegram_id, text=text)
                     settings.last_morning_digest_on = local_date
+                    # Phase 6.3: pin the digest so we can re-edit it as
+                    # tasks complete during the day. ``send_and_pin``
+                    # falls back to a plain ``send_message`` if pinning
+                    # fails (e.g. group chat where bot isn't admin).
+                    from app.bot.pinned_today import send_and_pin_morning_digest
+
+                    await send_and_pin_morning_digest(bot, session, user, settings, text)
                     sent_morning += 1
                 if evening:
                     text = await build_evening_digest(session, user)

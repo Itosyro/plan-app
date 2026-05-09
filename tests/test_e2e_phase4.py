@@ -22,6 +22,7 @@ that gap and pins three regressions that span the full chain:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -57,11 +58,20 @@ class _RecordingBot:
         self.fail = fail
         self.fail_with = fail_with or RuntimeError("boom")
         self.calls: list[dict[str, Any]] = []
+        self.pin_calls: list[dict[str, Any]] = []
+        self._next_message_id = 2000
 
-    async def send_message(self, **kwargs: Any) -> None:
+    async def send_message(self, **kwargs: Any) -> SimpleNamespace:
         if self.fail:
             raise self.fail_with
         self.calls.append(kwargs)
+        msg_id = self._next_message_id
+        self._next_message_id += 1
+        return SimpleNamespace(message_id=msg_id)
+
+    async def pin_chat_message(self, **kwargs: Any) -> bool:
+        self.pin_calls.append(kwargs)
+        return True
 
 
 def _classifier_result(

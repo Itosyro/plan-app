@@ -15,6 +15,7 @@ from aiogram.types import (
     Message,
 )
 
+from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
     get_or_create_user,
@@ -186,12 +187,26 @@ def create_router() -> Router:
                 await callback.answer("Задача не найдена.")
                 return
             await mark_task_done(session, task, user.id)
+            user_id_for_pin = user.id
 
         await callback.answer("✅ Выполнено!")
         if isinstance(callback.message, Message):
             # No parse_mode: task.title is user-controlled and can contain
             # Markdown metachars that crash Telegram's parser.
             await callback.message.edit_text(f"✅ Выполнено: «{task.title}»")
+
+        # Phase 6.3: refresh the pinned morning digest so the strikethrough
+        # state is live. Best-effort — handled inside refresh_pinned_morning.
+        if callback.bot is not None:
+            async with session_scope() as session:
+                try:
+                    await refresh_pinned_morning(callback.bot, session, user_id_for_pin)
+                except Exception:
+                    logger.warning(
+                        "callbacks.refresh_pinned_failed",
+                        user_id=user_id_for_pin,
+                        exc_info=True,
+                    )
 
     @router.callback_query(F.data.startswith("task:delete:"))
     async def cb_task_delete(callback: CallbackQuery) -> None:
