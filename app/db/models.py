@@ -84,6 +84,11 @@ class UserSettings(SQLModel, table=True):
     # See ``docs/REVIEW-2026-05-09.md::C-3``.
     last_morning_digest_on: date | None = Field(default=None)
     last_evening_digest_on: date | None = Field(default=None)
+    # Per-user anchors for "утром" / "вечером" in the time resolver.
+    # Defaults match the hard-coded values that ``time_resolver.py``
+    # used before M-6. See ``docs/REVIEW-2026-05-09.md::M-6``.
+    morning_anchor: str = Field(default="09:00", max_length=5)
+    evening_anchor: str = Field(default="19:00", max_length=5)
 
 
 class InboxEntry(SQLModel, table=True):

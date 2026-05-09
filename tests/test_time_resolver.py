@@ -79,3 +79,32 @@ def test_cherez_nedelyu() -> None:
     assert result.resolved_dt is not None
     diff = (result.resolved_dt - _NOW).total_seconds()
     assert 6.9 * 86400 <= diff <= 7.1 * 86400
+
+
+# ── M-6: per-user morning_anchor / evening_anchor ────────────────────
+
+
+def test_vecherom_custom_anchor() -> None:
+    """User with evening_anchor=21:00 gets 21:00 instead of default 19:00."""
+    result = resolve_time(
+        "вечером пробежка",
+        _TZ,
+        now=_NOW,
+        evening_anchor="21:00",
+    )
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 21
+
+
+def test_utrom_custom_anchor() -> None:
+    """User with morning_anchor=08:00 gets 08:00 instead of default 09:00."""
+    result = resolve_time(
+        "утром пробежка",
+        _TZ,
+        now=_NOW,
+        morning_anchor="08:00",
+    )
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 8

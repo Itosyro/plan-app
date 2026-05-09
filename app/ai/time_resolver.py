@@ -27,6 +27,11 @@ _REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bчерез\s+минуту\b", re.I), "через 1 минуту"),
     (re.compile(r"\bчерез\s+неделю\b", re.I), "через 7 дней"),
     (re.compile(r"\bчерез\s+месяц\b", re.I), "через 30 дней"),
+    # Anchors for "вечером" / "утром" are inserted dynamically by
+    # ``_preprocess`` based on per-user settings (M-6). The static
+    # entries below are kept only as fallback sentinels — they are
+    # overridden when ``morning_anchor`` / ``evening_anchor`` kwargs
+    # are passed to ``resolve_time``.
     (re.compile(r"\bвечером\b", re.I), "в 19:00"),
     (re.compile(r"\bутром\b", re.I), "в 09:00"),
     (re.compile(r"\bк\s+утру\b", re.I), "в 09:00"),
@@ -72,10 +77,25 @@ _TIME_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
-def _preprocess(text: str) -> str:
-    """Apply Russian-specific replacements before dateparser."""
+def _preprocess(
+    text: str,
+    *,
+    morning_anchor: str = "09:00",
+    evening_anchor: str = "19:00",
+) -> str:
+    """Apply Russian-specific replacements before dateparser.
+
+    ``morning_anchor`` / ``evening_anchor`` override the hard-coded
+    ``09:00`` / ``19:00`` so each user can customise what "утром" and
+    "вечером" mean. See ``docs/REVIEW-2026-05-09.md::M-6``.
+    """
     result = text
     for pattern, replacement in _REPLACEMENTS:
+        # Override anchor replacements with per-user values.
+        if pattern.pattern == r"\bвечером\b":
+            replacement = f"в {evening_anchor}"
+        elif pattern.pattern in (r"\bутром\b", r"\bк\s+утру\b"):
+            replacement = f"в {morning_anchor}"
         result = pattern.sub(replacement, result)
     return result
 
@@ -110,8 +130,15 @@ def resolve_time(
     text: str,
     user_tz: str,
     now: datetime | None = None,
+    *,
+    morning_anchor: str = "09:00",
+    evening_anchor: str = "19:00",
 ) -> ResolvedTime | None:
     """Parse Russian time expressions from *text*.
+
+    ``morning_anchor`` / ``evening_anchor`` control the HH:MM values
+    substituted for "утром" / "вечером". Defaults match the old
+    hard-coded behaviour.
 
     Returns ``None`` if no time expression was found.
     """
@@ -123,7 +150,11 @@ def resolve_time(
     if fragment is None:
         return None
 
-    preprocessed = _preprocess(fragment)
+    preprocessed = _preprocess(
+        fragment,
+        morning_anchor=morning_anchor,
+        evening_anchor=evening_anchor,
+    )
 
     settings = {
         "PREFER_DATES_FROM": "future",
