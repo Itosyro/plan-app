@@ -6,6 +6,61 @@
 
 ---
 
+## 2026-05-09 — Super-review v2: 6 critical findings closed
+
+**PRs #50 .. #58** — глубокое второе ревью поверх первого + фиксы.
+
+* **PR #50** — `docs/REVIEW-2026-05-09-v2.md`. 14 новых находок:
+  6 critical, 8 important, 9 minor. Каждая critical с repro.
+  Документация — без кода.
+* **PR #51** — промежуточный `HANDOFF v4` (черновик).
+* **PR #52 — C-5: webhook idempotency TOCTOU race.**
+  `mark_update_processed` теперь делает атомарный INSERT и ловит
+  `IntegrityError` вместо паттерна SELECT-then-INSERT. Параллельные
+  webhook-запросы с одинаковым `update_id` больше не попадают на 500
+  (и Telegram перестаёт retry'ить).
+* **PR #53 — C-1: settings UI `split(":")` parser.**
+  `cb_settings_set` теперь использует `parse_set_callback`, который
+  делает `split(":", 3)` — `"settings:set:morning_digest_at:08:00"`
+  парсится правильно. Все 8 кнопок утреннего/вечернего времени в
+  `/settings` снова работают.
+* **PR #54 — C-4: classifier user_categories.**
+  `_pipeline.run_pipeline` подгружает существующие категории через
+  `get_user_categories` и передаёт их в классификатор. Дубли вида
+  «Работа / работа / Рабочее» больше не плодятся.
+* **PR #55 — C-6: voice handler reminder offsets.**
+  Voice-handler грузит `default_reminder_offsets` из `UserSettings`,
+  как text-handler. Голосовые юзеры получают свои reminder presets,
+  а не глобальный default.
+* **PR #56 — C-2: time-resolver «сегодня в HH:MM».**
+  `+7d` rollover больше не срабатывает, если в исходном тексте
+  явно сказано «сегодня/сейчас/today». «во вторник» во вторник
+  по-прежнему уезжает на следующий вторник.
+* **PR #57 — C-3 + I-7: ON DELETE policies (alembic 0007).**
+  `delete_task` больше не FK-violate'ит на Postgres. Migration
+  `0007_fk_on_delete_policies` ставит CASCADE / SET NULL на ВСЕ
+  FK-констрейнты (`task_events.task_id`, `reminders.task_id`,
+  `*.user_id`, soft-references). Модели обновлены так, что
+  `create_all` в тестах тоже производит CASCADE — позволяет
+  писать тесты с `PRAGMA foreign_keys = ON`.
+* **PR #58** — `docs/HANDOFF-2026-05-09-v5.md` + обновление этого
+  PROGRESS-файла.
+
+Тесты: **207 passed** (был 204; +13 новых регрессий — webhook race,
+settings keyboard round-trip, classifier categories, voice reminder
+offsets, time-resolver «сегодня», delete_task FK).
+
+**НЕ закрыто в этой сессии (для следующего агента):**
+* Important `I-1 .. I-6`, `I-8` из v2 review.
+* Все Minor `M-1 .. M-9` из v2 review.
+* Phase 5 (mini-app) — не начат.
+
+См. `docs/REVIEW-2026-05-09-v2.md` для полного списка
+и `docs/HANDOFF-2026-05-09-v5.md` для рекомендованного порядка
+работы.
+
+---
+
 ## 2026-05-09 — M-4: drop format_exc_info + code review cleanup
 
 **PR #49** — M-4 + code review fix.
