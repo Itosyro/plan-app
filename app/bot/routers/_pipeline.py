@@ -9,6 +9,15 @@ names, which is a layering violation.
 
 This module hosts those helpers under public names. Both routers
 import from here. See ``docs/REVIEW-2026-05-09.md::I-4``.
+
+Backpressure (R-NEW-I-8): every ``run_pipeline`` invocation passes
+through two semaphores — a per-user one (``PER_USER_PIPELINE_LIMIT``,
+default 1) that serialises requests from the same user, and a
+global one (``GLOBAL_PIPELINE_LIMIT``, default 8) that caps total
+concurrent pipelines across the whole worker. Without these, a user
+spam-tapping voice messages or a coordinated burst of webhooks
+could fan out hundreds of in-flight Groq requests, exhaust file
+descriptors, and trip the rate-limiter for every other user.
 """
 
 from __future__ import annotations
@@ -36,7 +45,68 @@ from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+# ── Pipeline backpressure (R-NEW-I-8) ────────────────────────────────
+
+# Per-user limit: how many pipeline runs the same user can have
+# in-flight simultaneously. 1 = strict serialisation (the simplest
+# semantics: a user's Nth message waits for their (N-1)th to finish
+# its courier reply). Higher values would let two voice messages
+# from the same user run concurrently — useful for throughput, but
+# breaks the "one reply per message in order" UX guarantee.
+PER_USER_PIPELINE_LIMIT = 1
+
+# Global limit: caps total concurrent pipelines across all users.
+# Sized to leave headroom on a single Render instance (Groq client
+# pool, DB connection pool, file descriptors). 8 is a conservative
+# default for the current single-worker deploy; raise once the
+# instance is profiled under burst load.
+GLOBAL_PIPELINE_LIMIT = 8
+
 _groq_router: GroqKeyRouter | None = None
+_global_pipeline_semaphore: asyncio.Semaphore | None = None
+_user_pipeline_semaphores: dict[int, asyncio.Semaphore] = {}
+_user_semaphores_lock: asyncio.Lock | None = None
+
+
+def _get_global_pipeline_semaphore() -> asyncio.Semaphore:
+    """Return the lazily-initialised global semaphore.
+
+    Must be called from inside a running asyncio loop on first use
+    (the semaphore binds to the current loop on construction in
+    older Python versions; on 3.12 the loop is resolved at acquire
+    time, but lazy-init still avoids creating it during import).
+    """
+    global _global_pipeline_semaphore
+    if _global_pipeline_semaphore is None:
+        _global_pipeline_semaphore = asyncio.Semaphore(GLOBAL_PIPELINE_LIMIT)
+    return _global_pipeline_semaphore
+
+
+async def _get_user_pipeline_semaphore(user_id: int) -> asyncio.Semaphore:
+    """Return the per-user semaphore, creating it under a lock so two
+    concurrent first-message arrivals can't each install a fresh
+    semaphore and race past the per-user limit.
+    """
+    global _user_semaphores_lock
+    if _user_semaphores_lock is None:
+        _user_semaphores_lock = asyncio.Lock()
+    async with _user_semaphores_lock:
+        sem = _user_pipeline_semaphores.get(user_id)
+        if sem is None:
+            sem = asyncio.Semaphore(PER_USER_PIPELINE_LIMIT)
+            _user_pipeline_semaphores[user_id] = sem
+        return sem
+
+
+def reset_pipeline_semaphores_for_tests() -> None:
+    """Test-only hook: drop the cached semaphores so each test gets
+    a fresh limit-counter and (more importantly) one bound to the
+    test's event loop instead of a previous test's closed loop.
+    """
+    global _global_pipeline_semaphore, _user_semaphores_lock
+    _global_pipeline_semaphore = None
+    _user_semaphores_lock = None
+    _user_pipeline_semaphores.clear()
 
 
 def get_groq_router() -> GroqKeyRouter | None:
@@ -120,7 +190,57 @@ async def run_pipeline(
 
     The full Groq pipeline. Used by both the text router and the voice
     router (post-Whisper). Returns a user-facing reply string.
+
+    Backpressure: a per-user semaphore + a global semaphore gate the
+    actual work (see R-NEW-I-8). Acquisitions are nested (per-user
+    *outside* the global) so a flood from one user can't deadlock
+    other users — the per-user wait blocks before any global slot is
+    held. Acquire timing is logged at info level on contention.
     """
+    user_sem = await _get_user_pipeline_semaphore(user_id)
+    global_sem = _get_global_pipeline_semaphore()
+    if user_sem.locked() or global_sem.locked():
+        logger.info(
+            "pipeline.backpressure_wait",
+            user_id=user_id,
+            user_locked=user_sem.locked(),
+            global_locked=global_sem.locked(),
+        )
+    async with user_sem, global_sem:
+        return await _run_pipeline_inner(
+            groq_router,
+            text,
+            tg_user_id,
+            user_id,
+            user_tz,
+            inbox_id,
+            critic_mode=critic_mode,
+            confidence_threshold=confidence_threshold,
+            courier_mode=courier_mode,
+            courier_style=courier_style,
+            default_reminder_offsets=default_reminder_offsets,
+            morning_anchor=morning_anchor,
+            evening_anchor=evening_anchor,
+        )
+
+
+async def _run_pipeline_inner(
+    groq_router: GroqKeyRouter,
+    text: str,
+    tg_user_id: int,
+    user_id: int,
+    user_tz: str,
+    inbox_id: int | None,
+    *,
+    critic_mode: str = "confidence",
+    confidence_threshold: float = 0.7,
+    courier_mode: str = "mix",
+    courier_style: str = "neutral",
+    default_reminder_offsets: dict[str, list[int]] | None = None,
+    morning_anchor: str = "09:00",
+    evening_anchor: str = "19:00",
+) -> str:
+    """Inner pipeline body, called only while both semaphores are held."""
     reorder_reply = await _try_reorder(groq_router, text, user_id)
     if reorder_reply is not None:
         return reorder_reply
