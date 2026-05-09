@@ -2,6 +2,13 @@
 
 Этот документ — северная звезда проекта. Он отвечает на вопрос «зачем» и «что должно делать», без деталей «как». «Как» — в [ARCHITECTURE.md](ARCHITECTURE.md), пошагово — в [ROADMAP.md](ROADMAP.md).
 
+> **Статус (2026-05-09):**
+> Бот работает в проде https://plan-app-t6nx.onrender.com (фазы 0..4
+> закрыты, все critical/important findings из ревью v2 закрыты).
+> Mini App (Phase 5) — не начат, можно стартовать.
+> Polish (Phase 6) — частичный (structlog/mypy/ruff есть,
+> golden-evals/DSPy/backup нет).
+
 ---
 
 ## 1. В двух словах

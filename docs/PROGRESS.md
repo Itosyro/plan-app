@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-05-09 — Plan audit + ROADMAP refresh + HANDOFF v8 (docs only)
+
+**PR** — обновление планировочных документов после полного
+аудита кода против изначальных планов
+(`plan-python-detailed.md`, `docs/PLAN.md`, `ROADMAP.md`,
+`ARCHITECTURE.md`).
+
+* `docs/PLAN.md` — добавлен Status-блок в начало (фазы 0..4
+  done, Phase 5 не начат, Phase 6 частично).
+* `docs/ROADMAP.md` — все фазы 0..4 помечены ✅ DONE с
+  деталями. Phase 4 — описано отклонение от плана (вместо
+  отдельного Render Cron сделан in-process scheduler в web-сервисе).
+  Phase 5 — детальный breakdown на 5.1..5.6. Phase 6 —
+  что есть и что осталось.
+* `docs/HANDOFF-2026-05-09-v8.md` (NEW) — мега-handoff на
+  ~700 строк для следующего агента: super-review-first
+  стратегия, поиск новых скиллов, multi-PR autonomous
+  execution, грабли проекта, workflow для каждого PR,
+  карта моделей, quick-reference. Цель — чтобы следующий
+  агент использовал все 100% лимита сессии и закрыл много
+  работы за раз без подтверждений.
+
+**Не меняли:** код, тесты, миграции, prod config.
+
+---
+
 ## 2026-05-09 — Important findings I-1..I-6, I-8 closed (PR #61)
 
 **PR #61** — закрыты 7 из 8 Important findings из `docs/REVIEW-2026-05-09-v2.md`

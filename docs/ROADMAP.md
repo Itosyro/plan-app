@@ -2,9 +2,23 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
+> **Status (на 2026-05-09):**
+> Phase 0..4 — **done и в проде**. Работает: голосовое/текстовое
+> сообщение → задачи + заметки + напоминания, утренний/вечерний
+> дайджест, команды `/today /week /...`, callback-кнопки, /settings.
+> 243 теста, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
+>
+> Все critical (C-1..C-6) и important (I-1..I-8) findings из
+> `docs/REVIEW-2026-05-09-v2.md` — закрыты.
+>
+> Что осталось:
+> - Phase 5 (Mini App) — **не начат**.
+> - Phase 6 (Polish) — **частично** (structlog ✓, mypy strict ✓; golden-evals/DSPy/backup ✗).
+> - Minor M-1..M-9 из v2-ревью — открыты.
+
 ---
 
-## Phase 0 — Cleanup + Python skeleton (этот PR)
+## Phase 0 — Cleanup + Python skeleton ✅ DONE
 
 **Цель:** убрать всё лишнее, поставить пустой Python-каркас, который:
 - проходит `ruff check` и `pytest`,
@@ -32,7 +46,7 @@
 
 ---
 
-## Phase 1 — Минимальный бот (webhook + БД)
+## Phase 1 — Минимальный бот (webhook + БД) ✅ DONE
 
 **Цель:** бот в Telegram отвечает на `/start`, принимает текст, сохраняет его в `inbox_entries`. **Без AI.**
 
@@ -55,7 +69,7 @@
 
 ---
 
-## Phase 2 — AI-пайплайн (Splitter + Classifier + Critic + Time Resolver)
+## Phase 2 — AI-пайплайн (Splitter + Classifier + Critic + Time Resolver) ✅ DONE
 
 **Цель:** голосовое/текстовое сообщение превращается в задачи и заметки.
 
@@ -96,7 +110,7 @@
 
 ---
 
-## Phase 3 — Категории, горизонты, ручное редактирование
+## Phase 3 — Категории, горизонты, ручное редактирование ✅ DONE (кроме экспорта в xlsx)
 
 **Цель:** юзер может управлять структурой через бот.
 
@@ -109,47 +123,95 @@
 
 ---
 
-## Phase 4 — Напоминания и дайджесты (cron worker)
+## Phase 4 — Напоминания и дайджесты (in-process scheduler) ✅ DONE
 
 **Цель:** бот сам присылает что нужно когда нужно.
 
-**Содержимое:**
-- отдельный сервис `app/workers/scheduler.py` — Render cron job, раз в минуту;
-- читает `reminders` где `fire_at <= now()` и отправляет через Telegram Bot API;
-- утренний и вечерний дайджесты по расписанию из `UserSettings`;
-- ретраи через `processing_jobs`;
-- метрики latency / ошибок.
+> ⚠️ **Отклонение от плана:** изначально планировался отдельный
+> Render Cron Job. Реально Render Free такого не даёт, поэтому
+> сделали **in-process scheduler** в том же web-сервисе
+> (`app/workers/runner.py` + `app/workers/scheduler.py`,
+> `start_inproc_scheduler` поднимается из FastAPI lifespan).
+> Внешний пинговалка `cron-job.org → /healthz` каждые 5 минут
+> держит free-instance тёплым, чтобы scheduler не засыпал.
+
+**Содержимое (что реально лежит в коде):**
+- `app/workers/runner.py` — `run_scheduler_loop` запускает tick'и
+  каждые 60 секунд внутри web-процесса;
+- `app/workers/scheduler.py` — `tick_reminders()`: claim-pattern
+  (pending → processing → sent/failed) + per-row commit, защита
+  от crash mid-batch;
+- `app/bot/digest.py` — `tick_digests()`: catch-up семантика
+  (`local_now >= scheduled_time` + `last_*_digest_on != today`),
+  day-1 safeguard для свежих юзеров;
+- `Reminder.attempts` + `MAX_REMINDER_ATTEMPTS = 3` — встроенные
+  retry'и через состояние (без отдельной таблицы processing_jobs).
 
 ---
 
-## Phase 5 — Telegram mini-app
+## Phase 5 — Telegram mini-app 🟡 NOT STARTED
 
 **Цель:** красивый веб-UI внутри Telegram.
 
+> Можно начинать. Бот стабилен, БД устаканена, API-эндпоинтов пока
+> 0 — `app/api/__init__.py` пустой. Mini-app — это самостоятельный
+> большой кусок (≥ 5 PR), который можно дробить на подэтапы:
+> 5.1 backend API, 5.2 каркас фронта, 5.3 список+фильтры,
+> 5.4 канбан + drag-n-drop, 5.5 календарь.
+
 **Содержимое:**
-- React + Vite + Tailwind (отдельная папка `webapp/`);
-- собирается в статику и отдаётся из FastAPI;
-- три вкладки: Канбан / Календарь / Список;
-- drag-n-drop задач между горизонтами и категориями;
-- карточка задачи: содержимое;
-- детали задачи: оригинальный транскрипт + история событий;
-- авторизация через Telegram `initData`;
-- темизация под Telegram theme.
+- **5.1 Backend API.** REST под `/api/*`, auth через Telegram
+  `initData` (HMAC-валидация), эндпоинты:
+  - `GET /api/me` — текущий юзер + настройки;
+  - `GET /api/tasks?horizon=...&category=...` — список;
+  - `PATCH /api/tasks/:id` — изменить horizon / status / category;
+  - `DELETE /api/tasks/:id`;
+  - `GET /api/notes`, `GET /api/categories`, `GET /api/inbox/:id`
+    (для просмотра оригинального транскрипта).
+- **5.2 Каркас фронта.** React + Vite + Tailwind в `webapp/`,
+  собирается в статику, отдаётся `StaticFiles` из FastAPI на
+  `/app/*`. WebApp init script + theme подхват из Telegram.
+- **5.3 Список с фильтрами.** Простой grid задач, фильтры по
+  горизонту/категории, кнопки done/move/delete (вызывают API).
+- **5.4 Канбан + drag-n-drop.** dnd-kit, колонки = горизонты,
+  drag меняет horizon_id через PATCH.
+- **5.5 Календарный вид.** FullCalendar (или fullcalendar/react),
+  события по `due_at`, drag по сетке двигает `due_at`.
+- **5.6 Карточка задачи.** Модалка/sheet с описанием, оригиналом
+  inbox_entry (текст или voice player для голоса), TaskEvent-историей.
+
+**Критерий готовности:** юзер может пользоваться ботом ИЛИ mini-app
+полностью equivalent'но; всё что есть в mini-app — отражается в боте
+и наоборот.
 
 ---
 
-## Phase 6 — Polish, наблюдаемость, эвалы
+## Phase 6 — Polish, наблюдаемость, эвалы 🟡 PARTIAL
 
 **Цель:** довести до состояния «не стыдно показать».
 
-**Содержимое:**
-- логирование (structlog), метрики;
-- LLM-эвалы: golden-set из 50 русских фраз, прогон через пайплайн, сравнение с эталоном;
-- DSPy: попытка автоподбора промптов;
-- backup БД (cron, дамп в внешний bucket);
-- pre-commit hooks (ruff, mypy);
-- mypy strict в core-модулях;
-- расширенный README.
+**Что уже есть:**
+- ✅ structlog с JSON-логами (`app/shared/logging.py`);
+- ✅ mypy strict — проходит на всём коде (`uv run mypy`);
+- ✅ ruff format + ruff check в CI;
+- ✅ idempotency на webhook'ах + claim-pattern на reminders.
+
+**Что осталось:**
+- ❌ **LLM-эвалы:** golden-set из 50 русских фраз
+  (`tests/golden/ru/*.json`), прогон через пайплайн, сравнение с
+  эталоном. Метрика: % правильных category/horizon/priority.
+- ❌ **DSPy** — автоподбор промптов на основе golden-set.
+- ❌ **Backup БД.** Neon free даёт PITR на 7 дней. Дополнительно
+  стоит сделать nightly `pg_dump → S3/R2/B2` (cron-job.org →
+  endpoint в нашем web-сервисе который дампит и шлёт в bucket).
+- ❌ **Sentry/Logfire** — на free tier бесплатно, но требует SDK
+  + DSN в ENV. Пока не подключено.
+- ❌ **Расширенный README.** Сейчас README.md есть, но без
+  скриншотов, GIF демо, deployment guide.
+- ❌ **pre-commit hooks** — намеренно не делаем (сильно тормозит
+  работу AI-агентов и нет в репо `.pre-commit-config.yaml`).
+- ❌ **Закрытие Minor M-1..M-9** из v2-ревью — мелкие гигиенические
+  фиксы, см. `docs/REVIEW-2026-05-09-v2.md`.
 
 ---
 
