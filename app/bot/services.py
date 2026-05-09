@@ -7,7 +7,7 @@ and keeps SQL out of the routers.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
@@ -29,7 +29,7 @@ from app.db.models import (
     UserSettings,
 )
 from app.shared.logging import get_logger
-from app.shared.time import utcnow_naive
+from app.shared.time import to_naive_utc, utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -255,11 +255,9 @@ def _select_reminder_offsets(
     return [int(o) for o in raw if int(o) > 0]
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Return *dt* as a naive UTC datetime (drop tz, converting if needed)."""
-    if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(UTC).replace(tzinfo=None)
+# Backwards-compat alias: pre-2026-05-09 callers used the private name.
+# Prefer :func:`app.shared.time.to_naive_utc` in new code.
+_to_naive_utc = to_naive_utc
 
 
 async def schedule_reminders(
@@ -280,8 +278,8 @@ async def schedule_reminders(
     """
     if not offsets:
         return []
-    ref_due = _to_naive_utc(due_at)
-    ref_now = _to_naive_utc(now) if now is not None else utcnow_naive()
+    ref_due = to_naive_utc(due_at)
+    ref_now = to_naive_utc(now) if now is not None else utcnow_naive()
     created: list[Reminder] = []
     for offset in offsets:
         if offset <= 0:
@@ -321,13 +319,18 @@ async def persist_classification(
     hor = await get_or_create_horizon(session, user_id, cr.horizon)
 
     if cr.is_task:
+        # Normalise ``due_at`` to naive UTC before persisting — ``dateparser``
+        # returns a tz-aware value in the user's tz, and the column is tz-naive.
+        # Without this we'd silently store user-local time in a column the rest
+        # of the schema treats as UTC. See ``docs/REVIEW-2026-05-09.md::C-2``.
+        due_at_utc = to_naive_utc(due_at) if due_at is not None else None
         row: Task | Note = Task(
             user_id=user_id,
             category_id=cat.id,
             horizon_id=hor.id,
             title=cr.title,
             priority=cr.priority,
-            due_at=due_at,
+            due_at=due_at_utc,
             confidence=cr.confidence,
             source_inbox_id=inbox_id,
         )

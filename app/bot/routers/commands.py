@@ -21,6 +21,7 @@ from app.bot.services import (
 from app.db.base import session_scope
 from app.db.models import Note, Task
 from app.shared.logging import get_logger
+from app.shared.time import format_due_local
 
 logger = get_logger(__name__)
 
@@ -40,13 +41,16 @@ PRIORITY_ICONS: dict[str, str] = {
 }
 
 
-def _format_task_list(tasks: list[Task], title: str) -> str:
+def _format_task_list(tasks: list[Task], title: str, user_tz: str) -> str:
     """Format a list of tasks into a readable plain-text message.
 
     Plain text only — ``parse_mode`` is intentionally **not** set on send,
     because ``task.title`` is user-controlled and routinely contains
     Markdown-active characters (``*``, ``_``, ``[``) that would break
     Telegram's parser. See ``docs/REVIEW-findings.md::C-2``.
+
+    ``task.due_at`` is naive UTC; rendered in *user_tz* so the user sees
+    their own clock-time. See ``docs/REVIEW-2026-05-09.md::C-2``.
     """
     if not tasks:
         return f"📋 {title}\n\nПусто — ни одной задачи."
@@ -56,7 +60,9 @@ def _format_task_list(tasks: list[Task], title: str) -> str:
         icon = PRIORITY_ICONS.get(task.priority, "⚪")
         due_part = ""
         if task.due_at is not None:
-            due_part = f" · {task.due_at:%H:%M}" if task.due_at.hour or task.due_at.minute else ""
+            local = format_due_local(task.due_at, user_tz)
+            if local is not None:
+                due_part = f" · {local}"
         lines.append(f"{i}. {icon} {task.title}{due_part}")
 
     lines.append(f"\nВсего: {len(tasks)}")
@@ -98,14 +104,15 @@ def create_router() -> Router:
                 return
             if user.id is None:
                 return
+            user_tz = user.tz
             tasks = await get_tasks_by_horizon(session, user.id, slug)
 
         title = HORIZON_TITLES.get(slug, slug)
         if not tasks:
-            await message.answer(_format_task_list(tasks, title))
+            await message.answer(_format_task_list(tasks, title, user_tz))
             return
 
-        await message.answer(_format_task_list(tasks, title))
+        await message.answer(_format_task_list(tasks, title, user_tz))
         for task in tasks:
             if task.id is not None:
                 await message.answer(

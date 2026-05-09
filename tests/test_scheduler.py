@@ -62,18 +62,27 @@ async def _seed(
 
 
 def test_format_reminder_with_time() -> None:
+    """C-2: ``due_at`` is naive UTC; rendered HH:MM is in *user_tz*.
+
+    A task due at 11:00 UTC for a Moscow user shows as 14:00 local.
+    """
     task = Task(user_id=1, title="Совещание", due_at=datetime(2026, 5, 8, 11, 0))
-    assert _format_reminder(task) == "⏰ Напоминаю: Совещание — в 11:00."
+    assert _format_reminder(task, "Europe/Moscow") == "⏰ Напоминаю: Совещание — в 14:00."
+    assert _format_reminder(task, "UTC") == "⏰ Напоминаю: Совещание — в 11:00."
 
 
 def test_format_reminder_without_time() -> None:
     task = Task(user_id=1, title="Йога")
-    assert _format_reminder(task) == "⏰ Напоминаю: Йога"
+    assert _format_reminder(task, "Europe/Moscow") == "⏰ Напоминаю: Йога"
 
 
-def test_format_reminder_midnight_due_treated_as_no_time() -> None:
-    task = Task(user_id=1, title="Без часа", due_at=datetime(2026, 5, 8, 0, 0))
-    assert _format_reminder(task) == "⏰ Напоминаю: Без часа"
+def test_format_reminder_midnight_local_treated_as_no_time() -> None:
+    """C-2: midnight is judged in the *user's* tz, not UTC.
+
+    21:00 UTC = 00:00 MSK → dropped (sentinel for "date-only deadline").
+    """
+    task = Task(user_id=1, title="Без часа", due_at=datetime(2026, 5, 7, 21, 0))
+    assert _format_reminder(task, "Europe/Moscow") == "⏰ Напоминаю: Без часа"
 
 
 @pytest.mark.asyncio

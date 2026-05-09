@@ -24,6 +24,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db.base import session_scope
 from app.db.models import Horizon, Task, User, UserSettings
 from app.shared.logging import get_logger
+from app.shared.time import format_due_local
 
 logger = get_logger(__name__)
 
@@ -54,12 +55,18 @@ def _matches_hhmm(local_dt: datetime, hhmm: str | None) -> bool:
     return local_dt.hour == hh and local_dt.minute == mm
 
 
-def _format_task_line(task: Task) -> str:
-    """Format a single task as ``<icon> <title>[ — в HH:MM]``."""
+def _format_task_line(task: Task, user_tz: str) -> str:
+    """Format a single task as ``<icon> <title>[ — в HH:MM]``.
+
+    ``task.due_at`` is naive UTC; rendered in *user_tz* so the user sees
+    their own clock. See ``docs/REVIEW-2026-05-09.md::C-2``.
+    """
     icon = PRIORITY_ICONS.get(task.priority, "⚪")
     line = f"{icon} {task.title}"
-    if task.due_at is not None and (task.due_at.hour or task.due_at.minute):
-        line += f" — в {task.due_at:%H:%M}"
+    if task.due_at is not None:
+        local = format_due_local(task.due_at, user_tz)
+        if local is not None:
+            line += f" — в {local}"
     return line
 
 
@@ -98,7 +105,7 @@ async def build_morning_digest(session: AsyncSession, user: User) -> str:
     if not today:
         return "🌅 Доброе утро!\n\nНа сегодня задач не запланировано — лёгкого дня."
     lines = ["🌅 Доброе утро!", "", "Сегодня:"]
-    lines.extend(_format_task_line(t) for t in today)
+    lines.extend(_format_task_line(t, user.tz) for t in today)
     return "\n".join(lines)
 
 
@@ -112,14 +119,14 @@ async def build_evening_digest(session: AsyncSession, user: User) -> str:
     if today:
         lines.append("")
         lines.append("Осталось на сегодня:")
-        lines.extend(_format_task_line(t) for t in today)
+        lines.extend(_format_task_line(t, user.tz) for t in today)
     else:
         lines.append("")
         lines.append("Сегодня всё закрыто 🎉.")
     if tomorrow:
         lines.append("")
         lines.append("Завтра:")
-        lines.extend(_format_task_line(t) for t in tomorrow)
+        lines.extend(_format_task_line(t, user.tz) for t in tomorrow)
     return "\n".join(lines)
 
 
