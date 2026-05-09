@@ -16,7 +16,6 @@ dependencies = [
     # data
     "sqlmodel>=0.0.22",
     "alembic>=1.14",
-    "asyncpg>=0.30",
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
@@ -25,8 +24,6 @@ dependencies = [
     "instructor>=1.7",
     # russian nlp
     "dateparser>=1.2",
-    "pymorphy3>=2.0",
-    "razdel>=0.5",
     # observability
     "structlog>=24.4",
 ]
