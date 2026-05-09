@@ -21,6 +21,7 @@ from app.bot.routers._pipeline import (
     run_pipeline,
 )
 from app.bot.services import get_or_create_user, get_user_settings, log_ai_run, store_inbox_voice
+from app.bot.streaming import stream_reply
 from app.db.base import session_scope
 from app.shared.logging import get_logger
 
@@ -91,7 +92,9 @@ def create_router() -> Router:
             await message.answer("Голосовое слишком большое (макс. 20 МБ).")
             return
 
-        await message.answer("🎤 Расшифровываю голосовое…")
+        # Send a placeholder bubble we'll edit progressively. Mirrors the
+        # text router so both surfaces feel the same.
+        placeholder = await message.answer("🎤 Расшифровываю голосовое…")
 
         from_user_id = message.from_user.id
         msg_id = message.message_id
@@ -100,13 +103,13 @@ def create_router() -> Router:
             try:
                 audio_bytes = await _download_voice(message)
                 if audio_bytes is None:
-                    await message.answer("Не удалось скачать голосовое.")
+                    await placeholder.edit_text("Не удалось скачать голосовое.")
                     return
 
                 transcript = await transcribe_voice(groq_router, audio_bytes)
 
                 if not transcript or len(transcript.strip()) < 2:
-                    await message.answer("Не удалось распознать речь — попробуй ещё раз.")
+                    await placeholder.edit_text("Не удалось распознать речь — попробуй ещё раз.")
                     return
 
                 # Store inbox entry with transcript
@@ -149,14 +152,19 @@ def create_router() -> Router:
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
                 )
-                await message.answer(reply)
+                await stream_reply(placeholder, reply, bot=message.bot)
 
             except Exception:
                 logger.exception(
                     "voice.pipeline_error",
                     tg_user_id=from_user_id,
                 )
-                await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
+                try:
+                    await placeholder.edit_text(
+                        "Ошибка при обработке голосового — попробуй ещё раз."
+                    )
+                except Exception:
+                    await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)
