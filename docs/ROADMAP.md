@@ -75,8 +75,8 @@
 
 **Содержимое:**
 - `app/ai/classifier.py` — `llama-3.3-70b-versatile`, авто-создание категорий;
-- `app/ai/time_resolver.py` — `dateparser` + `pymorphy3` + `razdel`, чистый Python;
-- `app/ai/reminder_extractor.py` — извлечение «через 43 минуты»;
+- `app/ai/time_resolver.py` — `dateparser` + русский препроцессор, чистый Python (pymorphy3 / razdel удалены в M-1 как unused);
+- ~~`app/ai/reminder_extractor.py`~~ — удалён в I-5 (superseded time_resolver + classifier);
 - SQLModel: `Category`, `Horizon`, `Task`, `Note`, `AiRun`, `TaskEvent`;
 - Alembic: миграция;
 - бот сохраняет задачи и отвечает детерминированным резюме.
