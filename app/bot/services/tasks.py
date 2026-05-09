@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import Insert as _PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import Insert as _SqliteInsert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.sql import Insert as _Insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -29,7 +30,7 @@ logger = get_logger(__name__)
 # ── Category / Horizon helpers ────────────────────────────────────────
 
 
-def _dialect_insert(session: AsyncSession, table: type) -> _Insert:
+def _dialect_insert(session: AsyncSession, table: type) -> _PgInsert | _SqliteInsert:
     """Pick the dialect-flavoured ``INSERT`` so we can use
     ``ON CONFLICT DO NOTHING`` (Postgres + SQLite both support it).
 

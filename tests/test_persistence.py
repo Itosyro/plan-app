@@ -77,7 +77,7 @@ async def test_get_or_create_category_concurrent_safe(engine: None) -> None:
             return cat.id
 
     results = await asyncio.gather(*[one_pipeline() for _ in range(5)])
-    assert len({r for r in results}) == 1, f"races produced different ids: {results}"
+    assert len(set(results)) == 1, f"races produced different ids: {results}"
     assert results[0] is not None
 
 
@@ -163,7 +163,7 @@ async def test_get_or_create_horizon_concurrent_safe(engine: None) -> None:
             return hor.id
 
     results = await asyncio.gather(*[one_pipeline() for _ in range(5)])
-    assert len({r for r in results}) == 1, f"races produced different ids: {results}"
+    assert len(set(results)) == 1, f"races produced different ids: {results}"
     assert results[0] is not None
 
 
