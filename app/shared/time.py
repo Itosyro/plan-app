@@ -15,7 +15,7 @@ message. See ``docs/REVIEW-2026-05-09.md::C-2``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -56,6 +56,7 @@ def format_due_local(due_at: datetime, user_tz: str) -> str | None:
     decide whether to render "— в HH:MM" or omit the suffix.
     """
     aware_utc = due_at.replace(tzinfo=UTC) if due_at.tzinfo is None else due_at
+    zi: ZoneInfo | timezone
     try:
         zi = ZoneInfo(user_tz or "UTC")
     except ZoneInfoNotFoundError:

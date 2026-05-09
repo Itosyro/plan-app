@@ -3,7 +3,7 @@
 Phase 2.3a: download voice file from Telegram, transcribe via Groq Whisper,
 then run the same pipeline as text (split → time → classify → persist → reply).
 Phase 2.3c: reply via Courier instead of deterministic text.
-Phase 2.3d: reorder detection inherited from text._run_pipeline.
+Phase 2.3d: reorder detection via the shared pipeline (``_pipeline.py``).
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from aiogram.types import Message
 
 from app.ai.whisper import transcribe_voice
 from app.bot.courier_templates import NOT_ONBOARDED
-from app.bot.routers.text import _get_router, _log_task_exception, _run_pipeline
+from app.bot.routers._pipeline import (
+    get_groq_router,
+    log_task_exception,
+    run_pipeline,
+)
 from app.bot.services import get_or_create_user, get_user_settings, log_ai_run, store_inbox_voice
 from app.db.base import session_scope
 from app.shared.logging import get_logger
@@ -67,7 +71,7 @@ def create_router() -> Router:
             courier_mode = settings.response_style_source if settings else "mix"
             courier_style = settings.courier_template_style if settings else "neutral"
 
-        groq_router = _get_router()
+        groq_router = get_groq_router()
         if groq_router is None:
             await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
             return
@@ -119,7 +123,7 @@ def create_router() -> Router:
                     transcript_len=len(transcript),
                 )
 
-                reply = await _run_pipeline(
+                reply = await run_pipeline(
                     groq_router,
                     transcript,
                     from_user_id,
@@ -141,6 +145,6 @@ def create_router() -> Router:
                 await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
 
         task = asyncio.create_task(_background())
-        task.add_done_callback(_log_task_exception)
+        task.add_done_callback(log_task_exception)
 
     return router

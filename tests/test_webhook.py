@@ -126,3 +126,65 @@ async def test_webhook_idempotent_on_update_id(
         await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 4242))
     ).all()
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_webhook_records_user_id_when_user_exists(
+    patched_client: TestClient, session: AsyncSession
+) -> None:
+    """I-7: ``TelegramUpdate.user_id`` is the internal users.id, not NULL.
+
+    When the User row already exists (post-onboarding flow), the webhook
+    handler must look it up by ``telegram_id`` and store the internal
+    ``users.id`` rather than always passing ``user_id=None`` (which it
+    used to do). This makes the column actually useful for analytics.
+    """
+    from app.db.models import User
+
+    # Pre-create the user so the lookup finds them.
+    user = User(telegram_id=555, display_name="T", tz="UTC")
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    expected_id = user.id
+
+    payload = _make_update_payload(7777, text="hello")
+    resp = patched_client.post(
+        f"/tg/{_TEST_SECRET}",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": _TEST_SECRET},
+    )
+    assert resp.status_code == 200
+
+    rows = (
+        await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 7777))
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].user_id == expected_id
+
+
+@pytest.mark.asyncio
+async def test_webhook_user_id_is_none_when_user_not_yet_onboarded(
+    patched_client: TestClient, session: AsyncSession
+) -> None:
+    """I-7: pre-onboarding /start arrives before the User exists.
+
+    The dispatcher's ``/start`` handler creates the user — but we record
+    the update *before* feeding to the dispatcher (idempotency-first).
+    So for the very first update from a brand-new tg user, ``user_id``
+    will legitimately be NULL. That is the only case where it should
+    be NULL going forward.
+    """
+    payload = _make_update_payload(9999, text="/start")
+    resp = patched_client.post(
+        f"/tg/{_TEST_SECRET}",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": _TEST_SECRET},
+    )
+    assert resp.status_code == 200
+
+    rows = (
+        await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 9999))
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].user_id is None

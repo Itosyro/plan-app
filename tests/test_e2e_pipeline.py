@@ -21,7 +21,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
-from app.bot.routers.text import _run_pipeline
+from app.bot.routers._pipeline import run_pipeline
 from app.bot.services import get_or_create_user
 from app.db.models import Note, Task
 
@@ -149,7 +149,7 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "утром пробежка",
         tg_user_id=300,
@@ -192,7 +192,7 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "купить хлеб и молоко, записаться к врачу",
         tg_user_id=301,
@@ -241,7 +241,7 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "позвонить Олегу, а ещё — книга про AI интересная",
         tg_user_id=302,
@@ -293,7 +293,7 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "до пятницы отчёт, в 11 совещание",
         tg_user_id=303,
@@ -335,7 +335,7 @@ async def test_e2e_filler_message_no_tasks(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "ну так, окей",
         tg_user_id=304,
@@ -392,7 +392,7 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "утром йога, вечером ужин с друзьями, записать идею про стартап",
         tg_user_id=305,
@@ -442,7 +442,7 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "интересная мысль про архитектуру проекта",
         tg_user_id=306,
@@ -511,7 +511,7 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
 
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=staged)
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "купить хлеб, записаться к врачу",
         tg_user_id=350,
@@ -559,7 +559,7 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await _run_pipeline(
+    reply = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "срочно! позвонить в банк до 15:00",
         tg_user_id=307,

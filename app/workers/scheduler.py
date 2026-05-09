@@ -65,7 +65,7 @@ async def tick_reminders(
                     .join(User, User.id == Reminder.user_id)  # type: ignore[arg-type]
                     .where(Reminder.status == "pending")
                     .where(Reminder.fire_at <= cutoff)
-                    .order_by(Reminder.fire_at)  # type: ignore[union-attr]
+                    .order_by(Reminder.fire_at)  # type: ignore[arg-type]
                     .limit(REMINDER_BATCH_SIZE),
                 )
             ).all(),

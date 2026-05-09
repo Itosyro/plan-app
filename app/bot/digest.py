@@ -14,7 +14,7 @@ timezone (``User.tz``) and the digest is built and sent on an exact match.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -37,6 +37,7 @@ def _user_local_now(user_tz: str, now_utc: datetime | None = None) -> datetime:
         now_utc = datetime.now(UTC)
     elif now_utc.tzinfo is None:
         now_utc = now_utc.replace(tzinfo=UTC)
+    zi: ZoneInfo | timezone
     try:
         zi = ZoneInfo(user_tz or "UTC")
     except ZoneInfoNotFoundError:
@@ -91,7 +92,7 @@ async def _open_tasks_for_horizon(
                 Task.horizon_id == horizon.id,
                 Task.status != "done",
             )
-            .order_by(Task.created_at),  # type: ignore[union-attr]
+            .order_by(Task.created_at),  # type: ignore[arg-type]
         )
     ).all()
     return list(rows)

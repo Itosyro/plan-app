@@ -88,6 +88,26 @@ def test_format_settings_without_user_falls_back_to_utc() -> None:
     assert "UTC" in result
 
 
+def test_format_settings_returns_plain_text_no_markdown() -> None:
+    """I-6 regression: ``_format_settings`` must not emit Markdown.
+
+    The settings panel was previously sent with ``parse_mode="Markdown"``.
+    Although the label set is currently safe, this is fragile: any future
+    field whose display value contains Markdown-active characters
+    (``*``, ``_``, ``[``, ```` ` ````) would cause Telegram to return a
+    400 error and the panel to disappear. We render plain text instead.
+    """
+    settings = UserSettings(user_id=1)
+    user = User(id=1, telegram_id=1, tz="Europe/Moscow")
+    result = _format_settings(settings, user)
+    # Title is plain text (no surrounding asterisks)
+    assert "*Настройки*" not in result
+    assert "Настройки" in result
+    # No Markdown control chars (other than emoji and bullet which aren't md-active)
+    for ch in ("*", "_", "[", "]", "`"):
+        assert ch not in result, f"Markdown char {ch!r} leaked into _format_settings output"
+
+
 # ── Service tests ────────────────────────────────────────────────────
 
 

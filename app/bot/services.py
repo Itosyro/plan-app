@@ -226,7 +226,7 @@ async def get_user_categories_full(
 ) -> list[Category]:
     """Return all ``Category`` rows for the user, ordered by name."""
     result = await session.exec(
-        select(Category).where(Category.user_id == user_id).order_by(Category.name),  # type: ignore[union-attr]
+        select(Category).where(Category.user_id == user_id).order_by(Category.name),
     )
     return list(result.all())
 
@@ -399,10 +399,10 @@ async def find_task_by_query(
         select(Task)
         .where(
             Task.user_id == user_id,
-            Task.title.ilike(pattern, escape="\\"),  # type: ignore[union-attr]
+            Task.title.ilike(pattern, escape="\\"),  # type: ignore[attr-defined]
             Task.status != "done",
         )
-        .order_by(Task.created_at.desc()),  # type: ignore[union-attr]
+        .order_by(Task.created_at.desc()),  # type: ignore[attr-defined]
     )
     return result.first()
 
@@ -476,8 +476,10 @@ ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
 
 def reminder_preset_from_offsets(offsets: dict[str, list[int]] | dict[str, object]) -> str:
     """Return the preset name matching ``offsets`` (custom if no match)."""
-    same = list(offsets.get("same_day") or [])
-    multi = list(offsets.get("multi_day") or [])
+    raw_same = offsets.get("same_day") or []
+    raw_multi = offsets.get("multi_day") or []
+    same = list(raw_same) if isinstance(raw_same, list) else []
+    multi = list(raw_multi) if isinstance(raw_multi, list) else []
     for name, preset in REMINDER_PRESETS.items():
         if preset["same_day"] == same and preset["multi_day"] == multi:
             return name
@@ -605,7 +607,7 @@ async def get_tasks_by_horizon(
             Task.horizon_id == horizon.id,
             Task.status != "done",
         )
-        .order_by(Task.created_at.desc()),  # type: ignore[union-attr]
+        .order_by(Task.created_at.desc()),  # type: ignore[attr-defined]
     )
     return list(result.all())
 
@@ -620,7 +622,7 @@ async def get_all_notes(
     result = await session.exec(
         select(Note)
         .where(Note.user_id == user_id)
-        .order_by(Note.created_at.desc())  # type: ignore[union-attr]
+        .order_by(Note.created_at.desc())  # type: ignore[attr-defined]
         .limit(limit),
     )
     return list(result.all())
@@ -636,10 +638,10 @@ async def get_categories_with_counts(
     no matter how many categories the user has (was N+1 previously).
     """
     stmt = (
-        select(Category, func.count(Task.id))
+        select(Category, func.count(Task.id))  # type: ignore[arg-type]
         .join(
             Task,
-            (Task.category_id == Category.id) & (Task.status != "done"),
+            (Task.category_id == Category.id) & (Task.status != "done"),  # type: ignore[arg-type]
             isouter=True,
         )
         .where(Category.user_id == user_id)

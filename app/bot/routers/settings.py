@@ -122,8 +122,14 @@ def _setting_value(field: str, settings: UserSettings, user: User | None) -> str
 
 
 def _format_settings(settings: UserSettings, user: User | None = None) -> str:
-    """Format settings into a readable message."""
-    lines = ["⚙️ *Настройки*\n"]
+    """Format settings into a readable message.
+
+    Returns plain text without Telegram Markdown — task labels and
+    setting display values are user-controlled and may contain
+    ``*``, ``_``, ``[``, which would break ``parse_mode="Markdown"``.
+    See ``docs/REVIEW-2026-05-09.md::I-6`` and ``::P-2``.
+    """
+    lines = ["⚙️ Настройки\n"]
     for field, label in SETTING_LABELS.items():
         raw = _setting_value(field, settings, user)
         display = SETTING_DISPLAY.get(field, {}).get(raw, raw)
@@ -196,7 +202,6 @@ def create_router() -> Router:
 
         await message.answer(
             _format_settings(settings, user_snapshot),
-            parse_mode="Markdown",
             reply_markup=_settings_keyboard(),
         )
 
@@ -216,10 +221,9 @@ def create_router() -> Router:
 
         label = SETTING_LABELS[field]
         await callback.answer()
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(
-                f"✏️ *{label}*\n\nВыберите значение:",
-                parse_mode="Markdown",
+                f"✏️ {label}\n\nВыберите значение:",
                 reply_markup=_options_keyboard(field),
             )
 
@@ -256,10 +260,9 @@ def create_router() -> Router:
         display = SETTING_DISPLAY.get(field, {}).get(value, value)
         label = SETTING_LABELS.get(field, field)
         await callback.answer(f"{label} → {display}")
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(
                 _format_settings(updated, user_snapshot),
-                parse_mode="Markdown",
                 reply_markup=_settings_keyboard(),
             )
 
@@ -285,10 +288,9 @@ def create_router() -> Router:
             return
 
         await callback.answer()
-        if callback.message is not None:
+        if isinstance(callback.message, Message):
             await callback.message.edit_text(
                 _format_settings(settings, user_snapshot),
-                parse_mode="Markdown",
                 reply_markup=_settings_keyboard(),
             )
 

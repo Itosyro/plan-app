@@ -57,3 +57,7 @@ strict = false
 warn_unused_ignores = true
 warn_redundant_casts = true
 plugins = ["pydantic.mypy"]
+# Tests have looser typing (mocks, monkeypatching, stubbed schedulers).
+# CI only enforces mypy on production code in app/. Tests are fine to
+# run locally with `uv run mypy tests` but not gated on green.
+files = ["app"]
