@@ -170,3 +170,35 @@ async def test_courier_respond_llm_with_summary() -> None:
     assert "📌 задача" in reply
     assert "Совещание" in reply
     assert "Звонок маме" in reply
+
+
+# ── C-1 regression: unknown mode degrades to template_only ───────────
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_unknown_mode_falls_back_to_template() -> None:
+    """C-1 regression: pre-2026-05-09 the UI shipped ``formal``/``casual``
+    as ``response_style_source`` values. Those silently fell through both
+    ``if`` branches in :func:`generate_courier_reply` and degenerated to
+    template-only output. The allow-list now rejects them at write-time
+    (see ``test_settings.py``), but :func:`generate_courier_reply` should
+    still degrade safely if a stale value somehow reaches it — i.e. it
+    must NOT crash and must NOT call the LLM.
+    """
+    router = GroqKeyRouter(keys=_FAKE_KEYS)
+    # If this hit the LLM, respx (not @respx.mock here) would surface an
+    # unmocked-request error. Reaching template branch keeps the test
+    # offline.
+    reply = await generate_courier_reply(router, "neutral", mode="formal")
+    assert reply in TEMPLATES["neutral"]
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_unknown_style_falls_back_to_neutral() -> None:
+    """C-1 companion: an unknown *style* (e.g. typo, drift between
+    keyboard and TEMPLATES) must fall back to ``neutral`` rather than
+    raising ``KeyError``.
+    """
+    router = GroqKeyRouter(keys=_FAKE_KEYS)
+    reply = await generate_courier_reply(router, "totally-unknown-style", mode="template_only")
+    assert reply in TEMPLATES["neutral"]

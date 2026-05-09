@@ -236,7 +236,7 @@ def create_router() -> Router:
             critic_mode = settings.critic_mode if settings else "confidence"
             critic_threshold = settings.critic_confidence_threshold if settings else 0.7
             courier_mode = settings.response_style_source if settings else "mix"
-            courier_style = "neutral"
+            courier_style = settings.courier_template_style if settings else "neutral"
             default_offsets: dict[str, list[int]] | None = (
                 {k: list(v) for k, v in settings.default_reminder_offsets.items()}
                 if settings

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -198,3 +201,111 @@ async def test_persist_reuses_existing_category(session: AsyncSession) -> None:
 
     horizons = (await session.exec(select(Horizon))).all()
     assert len(horizons) == 2
+
+
+# ── C-2 regression: due_at is normalised to naive UTC on persist ─────
+
+
+@pytest.mark.asyncio
+async def test_persist_classification_normalises_aware_due_to_naive_utc(
+    session: AsyncSession,
+) -> None:
+    """C-2: dateparser returns tz-aware MSK; ``Task.due_at`` must be UTC.
+
+    Pre-2026-05-09 the aware-MSK datetime was passed straight through to
+    ``Task(...)``, where SQLAlchemy silently dropped the tzinfo. The
+    column then held a naive value at MSK clock-time but our schema
+    contract says naive == UTC, so any later ``now()`` comparison or
+    JSON export would be off by 3 hours.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=205)
+    await session.commit()
+    assert user.id is not None
+
+    # Aware MSK 12:00 \u2192 must become naive UTC 09:00 in storage.
+    msk = ZoneInfo("Europe/Moscow")
+    aware_msk = datetime(2026, 5, 9, 12, 0, tzinfo=msk)
+
+    cr = ClassifierResult(
+        category_name="\u0420\u0430\u0431\u043e\u0442\u0430",
+        horizon="today",
+        priority="medium",
+        is_task=True,
+        confidence=0.9,
+        title="\u0421\u043e\u0432\u0435\u0449\u0430\u043d\u0438\u0435",
+    )
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=aware_msk,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.due_at is not None
+    assert row.due_at.tzinfo is None  # naive
+    assert row.due_at == datetime(2026, 5, 9, 9, 0)  # UTC
+
+
+@pytest.mark.asyncio
+async def test_persist_classification_naive_due_at_passes_through(
+    session: AsyncSession,
+) -> None:
+    """C-2 companion: a naive value (already UTC by contract) is stored verbatim."""
+    user, _ = await get_or_create_user(session, telegram_id=206)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Работа",
+        horizon="today",
+        priority="medium",
+        is_task=True,
+        confidence=0.9,
+        title="Задача",
+    )
+    naive_utc = datetime(2026, 5, 9, 9, 0)
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=naive_utc,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.due_at == naive_utc
+    assert row.due_at.tzinfo is None
+
+
+@pytest.mark.asyncio
+async def test_persist_classification_none_due_at_stays_none(
+    session: AsyncSession,
+) -> None:
+    """C-2 companion: ``due_at=None`` must not raise inside the normaliser."""
+    user, _ = await get_or_create_user(session, telegram_id=207)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Работа",
+        horizon="someday",
+        priority="low",
+        is_task=True,
+        confidence=0.7,
+        title="Без дедлайна",
+    )
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.due_at is None

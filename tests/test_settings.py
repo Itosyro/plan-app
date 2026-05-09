@@ -70,13 +70,15 @@ def test_format_settings_custom_values() -> None:
         user_id=1,
         critic_mode="always",
         morning_digest_at="07:00",
-        response_style_source="formal",
+        response_style_source="llm_only",
+        courier_template_style="friendly",
     )
     user = User(id=1, telegram_id=1, tz="Asia/Almaty")
     result = _format_settings(settings, user)
     assert "Всегда" in result
     assert "07:00" in result
-    assert "Формальный" in result
+    assert "Только LLM" in result
+    assert "Дружеский" in result
     assert "Алматы" in result
 
 
@@ -156,9 +158,27 @@ async def test_update_user_settings_rejects_unknown_value(session: AsyncSession)
     bad_time = await update_user_settings(session, user.id, "morning_digest_at", "25:99")
     assert bad_time is None
 
-    # Same for response_style_source
+    # Same for response_style_source: a string from the *old* vocab
+    # (pre-2026-05-09) is now rejected too, so reusing a stale callback
+    # button can't poison the column. See REVIEW-2026-05-09.md::C-1.
     bad_style = await update_user_settings(session, user.id, "response_style_source", "shouty")
     assert bad_style is None
+
+    stale_old_value = await update_user_settings(
+        session,
+        user.id,
+        "response_style_source",
+        "formal",
+    )
+    assert stale_old_value is None
+
+    bad_template = await update_user_settings(
+        session,
+        user.id,
+        "courier_template_style",
+        "shouty",
+    )
+    assert bad_template is None
 
 
 @pytest.mark.asyncio
@@ -173,15 +193,51 @@ async def test_update_user_settings_no_settings_row(session: AsyncSession) -> No
 
 @pytest.mark.asyncio
 async def test_update_user_settings_response_style(session: AsyncSession) -> None:
+    """C-1 regression: each of the three valid source values round-trips.
+
+    The pre-2026-05-09 vocab (``formal``/``casual``/``mix``) doesn't match
+    the courier's branch logic and is now rejected by the allow-list;
+    only ``template_only`` / ``llm_only`` / ``mix`` are accepted.
+    """
     user, _ = await get_or_create_user(session, telegram_id=304)
     await session.commit()
     assert user.id is not None
     await complete_onboarding(session, user, display_name="Тест4", tz="Europe/London")
     await session.commit()
 
-    updated = await update_user_settings(session, user.id, "response_style_source", "formal")
-    assert updated is not None
-    assert updated.response_style_source == "formal"
+    for value in ("template_only", "llm_only", "mix"):
+        updated = await update_user_settings(
+            session,
+            user.id,
+            "response_style_source",
+            value,
+        )
+        assert updated is not None, value
+        assert updated.response_style_source == value
+
+
+@pytest.mark.asyncio
+async def test_update_user_settings_courier_template_style(session: AsyncSession) -> None:
+    """C-1 regression: each of the six template styles round-trips.
+
+    Vocabulary must match the keys of ``app/ai/courier.py::TEMPLATES``
+    — a divergence is the bug class C-1 was about.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=311)
+    await session.commit()
+    assert user.id is not None
+    await complete_onboarding(session, user, display_name="ТесА11", tz="UTC")
+    await session.commit()
+
+    for value in ("neutral", "formal_master", "friendly", "playful", "terse", "respectful"):
+        updated = await update_user_settings(
+            session,
+            user.id,
+            "courier_template_style",
+            value,
+        )
+        assert updated is not None, value
+        assert updated.courier_template_style == value
 
 
 @pytest.mark.asyncio

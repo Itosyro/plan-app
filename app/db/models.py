@@ -8,7 +8,7 @@ Phase 4a: ``reminders``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import JSON, BigInteger, Column, UniqueConstraint
@@ -66,8 +66,24 @@ class UserSettings(SQLModel, table=True):
     )
     morning_digest_at: str = Field(default="08:00", max_length=5)
     evening_digest_at: str = Field(default="21:00", max_length=5)
+    # ``response_style_source`` controls the *source* of the courier's
+    # confirmation phrase: ``template_only`` always picks from
+    # ``app/ai/courier.py::TEMPLATES``; ``llm_only`` always calls the LLM;
+    # ``mix`` is 50/50. See ``docs/REVIEW-2026-05-09.md::C-1``.
     response_style_source: str = Field(default="mix", max_length=16)
+    # ``courier_template_style`` picks the *flavour* of template (or LLM
+    # tone): one of the keys of ``app/ai/courier.py::TEMPLATES``
+    # (``neutral`` / ``formal_master`` / ``friendly`` / ``playful`` /
+    # ``terse`` / ``respectful``). See ``docs/REVIEW-2026-05-09.md::C-1``.
+    courier_template_style: str = Field(default="neutral", max_length=24)
     week_due_semantic: str = Field(default="deadline_sunday", max_length=24)
+    # Idempotency guards for the digest scheduler: store the *user-local*
+    # date on which we last delivered each digest. Before sending, we
+    # compare this to ``today`` in the user's tz; if equal, we skip — so
+    # a sub-minute scheduler tick can't double-fire the same digest.
+    # See ``docs/REVIEW-2026-05-09.md::C-3``.
+    last_morning_digest_on: date | None = Field(default=None)
+    last_evening_digest_on: date | None = Field(default=None)
 
 
 class InboxEntry(SQLModel, table=True):

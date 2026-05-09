@@ -31,7 +31,8 @@ SETTING_LABELS: dict[str, str] = {
     "morning_digest_at": "Утренний дайджест",
     "evening_digest_at": "Вечерний дайджест",
     "reminder_preset": "Дефолтные напоминания",
-    "response_style_source": "Стиль ответа",
+    "response_style_source": "Источник ответа",
+    "courier_template_style": "Тон сообщений",
     "week_due_semantic": "Семантика «на неделе»",
 }
 
@@ -69,9 +70,17 @@ SETTING_OPTIONS: dict[str, list[tuple[str, str]]] = {
         ("extra", "Подробно: за 3 ч + 1 ч + 15 мин / за день + 4 ч + 1 ч"),
     ],
     "response_style_source": [
-        ("formal", "Формальный"),
-        ("casual", "Разговорный"),
-        ("mix", "Микс"),
+        ("template_only", "Только шаблоны"),
+        ("llm_only", "Только LLM"),
+        ("mix", "Микс (50/50)"),
+    ],
+    "courier_template_style": [
+        ("neutral", "Нейтральный"),
+        ("formal_master", "Слуга («мой господин»)"),
+        ("friendly", "Дружеский"),
+        ("playful", "Игривый"),
+        ("terse", "Лаконичный"),
+        ("respectful", "Почтительный"),
     ],
     "week_due_semantic": [
         ("deadline_sunday", "Дедлайн воскресенье"),
@@ -105,6 +114,8 @@ def _setting_value(field: str, settings: UserSettings, user: User | None) -> str
         return settings.evening_digest_at
     if field == "response_style_source":
         return settings.response_style_source
+    if field == "courier_template_style":
+        return settings.courier_template_style
     if field == "week_due_semantic":
         return settings.week_due_semantic
     return "—"

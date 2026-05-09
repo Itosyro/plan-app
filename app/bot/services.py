@@ -7,7 +7,7 @@ and keeps SQL out of the routers.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
@@ -29,7 +29,7 @@ from app.db.models import (
     UserSettings,
 )
 from app.shared.logging import get_logger
-from app.shared.time import utcnow_naive
+from app.shared.time import to_naive_utc, utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -255,11 +255,9 @@ def _select_reminder_offsets(
     return [int(o) for o in raw if int(o) > 0]
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Return *dt* as a naive UTC datetime (drop tz, converting if needed)."""
-    if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(UTC).replace(tzinfo=None)
+# Backwards-compat alias: pre-2026-05-09 callers used the private name.
+# Prefer :func:`app.shared.time.to_naive_utc` in new code.
+_to_naive_utc = to_naive_utc
 
 
 async def schedule_reminders(
@@ -280,8 +278,8 @@ async def schedule_reminders(
     """
     if not offsets:
         return []
-    ref_due = _to_naive_utc(due_at)
-    ref_now = _to_naive_utc(now) if now is not None else utcnow_naive()
+    ref_due = to_naive_utc(due_at)
+    ref_now = to_naive_utc(now) if now is not None else utcnow_naive()
     created: list[Reminder] = []
     for offset in offsets:
         if offset <= 0:
@@ -321,13 +319,18 @@ async def persist_classification(
     hor = await get_or_create_horizon(session, user_id, cr.horizon)
 
     if cr.is_task:
+        # Normalise ``due_at`` to naive UTC before persisting — ``dateparser``
+        # returns a tz-aware value in the user's tz, and the column is tz-naive.
+        # Without this we'd silently store user-local time in a column the rest
+        # of the schema treats as UTC. See ``docs/REVIEW-2026-05-09.md::C-2``.
+        due_at_utc = to_naive_utc(due_at) if due_at is not None else None
         row: Task | Note = Task(
             user_id=user_id,
             category_id=cat.id,
             horizon_id=hor.id,
             title=cr.title,
             priority=cr.priority,
-            due_at=due_at,
+            due_at=due_at_utc,
             confidence=cr.confidence,
             source_inbox_id=inbox_id,
         )
@@ -457,7 +460,16 @@ ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
     "critic_mode": frozenset({"always", "confidence", "never"}),
     "morning_digest_at": frozenset({"07:00", "08:00", "09:00", "10:00"}),
     "evening_digest_at": frozenset({"20:00", "21:00", "22:00", "23:00"}),
-    "response_style_source": frozenset({"formal", "casual", "mix"}),
+    # Vocabulary must match ``app/ai/courier.py::generate_courier_reply``'s
+    # ``mode`` parameter — pre-2026-05-09 the UI shipped
+    # ``formal``/``casual``/``mix`` which silently fell through both
+    # branches in courier.py and degenerated to ``template_only`` for
+    # the first two. See ``docs/REVIEW-2026-05-09.md::C-1``.
+    "response_style_source": frozenset({"template_only", "llm_only", "mix"}),
+    # Vocabulary must match the keys of ``app/ai/courier.py::TEMPLATES``.
+    "courier_template_style": frozenset(
+        {"neutral", "formal_master", "friendly", "playful", "terse", "respectful"},
+    ),
     "week_due_semantic": frozenset({"deadline_sunday", "deadline_saturday", "spread_evenly"}),
 }
 
@@ -525,6 +537,8 @@ async def update_user_settings(
         settings.evening_digest_at = value
     elif field == "response_style_source":
         settings.response_style_source = value
+    elif field == "courier_template_style":
+        settings.courier_template_style = value
     elif field == "week_due_semantic":
         settings.week_due_semantic = value
     else:  # pragma: no cover - exhaustive above

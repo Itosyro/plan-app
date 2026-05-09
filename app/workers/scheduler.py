@@ -20,7 +20,7 @@ from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import Reminder, Task, User
 from app.shared.config import get_settings
 from app.shared.logging import configure_logging, get_logger
-from app.shared.time import utcnow_naive
+from app.shared.time import format_due_local, utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -28,10 +28,16 @@ MAX_REMINDER_ATTEMPTS = 3
 REMINDER_BATCH_SIZE = 100
 
 
-def _format_reminder(task: Task) -> str:
-    """Build the Telegram body for one reminder."""
-    if task.due_at is not None and (task.due_at.hour or task.due_at.minute):
-        return f"⏰ Напоминаю: {task.title} — в {task.due_at:%H:%M}."
+def _format_reminder(task: Task, user_tz: str) -> str:
+    """Build the Telegram body for one reminder.
+
+    ``task.due_at`` is naive UTC (see ``app/shared/time.py``); render it
+    in *user_tz* so the user sees their own clock-time, not UTC.
+    """
+    if task.due_at is not None:
+        local = format_due_local(task.due_at, user_tz)
+        if local is not None:
+            return f"⏰ Напоминаю: {task.title} — в {local}."
     return f"⏰ Напоминаю: {task.title}"
 
 
@@ -67,7 +73,7 @@ async def tick_reminders(
 
         for reminder, task, user in rows:
             try:
-                text = _format_reminder(task)
+                text = _format_reminder(task, user.tz)
                 await bot.send_message(chat_id=user.telegram_id, text=text)
             except Exception as exc:
                 reminder.attempts += 1

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -202,12 +202,16 @@ async def test_get_task_by_id(session: AsyncSession) -> None:
 
 
 def test_format_task_list_empty() -> None:
-    result = _format_task_list([], "Сегодня")
+    result = _format_task_list([], "Сегодня", "UTC")
     assert "Пусто" in result
     assert "Сегодня" in result
 
 
 def test_format_task_list_with_tasks() -> None:
+    """C-2: ``due_at`` is naive UTC; rendered HH:MM is in *user_tz*.
+
+    A task due at 12:30 UTC for a Moscow user shows as 15:30 local.
+    """
     t1 = Task(
         id=1,
         user_id=1,
@@ -223,13 +227,15 @@ def test_format_task_list_with_tasks() -> None:
         priority="low",
         category_id=1,
         horizon_id=1,
-        due_at=datetime(2026, 5, 8, 12, 30, tzinfo=UTC),
+        # Naive UTC — the schema contract.
+        due_at=datetime(2026, 5, 8, 12, 30),
     )
-    result = _format_task_list([t1, t2], "Сегодня")
+    result = _format_task_list([t1, t2], "Сегодня", "Europe/Moscow")
     assert "Сегодня" in result
     assert "Пробежка" in result
     assert "Обед" in result
-    assert "12:30" in result
+    assert "15:30" in result  # 12:30 UTC → 15:30 MSK
+    assert "12:30" not in result
     assert "Всего: 2" in result
     assert "🔴" in result
     assert "🟢" in result
