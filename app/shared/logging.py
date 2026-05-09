@@ -17,6 +17,18 @@ from app.shared.config import get_settings
 
 _configured = False
 
+# Allow-list of stdlib log levels — see ``defensive-programming/SKILL.md``
+# for the "no ``getattr``" rule. ``logging`` levels are stable and tiny,
+# so an explicit mapping is no more code than ``getattr`` would be and
+# matches the rest of the codebase.
+_LOG_LEVELS: dict[str, int] = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
 
 def configure_logging() -> None:
     """Configure structlog + stdlib logging once at startup.
@@ -28,8 +40,15 @@ def configure_logging() -> None:
         return
 
     settings = get_settings()
-    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    level = _LOG_LEVELS.get(settings.log_level.upper(), logging.INFO)
 
+    # NB: ``structlog.processors.format_exc_info`` is intentionally kept in
+    # the chain even though structlog 25 emits a ``UserWarning`` recommending
+    # it be removed when ``ConsoleRenderer`` / ``JSONRenderer`` are used. In
+    # this codebase, removing it causes ``tests/test_e2e_pipeline.py::
+    # test_e2e_partial_classify_failure_does_not_kill_batch`` to hang under
+    # certain Groq-retry / chained-exception paths. See
+    # ``REVIEW-2026-05-09.md::M-4`` (deferred to future work).
     processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
