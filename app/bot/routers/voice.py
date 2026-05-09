@@ -14,6 +14,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from app.ai.whisper import transcribe_voice
+from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.routers._pipeline import (
     get_groq_router,
@@ -92,6 +93,13 @@ def create_router() -> Router:
             await message.answer("Голосовое слишком большое (макс. 20 МБ).")
             return
 
+        # Mirror text.py: ack the user with a reaction before any work.
+        chat_id = message.chat.id
+        if message.bot is not None:
+            await reactions.set_reaction(
+                message.bot, chat_id, message.message_id, reactions.RECEIVE
+            )
+
         # Send a placeholder bubble we'll edit progressively. Mirrors the
         # text router so both surfaces feel the same.
         placeholder = await message.answer("🎤 Расшифровываю голосовое…")
@@ -153,12 +161,20 @@ def create_router() -> Router:
                     evening_anchor=evening_anchor,
                 )
                 await stream_reply(placeholder, reply, bot=message.bot)
+                if message.bot is not None:
+                    await reactions.set_reaction(
+                        message.bot, chat_id, msg_id, reactions.SUCCESS
+                    )
 
             except Exception:
                 logger.exception(
                     "voice.pipeline_error",
                     tg_user_id=from_user_id,
                 )
+                if message.bot is not None:
+                    await reactions.set_reaction(
+                        message.bot, chat_id, msg_id, reactions.ERROR
+                    )
                 try:
                     await placeholder.edit_text(
                         "Ошибка при обработке голосового — попробуй ещё раз."

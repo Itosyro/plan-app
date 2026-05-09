@@ -18,6 +18,7 @@ import asyncio
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.routers._pipeline import (
     get_groq_router,
@@ -91,6 +92,17 @@ def create_router() -> Router:
 
         msg_text = message.text
         from_user_id = message.from_user.id
+        chat_id = message.chat.id
+        user_message_id = message.message_id
+
+        # Tell the user "I see you" immediately via a reaction. Bot API
+        # 10.0 ``setMessageReaction`` is cheap, doesn't bump unread badges
+        # in the chat list, and reads as ack without producing yet
+        # another bubble. Best-effort — never blocks the pipeline.
+        if message.bot is not None:
+            await reactions.set_reaction(
+                message.bot, chat_id, user_message_id, reactions.RECEIVE
+            )
 
         # Send a placeholder and edit it progressively once the
         # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
@@ -115,12 +127,20 @@ def create_router() -> Router:
                     evening_anchor=evening_anchor,
                 )
                 await stream_reply(placeholder, reply, bot=message.bot)
+                if message.bot is not None:
+                    await reactions.set_reaction(
+                        message.bot, chat_id, user_message_id, reactions.SUCCESS
+                    )
             except Exception:
                 logger.exception(
                     "pipeline.error",
                     tg_user_id=from_user_id,
                     text_len=len(msg_text),
                 )
+                if message.bot is not None:
+                    await reactions.set_reaction(
+                        message.bot, chat_id, user_message_id, reactions.ERROR
+                    )
                 try:
                     await placeholder.edit_text(
                         "Ошибка при разборе — сохранил во входящие, разберу позже."
