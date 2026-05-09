@@ -22,7 +22,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
 from app.bot.routers._pipeline import run_pipeline
-from app.bot.services import get_or_create_user, get_or_create_category
+from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import Note, Task
 
 _FAKE_KEYS = ["gsk_test_key_1"]
