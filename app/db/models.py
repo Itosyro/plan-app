@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Column, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Column, ForeignKey, Integer, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.shared.time import utcnow_naive
@@ -215,7 +215,19 @@ class TaskEvent(SQLModel, table=True):
     __tablename__ = "task_events"
 
     id: int | None = Field(default=None, primary_key=True)
-    task_id: int = Field(foreign_key="tasks.id", index=True)
+    # ``ondelete='CASCADE'`` is critical: ``delete_task`` first inserts
+    # a ``TaskEvent`` row and then deletes the task in the same flush.
+    # Without CASCADE, Postgres rejects the ``DELETE FROM tasks`` with
+    # a FK violation. SQLite does not enforce FKs by default, so unit
+    # tests passed silently. See ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-3``.
+    task_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("tasks.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
     kind: str = Field(max_length=32)
     payload_json: dict[str, Any] | None = Field(
         default=None,
@@ -239,7 +251,18 @@ class Reminder(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
-    task_id: int = Field(foreign_key="tasks.id", index=True)
+    # ``ondelete='CASCADE'``: when a task is deleted (e.g. via /delete
+    # or programmatic cleanup) any pending reminders for it must die
+    # too — otherwise Postgres rejects the parent DELETE with a FK
+    # violation. See ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-3``.
+    task_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("tasks.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
     fire_at: datetime = Field(index=True)  # UTC, no tz offset stored
     status: str = Field(default="pending", max_length=16, index=True)
     attempts: int = Field(default=0)
