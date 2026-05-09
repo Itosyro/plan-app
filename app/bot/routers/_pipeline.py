@@ -25,6 +25,7 @@ from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
 from app.bot.services import (
     find_task_by_query,
+    get_user_categories,
     log_ai_run,
     persist_classification,
     update_task_horizon,
@@ -144,11 +145,19 @@ async def run_pipeline(
         for unit in split_result.units
     ]
 
+    # Fetch the user's existing categories so the classifier can reuse
+    # them instead of inventing fresh near-duplicates ("Работа" /
+    # "работа" / "Рабочее"). Empty list on the first message ever; that
+    # is fine — the classifier will seed new categories. See
+    # ``docs/REVIEW-2026-05-09-v2.md::R-NEW-C-4``.
+    async with session_scope() as session:
+        user_categories = await get_user_categories(session, user_id)
+
     # Classify all units in parallel. ``return_exceptions=True`` keeps a single
     # transient Groq failure (429, 5xx) from killing the whole batch — we drop
     # the failed unit and continue with the rest.
     classify_tasks = [
-        classify_intent(groq_router, unit.text, resolved, [], user_tz)
+        classify_intent(groq_router, unit.text, resolved, user_categories, user_tz)
         for unit, resolved in zip(split_result.units, resolved_list, strict=True)
     ]
     raw_results = await asyncio.gather(*classify_tasks, return_exceptions=True)
