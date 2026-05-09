@@ -7,6 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.bot.services import (
+    claim_update,
     complete_onboarding,
     get_or_create_user,
     is_update_processed,
@@ -14,6 +15,7 @@ from app.bot.services import (
     record_update,
     store_inbox_text,
 )
+from app.db.base import get_sessionmaker
 from app.db.models import InboxEntry, TelegramUpdate, User, UserSettings
 
 
@@ -87,6 +89,45 @@ async def test_record_and_check_idempotency(session: AsyncSession) -> None:
 
     rows = (await session.exec(select(TelegramUpdate))).all()
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_update_first_caller_inserts(session: AsyncSession) -> None:
+    """First call to ``claim_update`` for a fresh ``update_id`` returns True
+    and persists the row.
+    """
+    assert await is_update_processed(session, 200) is False
+    claimed = await claim_update(session, update_id=200, user_id=None, kind="message")
+    await session.commit()
+    assert claimed is True
+    rows = (await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 200))).all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_update_duplicate_returns_false_without_raising(
+    engine: None,
+) -> None:
+    """Regression for R-NEW-C-5: a second ``claim_update`` for the same
+    ``update_id`` (e.g. from a concurrent webhook delivery that lost the
+    INSERT race) must return ``False`` instead of propagating the
+    primary-key ``IntegrityError`` up to the webhook handler.
+    """
+    sm = get_sessionmaker()
+    async with sm() as s1:
+        first = await claim_update(s1, update_id=300, user_id=None, kind="message")
+        await s1.commit()
+    assert first is True
+
+    # Independent session — emulates the second concurrent webhook delivery.
+    async with sm() as s2:
+        second = await claim_update(s2, update_id=300, user_id=None, kind="message")
+        await s2.commit()
+    assert second is False
+
+    async with sm() as s3:
+        rows = (await s3.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 300))).all()
+        assert len(rows) == 1, "duplicate claim must not double-insert the row"
 
 
 @pytest.mark.asyncio

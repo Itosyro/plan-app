@@ -14,6 +14,9 @@ All public names are re-exported here so existing callers
 
 from .ai import log_ai_run as log_ai_run
 from .inbox import (
+    claim_update as claim_update,
+)
+from .inbox import (
     is_update_processed as is_update_processed,
 )
 from .inbox import (
