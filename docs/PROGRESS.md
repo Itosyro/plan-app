@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-05-09 — M-6 + M-3: per-user time anchors + services split
+
+**PR #47** — два коммита:
+
+1. **M-6** — `UserSettings.morning_anchor` / `evening_anchor` (HH:MM strings).
+   - Alembic migration `0006` — two `String(5)` columns with `server_default`.
+   - `time_resolver.py::resolve_time()` accepts `morning_anchor` / `evening_anchor` kwargs;
+     `_preprocess()` overrides the static «утром»=09:00 / «вечером»=19:00 replacements.
+   - Wired through `_pipeline.py → text.py / voice.py` from `UserSettings`.
+   - 2 new tests: `test_vecherom_custom_anchor`, `test_utrom_custom_anchor`.
+
+2. **M-3** — split `app/bot/services.py` (739 LOC) into `app/bot/services/` package:
+   - `users.py` — User CRUD + onboarding
+   - `inbox.py` — InboxEntry + TelegramUpdate idempotency
+   - `settings.py` — UserSettings queries, mutations, allow-lists
+   - `tasks.py` — Task/Note/Category/Horizon CRUD + classification + reminders
+   - `ai.py` — AiRun logging
+   - `__init__.py` re-exports all public names → zero changes to import sites.
+
+Tests: **204 passed** (202 + 2 new). Lints / mypy clean.
+
+---
+
 ## 2026-05-09 (вечер) — Snapshot после I-fixes + 5/8 Minor: pause + handoff v2
 
 **Контекст:**
