@@ -501,10 +501,19 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
                 json=_classifier_response(_cr_dict(category="Покупки", title="Купить хлеб")),
             )
         if n == 4:
-            # classifier #2 - fails (rate limit)
+            # classifier #2 — fails. Use 400 (not 429) so neither the Groq
+            # SDK's internal retry policy nor ``call_with_rotation`` (I-1)
+            # waits through exponential-backoff retries: 4xx is treated
+            # as a request error and propagated immediately. The test's
+            # intent is "one classifier raised, the other still persists"
+            # — the specific error code doesn't matter, only that an
+            # exception is raised. Switching from 429 → 400 cuts the
+            # test runtime from ~2.8 s to ~1.5 s (M-8). Further
+            # speed-up is bounded by ``instructor.max_retries=2`` on
+            # the validation path; reducing that is the follow-up.
             return httpx.Response(
-                429,
-                json={"error": {"message": "rate limit", "type": "rate_limit_exceeded"}},
+                400,
+                json={"error": {"message": "bad request", "type": "invalid_request_error"}},
             )
         # any extra call (e.g. courier in template_only mode shouldn't happen)
         raise RuntimeError(f"Unexpected LLM call #{n}")
