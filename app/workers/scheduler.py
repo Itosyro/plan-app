@@ -2,9 +2,12 @@
 
 Render's worker service invokes ``python -m app.workers.scheduler`` once per
 minute; each invocation processes a single batch and exits. Reminders flip
-from ``pending`` → ``sent``/``failed`` immediately so the next tick won't
-double-send. Digests are dispatched only when the user's *local* HH:MM
-exactly matches their ``UserSettings`` slots.
+from ``pending`` → ``processing`` (atomic claim) → ``sent``/``failed``
+with a commit after every Telegram round-trip, so a crash mid-batch
+can never produce duplicate sends on the next tick. Digests are
+dispatched only when the user's *local* HH:MM exactly matches their
+``UserSettings`` slots (with catch-up for delayed ticks; see
+``app/bot/digest.py``).
 """
 
 from __future__ import annotations
@@ -13,6 +16,8 @@ import asyncio
 from datetime import datetime
 
 from aiogram import Bot
+from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlmodel import select
 
 from app.bot.digest import tick_digests
@@ -48,10 +53,26 @@ async def tick_reminders(
 ) -> dict[str, int]:
     """Send pending reminders whose ``fire_at`` has passed.
 
-    On a successful Telegram call the row flips to ``sent`` and ``sent_at``
-    is stamped. On any error ``attempts`` is bumped and ``last_error`` is
-    captured; once ``attempts`` reaches :data:`MAX_REMINDER_ATTEMPTS` the row
-    is marked ``failed`` and excluded from future ticks.
+    Each row goes through a three-step state machine to make the tick
+    crash-safe under SIGTERM / OOM (see
+    ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-5``):
+
+    1. **Claim** — atomic ``UPDATE … SET status='processing' WHERE
+       status='pending' AND id=:id``. If the rowcount is 0 the row was
+       claimed by another worker (or its status changed) — skip. The
+       claim is committed *before* the Telegram call.
+    2. **Send** — call ``bot.send_message``; on success flip
+       ``status='sent'`` (with ``sent_at`` stamped), on failure bump
+       ``attempts`` and either flip ``status='failed'`` (after
+       :data:`MAX_REMINDER_ATTEMPTS`) or revert ``status='pending'``
+       so the next tick can retry. Each terminal state is committed
+       in its own transaction so a crash after the Telegram call
+       can't lose the state-flip and trigger a duplicate send next
+       tick.
+    3. **Stuck rows** — if a worker is killed between claim and
+       state-flip, the row is left in ``status='processing'`` and a
+       human cleanup is required. We deliberately don't auto-revert
+       (we can't tell whether Telegram delivered the message).
     """
     cutoff = now if now is not None else utcnow_naive()
     sent = retry = failed = 0
@@ -72,6 +93,27 @@ async def tick_reminders(
         )
 
         for reminder, task, user in rows:
+            assert reminder.id is not None  # SELECT-loaded → never NULL
+            # ── 1. Claim the row atomically ────────────────────────
+            claim_result = await session.execute(
+                update(Reminder)
+                .where(
+                    Reminder.id == reminder.id,  # type: ignore[arg-type]
+                    Reminder.status == "pending",  # type: ignore[arg-type]
+                )
+                .values(status="processing"),
+            )
+            await session.commit()
+            # ``execute`` of an ``UPDATE`` always returns a CursorResult;
+            # the runtime check on the union return type is impossible
+            # without `cast` because mypy widens it to ``Result[Any]``.
+            assert isinstance(claim_result, CursorResult)
+            if claim_result.rowcount != 1:
+                # Another worker beat us to it — skip silently.
+                continue
+            reminder.status = "processing"
+
+            # ── 2. Send + terminal state flip ──────────────────────
             try:
                 text = _format_reminder(task, user.tz)
                 await bot.send_message(chat_id=user.telegram_id, text=text)
@@ -82,6 +124,9 @@ async def tick_reminders(
                     reminder.status = "failed"
                     failed += 1
                 else:
+                    # Revert to pending so the next tick retries; we
+                    # can't leave it in 'processing' or it'd be stuck.
+                    reminder.status = "pending"
                     retry += 1
                 logger.warning(
                     "reminder.send_failed",
@@ -95,6 +140,9 @@ async def tick_reminders(
                 reminder.last_error = None
                 sent += 1
             session.add(reminder)
+            # Commit per-row so a crash on the *next* row can't roll
+            # back this row's terminal state and re-send next tick.
+            await session.commit()
 
     if sent or retry or failed:
         logger.info("reminders.tick", sent=sent, retry=retry, failed=failed)
