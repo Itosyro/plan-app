@@ -10,7 +10,7 @@ import time
 
 from groq import AsyncGroq
 
-from app.ai.router import GroqKeyRouter
+from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,16 +28,19 @@ async def transcribe_voice(
 
     Returns the transcribed text (may be empty for silence / noise).
     """
-    client = AsyncGroq(api_key=router.current_key)
+
+    async def _do_call(r: GroqKeyRouter) -> object:
+        client = AsyncGroq(api_key=r.current_key)
+        return await client.audio.transcriptions.create(
+            model=WHISPER_MODEL,
+            file=(filename, audio_bytes),
+            language="ru",
+            response_format="text",
+            temperature=0.0,
+        )
 
     t0 = time.monotonic()
-    result = await client.audio.transcriptions.create(
-        model=WHISPER_MODEL,
-        file=(filename, audio_bytes),
-        language="ru",
-        response_format="text",
-        temperature=0.0,
-    )
+    result = await call_with_rotation(router, _do_call)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     text = str(result).strip()

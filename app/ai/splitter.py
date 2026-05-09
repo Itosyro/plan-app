@@ -15,7 +15,7 @@ from pathlib import Path
 import instructor
 from groq import AsyncGroq
 
-from app.ai.router import GroqKeyRouter
+from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import SplitterResult
 from app.shared.logging import get_logger
 
@@ -52,22 +52,24 @@ async def split_message(
 
     system_prompt = _load_prompt()
 
-    client = instructor.from_groq(
-        AsyncGroq(api_key=router.current_key),
-        mode=instructor.Mode.JSON,
-    )
+    async def _do_call(r: GroqKeyRouter) -> SplitterResult:
+        client = instructor.from_groq(
+            AsyncGroq(api_key=r.current_key),
+            mode=instructor.Mode.JSON,
+        )
+        return await client.chat.completions.create(
+            model=SPLITTER_MODEL,
+            response_model=SplitterResult,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": stripped},
+            ],
+            temperature=0.0,
+            max_retries=2,
+        )
 
     t0 = time.monotonic()
-    result = await client.chat.completions.create(
-        model=SPLITTER_MODEL,
-        response_model=SplitterResult,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": stripped},
-        ],
-        temperature=0.0,
-        max_retries=2,
-    )
+    result = await call_with_rotation(router, _do_call)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     logger.info(

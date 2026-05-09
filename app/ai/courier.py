@@ -27,7 +27,7 @@ from pathlib import Path
 import instructor
 from groq import AsyncGroq
 
-from app.ai.router import GroqKeyRouter
+from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult
 from app.shared.logging import get_logger
 
@@ -132,13 +132,6 @@ async def generate_courier_reply(
     system_prompt = _load_prompt()
     user_message = f"Style: {style}\nGenerate a confirmation."
 
-    client = instructor.from_groq(
-        AsyncGroq(api_key=router.current_key),
-        mode=instructor.Mode.JSON,
-    )
-
-    t0 = time.monotonic()
-
     from pydantic import BaseModel, Field
 
     class CourierReply(BaseModel):
@@ -146,16 +139,24 @@ async def generate_courier_reply(
 
         text: str = Field(description="Short confirmation phrase in Russian")
 
-    reply = await client.chat.completions.create(
-        model=COURIER_MODEL,
-        response_model=CourierReply,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0.9,
-        max_retries=2,
-    )
+    async def _do_call(r: GroqKeyRouter) -> CourierReply:
+        client = instructor.from_groq(
+            AsyncGroq(api_key=r.current_key),
+            mode=instructor.Mode.JSON,
+        )
+        return await client.chat.completions.create(
+            model=COURIER_MODEL,
+            response_model=CourierReply,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.9,
+            max_retries=2,
+        )
+
+    t0 = time.monotonic()
+    reply = await call_with_rotation(router, _do_call)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     logger.info(

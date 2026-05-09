@@ -14,7 +14,7 @@ from pathlib import Path
 import instructor
 from groq import AsyncGroq
 
-from app.ai.router import GroqKeyRouter
+from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult, CriticVerdict, ResolvedTime
 from app.shared.logging import get_logger
 
@@ -92,22 +92,24 @@ async def critique_classification(
         user_tz,
     )
 
-    client = instructor.from_groq(
-        AsyncGroq(api_key=router.current_key),
-        mode=instructor.Mode.JSON,
-    )
+    async def _do_call(r: GroqKeyRouter) -> CriticVerdict:
+        client = instructor.from_groq(
+            AsyncGroq(api_key=r.current_key),
+            mode=instructor.Mode.JSON,
+        )
+        return await client.chat.completions.create(
+            model=CRITIC_MODEL,
+            response_model=CriticVerdict,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.0,
+            max_retries=2,
+        )
 
     t0 = time.monotonic()
-    verdict = await client.chat.completions.create(
-        model=CRITIC_MODEL,
-        response_model=CriticVerdict,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0.0,
-        max_retries=2,
-    )
+    verdict = await call_with_rotation(router, _do_call)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     logger.info(
