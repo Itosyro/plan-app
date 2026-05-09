@@ -6,6 +6,56 @@
 
 ---
 
+## 2026-05-09 — Important findings I-1..I-6, I-8 closed (PR #61)
+
+**PR #61** — закрыты 7 из 8 Important findings из `docs/REVIEW-2026-05-09-v2.md`
+одним коммитом-на-фикс в одной ветке. (I-7 уже был в PR #57.)
+
+* **I-1** (`7bab98d`) — `parse_task_callback()` в `app/bot/routers/callbacks.py`.
+  Все 7 callback-хендлеров теперь делают `try/except ValueError` через общий
+  парсер вместо unguarded `int(parts[N])`. Битые/злоумышленные payloads
+  отвечают «Неверный формат.» вместо 500.
+* **I-2** (`e6d9a6d` + `82ae938`) — `get_or_create_category` /
+  `get_or_create_horizon` через `INSERT ... ON CONFLICT DO NOTHING` (Core SQL,
+  обходит ORM). Конкурентные webhook-доставки с одинаковыми category names
+  больше не падают на UNIQUE-constraint. Работает и в Postgres, и в SQLite.
+* **I-3** (`bb65899`) — `complete_onboarding` теперь делает SELECT-then-INSERT
+  для `UserSettings`. Re-onboarding после `/start` больше не крашит на
+  `UserSettings.user_id` PK. Существующие пользовательские настройки
+  (`critic_mode`, `morning_digest_at`) сохраняются.
+* **I-4** (`656a878`) — `tick_digests` использует catch-up семантику:
+  fire when `local_now >= scheduled_time and not last_*_digest_on=today`.
+  Дайджест больше не теряется при tick drift > 60 с (Render cold-start, GC
+  pause). Day-1 safeguard: пользователь, онбординг которого закончился
+  *после* slot-time сегодня, не получает мгновенно «доброе утро» в 21:00.
+* **I-5** (`f542ef4`) — claim-pattern в `tick_reminders`. Атомарный
+  `UPDATE ... SET status='processing' WHERE status='pending' AND id=:id`
+  плюс per-row commit. Crash mid-batch (SIGTERM/OOM) больше не приводит к
+  duplicate-sends на следующем tick. Stuck `processing`-rows требуют ручной
+  triage — задокументировано.
+* **I-6** (`f6f5c72`) — `/today` (и siblings: `/tomorrow`, `/week`, ...)
+  теперь шлёт **одно** сообщение вместо N+1 (1 summary + N task rows).
+  Inline-keyboard с 4 emoji-only кнопками на задачу (`N ✅ N 🔄 N 🗑 N 🏷`),
+  page cap 20 задач. Callback_data unchanged — все хендлеры работают
+  без изменений.
+* **I-8** (`9ccf7ea`) — `asyncio.Semaphore` backpressure вокруг `run_pipeline`:
+  per-user limit = 1 (строгая сериализация), global limit = 8.
+  Pipeline contention логируется. Pipeline body вынесен в `_run_pipeline_inner`
+  для тестируемости.
+
+Тесты: **243 passed** (было 217 → +26: 7 для I-1, 5 для I-2, 1 для I-3,
+6 для I-4, 3 для I-5, 4 для I-6, 7 для I-8). ruff format + ruff check + mypy
+clean. Squash-merge без миграций.
+
+Прод после мержа: https://plan-app-t6nx.onrender.com/healthz → деплой
+auto-triggered.
+
+**НЕ закрыто в этой сессии (для следующего агента):**
+* Все Minor `M-1 .. M-9` из v2 review.
+* Phase 5 (mini-app) — не начат.
+
+---
+
 ## 2026-05-09 — Skills bundle expansion + полный merge train
 
 **PR #60 (этот)** — расширение `.agents/skills/` для будущих агентов.
