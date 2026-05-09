@@ -162,9 +162,7 @@ def create_router() -> Router:
                 )
                 await stream_reply(placeholder, reply, bot=message.bot)
                 if message.bot is not None:
-                    await reactions.set_reaction(
-                        message.bot, chat_id, msg_id, reactions.SUCCESS
-                    )
+                    await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.SUCCESS)
 
             except Exception:
                 logger.exception(
@@ -172,9 +170,7 @@ def create_router() -> Router:
                     tg_user_id=from_user_id,
                 )
                 if message.bot is not None:
-                    await reactions.set_reaction(
-                        message.bot, chat_id, msg_id, reactions.ERROR
-                    )
+                    await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.ERROR)
                 try:
                     await placeholder.edit_text(
                         "Ошибка при обработке голосового — попробуй ещё раз."

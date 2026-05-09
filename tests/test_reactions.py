@@ -42,9 +42,7 @@ class _FakeBot:
         if self._raise is not None:
             err, self._raise = self._raise, None
             raise err
-        self.calls.append(
-            {"chat_id": chat_id, "message_id": message_id, "reaction": reaction}
-        )
+        self.calls.append({"chat_id": chat_id, "message_id": message_id, "reaction": reaction})
         return True
 
 

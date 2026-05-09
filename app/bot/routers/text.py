@@ -100,9 +100,7 @@ def create_router() -> Router:
         # in the chat list, and reads as ack without producing yet
         # another bubble. Best-effort — never blocks the pipeline.
         if message.bot is not None:
-            await reactions.set_reaction(
-                message.bot, chat_id, user_message_id, reactions.RECEIVE
-            )
+            await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.RECEIVE)
 
         # Send a placeholder and edit it progressively once the
         # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
