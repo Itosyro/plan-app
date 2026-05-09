@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import get_args
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlmodel import select
 
 from app.api.auth import current_user
 from app.api.schemas import HorizonSlug, TaskOut, TaskStatus, TaskUpdateIn
+from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
     get_task_by_id,
@@ -151,6 +152,7 @@ async def get_task(
 async def patch_task(
     task_id: int,
     body: TaskUpdateIn,
+    request: Request,
     user: User = Depends(current_user),
 ) -> TaskOut:
     """Update specific fields of a task.
@@ -165,6 +167,7 @@ async def patch_task(
 
     horizon_slug: str | None = None
     category_name: str | None = None
+    refresh_pin = False
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user.id, task_id)
@@ -183,6 +186,9 @@ async def patch_task(
         if body.status is not None:
             if body.status == "done":
                 await mark_task_done(session, task, user.id)
+                # Phase 6.3: trigger a pinned-digest refresh after commit
+                # so the strikethrough state is live across surfaces.
+                refresh_pin = True
             else:
                 task.status = body.status
 
@@ -212,6 +218,19 @@ async def patch_task(
                 select(Category.name).where(Category.id == task.category_id)
             )
             category_name = cat_res.first()
+
+    # Refresh the pinned morning digest in a fresh transaction (the prior
+    # session_scope is closed, so the ``mark_task_done`` write is durable
+    # before we render the new digest text). Best-effort — never breaks
+    # the API response.
+    if refresh_pin and user.id is not None:
+        bot = getattr(request.app.state, "bot", None)
+        if bot is not None:
+            try:
+                async with session_scope() as session:
+                    await refresh_pinned_morning(bot, session, user.id)
+            except Exception:
+                logger.warning("api.refresh_pinned_failed", user_id=user.id, exc_info=True)
 
     return _task_to_out(task, horizon_slug, category_name)
 

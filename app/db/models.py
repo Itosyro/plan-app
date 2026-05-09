@@ -89,6 +89,21 @@ class UserSettings(SQLModel, table=True):
     # used before M-6. See ``docs/REVIEW-2026-05-09.md::M-6``.
     morning_anchor: str = Field(default="09:00", max_length=5)
     evening_anchor: str = Field(default="19:00", max_length=5)
+    # Phase 6.3: live-updated pinned "морнинг digest" message.
+    # When the morning digest fires, the bot pins it; ``mark_task_done``
+    # callbacks then ``editMessageText`` the same message to strike
+    # through completed items so the pin always reflects today's state.
+    # We track the message identity (chat + message id) and the local
+    # date so we know when yesterday's pin is stale.
+    pinned_morning_chat_id: int | None = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True),
+    )
+    pinned_morning_message_id: int | None = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True),
+    )
+    pinned_morning_date: date | None = Field(default=None)
 
 
 class InboxEntry(SQLModel, table=True):
