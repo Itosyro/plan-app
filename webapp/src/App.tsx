@@ -5,9 +5,18 @@ import { EmptyState } from "./components/EmptyState";
 import { Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { TaskCard } from "./components/TaskCard";
+import { StorageKeys, storageGet, storageSet } from "./lib/storage";
 import type { Category, Horizon, HorizonSlug, Me, Task } from "./types";
 
 const DEFAULT_HORIZON: HorizonSlug = "today";
+const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
+  "today",
+  "tomorrow",
+  "week",
+  "month",
+  "year",
+  "someday",
+]);
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -18,6 +27,7 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [prefsHydrated, setPrefsHydrated] = useState(false);
 
   const loadShell = useCallback(async () => {
     try {
@@ -68,11 +78,55 @@ export default function App() {
     loadShell().finally(() => setLoading(false));
   }, [loadShell]);
 
+  // Hydrate UI prefs from Telegram CloudStorage (or localStorage fallback).
+  // This runs in parallel with the API shell load so first paint isn't
+  // blocked. The first task fetch is gated on ``prefsHydrated`` so we
+  // don't load tasks twice (once for the default horizon, again for the
+  // restored one).
   useEffect(() => {
-    if (!authError) {
+    let cancelled = false;
+    (async () => {
+      const [storedHorizon, storedCategory] = await Promise.all([
+        storageGet(StorageKeys.lastHorizon),
+        storageGet(StorageKeys.lastCategory),
+      ]);
+      if (cancelled) return;
+      if (storedHorizon && VALID_HORIZONS.has(storedHorizon as HorizonSlug)) {
+        setActiveHorizon(storedHorizon);
+      }
+      if (storedCategory) {
+        const parsed = Number.parseInt(storedCategory, 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          setSelectedCategory(parsed);
+        }
+      }
+      setPrefsHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authError && prefsHydrated) {
       loadTasks(activeHorizon, selectedCategory);
     }
-  }, [activeHorizon, selectedCategory, authError, loadTasks]);
+  }, [activeHorizon, selectedCategory, authError, prefsHydrated, loadTasks]);
+
+  // Persist horizon choice. We don't persist on every render — the
+  // setActiveHorizon path is the only way it changes.
+  const handleHorizonChange = useCallback((slug: string) => {
+    setActiveHorizon(slug);
+    void storageSet(StorageKeys.lastHorizon, slug);
+  }, []);
+
+  const handleCategoryChange = useCallback((categoryId: number | null) => {
+    setSelectedCategory(categoryId);
+    void storageSet(
+      StorageKeys.lastCategory,
+      categoryId === null ? "" : String(categoryId),
+    );
+  }, []);
 
   const handleDone = useCallback(
     async (id: number) => {
@@ -168,12 +222,12 @@ export default function App() {
         horizons={horizons}
         active={activeHorizon}
         counts={counts}
-        onChange={setActiveHorizon}
+        onChange={handleHorizonChange}
       />
       <CategoryFilter
         categories={categories}
         selectedId={selectedCategory}
-        onChange={setSelectedCategory}
+        onChange={handleCategoryChange}
       />
       {tasks.length === 0 ? (
         <EmptyState

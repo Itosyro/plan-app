@@ -23,6 +23,33 @@ interface TelegramHapticFeedback {
   selectionChanged: () => void;
 }
 
+// Bot API 6.9+ — `WebApp.CloudStorage`. Synced server-side by Telegram
+// across all the user's clients. Keys: 1..128 chars `[A-Za-z0-9_-]+`,
+// values up to 4096 chars, max 1024 entries. We use this for tiny UI
+// state (last horizon, last category filter) so the app feels personal
+// across phone, desktop, and tablet — no backend roundtrip.
+interface TelegramCloudStorage {
+  setItem: (
+    key: string,
+    value: string,
+    callback?: (error: Error | null, stored: boolean) => void,
+  ) => void;
+  getItem: (key: string, callback: (error: Error | null, value: string) => void) => void;
+  getItems: (
+    keys: string[],
+    callback: (error: Error | null, values: Record<string, string>) => void,
+  ) => void;
+  removeItem: (
+    key: string,
+    callback?: (error: Error | null, removed: boolean) => void,
+  ) => void;
+  removeItems: (
+    keys: string[],
+    callback?: (error: Error | null, removed: boolean) => void,
+  ) => void;
+  getKeys: (callback: (error: Error | null, keys: string[]) => void) => void;
+}
+
 export interface TelegramWebApp {
   initData: string;
   initDataUnsafe: {
@@ -36,10 +63,12 @@ export interface TelegramWebApp {
   colorScheme: "light" | "dark";
   themeParams: TelegramThemeParams;
   isExpanded: boolean;
+  version?: string;
   expand: () => void;
   ready: () => void;
   close: () => void;
   HapticFeedback: TelegramHapticFeedback;
+  CloudStorage?: TelegramCloudStorage;
   onEvent: (event: string, callback: () => void) => void;
   offEvent: (event: string, callback: () => void) => void;
   showAlert?: (msg: string) => void;
