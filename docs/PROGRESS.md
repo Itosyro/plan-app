@@ -6,6 +6,73 @@
 
 ---
 
+## 2026-05-09 — Phase 5: Telegram Mini App + streaming bot replies
+
+**Бэкенд (REST API под `/api/*`):**
+
+* `app/api/auth.py` — middleware `current_user`: HMAC-SHA256
+  верификация `X-Telegram-Init-Data` (Telegram WebApps spec, ключ
+  `HMAC-SHA256("WebAppData", bot_token)`), отбрасывает скомпрометированные/
+  устаревшие подписи (TTL 24 ч + grace), возвращает `User` через
+  FastAPI Depends.
+* `app/api/schemas.py` — Pydantic v2 модели (`TaskOut`, `NoteOut`,
+  `CategoryOut`, `MeOut`, `TaskUpdateIn`, …) с `extra="forbid"` —
+  никаких лишних полей в ответах/запросах.
+* `app/api/routers/` — `me`, `tasks`, `notes`, `categories`,
+  `horizons`, `inbox`. CRUD через переиспользование существующих
+  bot-сервисов (`mark_task_done`, `update_task_horizon`,
+  `update_task_category`, `delete_task`) — единый аудит-trail
+  и общий код side-effect-ов между Mini-App и ботом.
+* `app/main.py` — подключение роутеров, `StaticFiles` mount под
+  `/app`, `setChatMenuButton(MenuButtonWebApp(...))` при старте
+  (новинка из Bot API 10.0).
+* `app/shared/config.py` — `Settings.miniapp_url` (deriv-property
+  от `webhook_base_url`, override через `MINIAPP_URL_OVERRIDE`).
+
+**Фронт (`webapp/`, React 18 + Vite 5 + Tailwind 3 + TypeScript):**
+
+* Маленький, todoist-style mobile-first UI: горизонты как
+  pill-табы (Сегодня / Завтра / Неделя / …), ниже — горизонтальный
+  фильтр категорий, потом — карточки задач с круглым checkbox,
+  цветным priority-индикатором, сроком и actions «Перенести / Удалить».
+* `lib/telegram.ts` — тонкая обёртка над `window.Telegram.WebApp`:
+  `WebApp.ready()`, `expand()`, applyTheme (через CSS vars
+  `--tg-theme-*`), HapticFeedback, listener на `themeChanged`.
+* `api/client.ts` — fetch-обёртка с авто-инжектом `X-Telegram-Init-Data`,
+  типобезопасными вызовами и `ApiError` для ненулевых статусов.
+* Optimistic UI: «Готово» / «Перенести» / «Удалить» сразу видны,
+  при ошибке — откат через перезагрузку списка.
+* Build-output `webapp/dist/` монтируется FastAPI как статика.
+
+**Streaming-replies в боте (Bot API 10.0 «as-typed»):**
+
+* `app/bot/streaming.py` — `stream_reply(placeholder, full_text, …)`:
+  отправляем bubble-плейсхолдер сразу, потом построчно editText
+  (rate-limit-aware: ловим `TelegramRetryAfter`, периодический
+  `sendChatAction("typing")`).
+* `app/bot/routers/text.py` и `voice.py` — переключены на
+  `stream_reply` вместо одного `message.answer(reply)`.
+  Пользователь видит ответ как будто бот печатает сейчас.
+
+**Инфра:**
+
+* `Dockerfile` — multi-stage (Node 20 → Python 3.12), фронт билдится
+  один раз и копируется в финальный образ. В dev без билда
+  StaticFiles mount просто отключается (`if WEBAPP_DIST.exists()`).
+* `.github/workflows/ci.yml` — джоба `webapp build` (typecheck + build).
+* `tests/test_api_auth.py` (8 тестов) — happy / bad signature /
+  expired / future skew / empty / no user.
+* `tests/test_api_endpoints.py` (15 тестов) — happy paths + 401 /
+  404 / cross-user 404 для каждого endpoint.
+* `tests/test_streaming.py` (4 теста) — progressive reveal,
+  single-line, RetryAfter, empty.
+* `tests/test_static_miniapp.py` (2 теста) — smoke `/app/` →
+  `index.html` с `#root` + Telegram WebApp script.
+
+Тесты: 272 passed (+29 новых). ruff / mypy: clean.
+
+---
+
 ## 2026-05-09 — Plan audit + ROADMAP refresh + HANDOFF v8 (docs only)
 
 **PR** — обновление планировочных документов после полного
