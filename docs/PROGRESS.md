@@ -6,6 +6,54 @@
 
 ---
 
+## 2026-05-09 — Phase 4c: e2e-тесты сквозной цепочки сообщение → Task → Reminder → Digest
+
+**Контекст:**
+В `main` 172 теста — каждый компонент покрыт изолированно: пайплайн
+(`test_e2e_pipeline.py`), persist→Reminder (`test_reminders.py`), tick
+(`test_scheduler.py`), digest (`test_digest.py`), runner-loop (`test_runner.py`).
+Не было теста, который сшивает их воедино: пользовательское сообщение
+становится Task'ом, Task порождает Reminder, scheduler его шлёт, тот же Task
+позднее показывается в утреннем дайджесте. Этот PR закрывает пробел.
+
+**Сделано:**
+- `tests/test_e2e_phase4.py` (новый файл, 351 LOC) — пять сценариев:
+  - `test_full_chain_persist_then_reminder_then_morning_digest` — основной поток:
+    `persist_classification` → 2 `Reminder` (default `same_day = [60, 15]`) →
+    `tick_reminders(now=naive_due)` отправляет оба сообщения FakeBot'у →
+    `build_morning_digest` всё ещё включает открытый Task.
+  - `test_morning_digest_tick_isolated_by_user_timezone` — два онбордженных
+    юзера в `Europe/Moscow` и `America/New_York` с одинаковым `morning="08:00"`;
+    в `05:00 UTC` это `08:00 MSK` (match) и `01:00 EDT` (no match) — `tick_digests`
+    шлёт ровно одному (Москве).
+  - `test_morning_digest_excludes_tasks_completed_after_persist` — задача,
+    переведённая в `status='done'` после `persist_classification`, выпадает
+    из `build_morning_digest`.
+  - `test_reminder_marked_failed_after_max_attempts_then_skipped` — три провала
+    подряд (`MAX_REMINDER_ATTEMPTS=3`) переводят `Reminder.status='failed'`;
+    последующий тик с восстановившимся ботом не трогает «мёртвую» строку.
+  - `test_reminder_send_uses_plain_text_no_markdown_parse_mode` — регрессия
+    C-2 из `defensive-programming/SKILL.md`: title с `*` / `_` / `[` уходит
+    plain-text'ом; в `bot.send_message(...)` нет `parse_mode`, символы
+    сохраняются дословно.
+- Хелперы в файле: `_RecordingBot` (захватывает все kwargs, включая
+  `parse_mode`), `_classifier_result` фабрика, `_onboard_user` (run
+  `complete_onboarding` + override digest slots).
+
+**Верификация:**
+- `uv run ruff format .` — чисто
+- `uv run ruff check .` — чисто
+- `uv run pytest -q` — **177 passed** (172 + 5 новых, без регрессий)
+
+**Не сделано (вынесено за рамки PR):**
+- Не пишем «полный e2e через `_run_pipeline` + respx-моки Groq» — это
+  заметно раздуло бы тесты и продублировало `test_e2e_pipeline.py` (там
+  уже 8 респ-ксенарев). Phase 4c специально про звено
+  `persist → reminder → digest`, а не «message → persist» (его уже хватает).
+- Phase 5 (Telegram Mini App) и сбор скиллов под mini-app SDK — отдельные PR.
+
+---
+
 ## 2026-05-08 — Snapshot: Phase 4 закрыта, перед Phase 4c делаем sanity-check + handoff
 
 **Контекст:**
