@@ -27,13 +27,41 @@
 
 ## Скиллы из `anthropics/skills` (бандл)
 
-Снепшоты официальных скиллов Anthropic. Лицензия Apache 2.0. Источник + commit указаны в `SOURCE.md` каждой папки.
+Снепшоты официальных скиллов Anthropic. Лицензия Apache 2.0.
+Источник + commit зафиксированы в `anthropic/SOURCE.md`.
 
 | Скилл | Применимость |
 |---|---|
 | [`skill-creator/`](./skill-creator/SKILL.md) | Когда создаёшь новый собственный скилл — следуй этому шаблону + spec. |
 | [`mcp-builder/`](./mcp-builder/SKILL.md) | На будущее: если решим интегрировать MCP-серверы (Phase 5+). |
-| [`webapp-testing/`](./webapp-testing/SKILL.md) | Phase 5: тестирование Telegram Mini App. |
+| [`webapp-testing/`](./webapp-testing/SKILL.md) | Phase 5: тестирование Telegram Mini App с Playwright. |
+| [`anthropic/brand-guidelines/SKILL.md`](./anthropic/brand-guidelines/SKILL.md) | Phase 5 Mini App: визуалка/брендинг. |
+| [`anthropic/claude-api/SKILL.md`](./anthropic/claude-api/SKILL.md) | На будущее: если будем дёргать Claude API (сейчас Groq). |
+| [`anthropic/frontend-design/SKILL.md`](./anthropic/frontend-design/SKILL.md) | Phase 5 Mini App: production-grade UI без AI-щаблонности. |
+| [`anthropic/web-artifacts-builder/SKILL.md`](./anthropic/web-artifacts-builder/SKILL.md) | Phase 5 Mini App: сложные React/Tailwind/shadcn компоненты. |
+
+## Скиллы из `obra/superpowers` (бандл)
+
+Кураторская подборка Jesse Vincent (obra). Источник + commit
+зафиксированы в `obra/SOURCE.md`. Все 14 скиллов про процесс
+разработки: дебаг, ревью, планирование, TDD.
+
+| Скилл | Применимость |
+|---|---|
+| [`obra/using-superpowers/SKILL.md`](./obra/using-superpowers/SKILL.md) | **Точка входа** — как находить и применять остальные скиллы. |
+| [`obra/systematic-debugging/SKILL.md`](./obra/systematic-debugging/SKILL.md) | **При любом баге.** Сначала root-cause, потом фикс. (Уже адаптирован в `systematic-debugging/`, но оригинал тут для референса.) |
+| [`obra/verification-before-completion/SKILL.md`](./obra/verification-before-completion/SKILL.md) | Перед заявлением «готово» — реальная верификация. Антидот к «работает у меня». |
+| [`obra/test-driven-development/SKILL.md`](./obra/test-driven-development/SKILL.md) | Red → Green → Refactor дисциплина. |
+| [`obra/writing-plans/SKILL.md`](./obra/writing-plans/SKILL.md) | Как писать исполняемый план задачи. |
+| [`obra/executing-plans/SKILL.md`](./obra/executing-plans/SKILL.md) | Как методично выполнять план без срезания углов. |
+| [`obra/brainstorming/SKILL.md`](./obra/brainstorming/SKILL.md) | Перед любой творческой задачей: спецификация требований через AB-варианты. |
+| [`obra/writing-skills/SKILL.md`](./obra/writing-skills/SKILL.md) | Чек-лист для нового скилла (формат + содержание). |
+| [`obra/receiving-code-review/SKILL.md`](./obra/receiving-code-review/SKILL.md) | Как принимать ревью без подхалимажа. |
+| [`obra/requesting-code-review/SKILL.md`](./obra/requesting-code-review/SKILL.md) | Как просить ревью у sub-agent / fresh chat. |
+| [`obra/finishing-a-development-branch/SKILL.md`](./obra/finishing-a-development-branch/SKILL.md) | Когда всё готово — куда мержить, в каком порядке. |
+| [`obra/dispatching-parallel-agents/SKILL.md`](./obra/dispatching-parallel-agents/SKILL.md) | Запуск нескольких суб-агентов параллельно. |
+| [`obra/subagent-driven-development/SKILL.md`](./obra/subagent-driven-development/SKILL.md) | Делегировать sub-agent'у целые этапы. |
+| [`obra/using-git-worktrees/SKILL.md`](./obra/using-git-worktrees/SKILL.md) | Параллельная работа над несколькими ветками без stash. |
 
 ---
 
