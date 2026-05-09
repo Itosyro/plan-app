@@ -19,13 +19,33 @@ from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from fastapi import FastAPI, Header, HTTPException, Request
+from sqlmodel import select
 
 from app.bot import build_dispatcher
 from app.bot.services import is_update_processed, record_update
 from app.db.base import dispose_engine, init_engine, session_scope
+from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
 from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
+
+
+def _extract_tg_user_id(update: Update) -> int | None:
+    """Return the Telegram ``from_user.id`` from an update, or ``None``.
+
+    Walks the populated optional sub-field. Used both for logging and to
+    populate ``TelegramUpdate.user_id`` (after a lookup against
+    ``users.telegram_id``). See ``docs/REVIEW-2026-05-09.md::I-7``.
+    """
+    if update.message is not None and update.message.from_user is not None:
+        return update.message.from_user.id
+    if update.edited_message is not None and update.edited_message.from_user is not None:
+        return update.edited_message.from_user.id
+    if update.callback_query is not None and update.callback_query.from_user is not None:
+        return update.callback_query.from_user.id
+    if update.inline_query is not None and update.inline_query.from_user is not None:
+        return update.inline_query.from_user.id
+    return None
 
 
 def _classify_update(update: Update) -> str:
@@ -135,17 +155,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if await is_update_processed(session, update.update_id):
                 logger.info("webhook.duplicate", update_id=update.update_id)
                 return {"ok": True}
-            user_tg_id = (
-                update.message.from_user.id
-                if (update.message and update.message.from_user)
-                else None
-            )
+            user_tg_id = _extract_tg_user_id(update)
             kind = _classify_update(update)
-            await record_update(session, update_id=update.update_id, user_id=None, kind=kind)
+            # Look up our internal users.id so that TelegramUpdate.user_id
+            # actually points at the user (not always NULL). It's nullable
+            # because pre-onboarding /start hits this code path before the
+            # User row exists; the dispatcher creates it later.
+            # See ``docs/REVIEW-2026-05-09.md::I-7``.
+            internal_user_id: int | None = None
+            if user_tg_id is not None:
+                result = await session.exec(select(User.id).where(User.telegram_id == user_tg_id))
+                internal_user_id = result.first()
+            await record_update(
+                session, update_id=update.update_id, user_id=internal_user_id, kind=kind
+            )
             logger.info(
                 "webhook.received",
                 update_id=update.update_id,
                 tg_user_id=user_tg_id,
+                user_id=internal_user_id,
                 kind=kind,
             )
 
