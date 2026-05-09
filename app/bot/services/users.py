@@ -60,8 +60,16 @@ async def complete_onboarding(
 ) -> UserSettings:
     """Persist the onboarding result.
 
-    Sets the user's name + timezone, marks ``onboarded_at``, and creates a
-    fresh ``UserSettings`` row with the documented defaults.
+    Sets the user's name + timezone and marks ``onboarded_at``. If a
+    ``UserSettings`` row for this user does not yet exist, creates one
+    with the documented defaults; otherwise leaves the existing row
+    intact (we don't want to wipe the user's tweaks like
+    ``critic_mode`` / digest times when they re-run ``/start``).
+
+    Idempotent on re-onboarding: a user who wipes their chat and runs
+    ``/start`` again must not crash with ``IntegrityError`` on the
+    ``UserSettings.user_id`` PK. See
+    ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-3``.
     """
     user.display_name = display_name
     user.tz = tz
@@ -69,7 +77,12 @@ async def complete_onboarding(
     session.add(user)
 
     assert user.id is not None, "user must be flushed before complete_onboarding()"
-    settings = UserSettings(user_id=user.id)
-    session.add(settings)
+    result = await session.exec(
+        select(UserSettings).where(UserSettings.user_id == user.id),
+    )
+    settings = result.first()
+    if settings is None:
+        settings = UserSettings(user_id=user.id)
+        session.add(settings)
     await session.flush()
     return settings

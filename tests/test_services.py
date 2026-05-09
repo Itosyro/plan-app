@@ -81,6 +81,46 @@ async def test_complete_onboarding_writes_user_and_settings(
 
 
 @pytest.mark.asyncio
+async def test_complete_onboarding_is_idempotent(session: AsyncSession) -> None:
+    """Regression for R-NEW-I-3: re-running ``/start`` after onboarding
+    must not raise ``IntegrityError`` on the ``UserSettings.user_id`` PK.
+
+    The user's earlier UI tweaks (critic_mode, digest times, etc.) are
+    preserved across re-onboarding — we only update the User row.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=88)
+    await session.commit()
+    s1 = await complete_onboarding(session, user, display_name="Aйша", tz="Europe/Moscow")
+    await session.commit()
+
+    # Pretend the user later changed a setting through /settings.
+    s1.critic_mode = "always"
+    s1.morning_digest_at = "09:00"
+    session.add(s1)
+    await session.commit()
+
+    # Wiped chat → /start again → completes the wizard a second time.
+    s2 = await complete_onboarding(session, user, display_name="Aйша", tz="Asia/Tashkent")
+    await session.commit()
+
+    # Same row, not a fresh one — user-tweaked fields survive.
+    assert s2.user_id == user.id
+    assert s2.critic_mode == "always"
+    assert s2.morning_digest_at == "09:00"
+
+    # The User row was updated to the new tz / display_name.
+    fetched = (await session.exec(select(User).where(User.telegram_id == 88))).first()
+    assert fetched is not None
+    assert fetched.tz == "Asia/Tashkent"
+
+    # Still exactly one settings row in the DB.
+    all_settings = (
+        await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+    ).all()
+    assert len(all_settings) == 1
+
+
+@pytest.mark.asyncio
 async def test_record_and_check_idempotency(session: AsyncSession) -> None:
     assert await is_update_processed(session, 100) is False
     await record_update(session, update_id=100, user_id=None, kind="message")
