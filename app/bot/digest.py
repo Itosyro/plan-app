@@ -133,6 +133,13 @@ async def build_evening_digest(session: AsyncSession, user: User) -> str:
 async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, int]:
     """Send morning/evening digests to users whose local HH:MM matches now.
 
+    Idempotent against sub-minute scheduler ticks: each digest is gated
+    on ``UserSettings.last_morning_digest_on`` /
+    ``last_evening_digest_on`` (user-local date). If the gate is already
+    set to today's local date, we skip — so two ticks within the same
+    minute (or even the same wall-clock second) can never double-send.
+    See ``docs/REVIEW-2026-05-09.md::C-3``.
+
     Returns a counter dict (``morning``, ``evening``, ``errors``).
     """
     sent_morning = sent_evening = errors = 0
@@ -149,19 +156,35 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
             if settings is None:
                 continue
             local = _user_local_now(user.tz, now_utc=now)
+            local_date = local.date()
             morning = _matches_hhmm(local, settings.morning_digest_at)
             evening = _matches_hhmm(local, settings.evening_digest_at)
+            if not morning and not evening:
+                continue
+            # Skip if we already delivered this digest today (user-local).
+            if morning and settings.last_morning_digest_on == local_date:
+                morning = False
+            if evening and settings.last_evening_digest_on == local_date:
+                evening = False
             if not morning and not evening:
                 continue
             try:
                 if morning:
                     text = await build_morning_digest(session, user)
                     await bot.send_message(chat_id=user.telegram_id, text=text)
+                    settings.last_morning_digest_on = local_date
                     sent_morning += 1
                 if evening:
                     text = await build_evening_digest(session, user)
                     await bot.send_message(chat_id=user.telegram_id, text=text)
+                    settings.last_evening_digest_on = local_date
                     sent_evening += 1
+                # Persist the gate flips so a follow-up tick in the same
+                # session_scope (or a crash before commit) doesn't lose
+                # them. session_scope commits on exit; this flush makes
+                # the gate visible to subsequent loop iterations too.
+                session.add(settings)
+                await session.flush()
             except Exception as exc:
                 errors += 1
                 logger.warning(

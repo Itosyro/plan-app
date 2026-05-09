@@ -254,3 +254,102 @@ async def test_tick_digests_isolates_one_failing_user(session: AsyncSession) -> 
     assert result["errors"] == 1
     assert any(c[0] == 1109 for c in bot.calls)
     assert all(c[0] != 1108 for c in bot.calls)
+
+
+# ── C-3 regression: idempotency guard against double-send ────────────
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_skips_second_call_in_same_minute(
+    session: AsyncSession,
+) -> None:
+    """C-3: two ticks at the same ``now`` must send exactly one digest.
+
+    Pre-2026-05-09 ``tick_digests`` had no idempotency guard, so a
+    scheduler running at < 60 s interval would fire the morning digest
+    once per tick during the matching HH:MM window. Now we record the
+    user-local date in ``last_morning_digest_on`` and skip if equal.
+    """
+    await _onboard(session, telegram_id=1110, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    now = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)  # 08:00 MSK
+
+    first = await tick_digests(bot, now=now)
+    assert first == {"morning": 1, "evening": 0, "errors": 0}
+
+    # Second tick at the same wall-clock time → must skip.
+    second = await tick_digests(bot, now=now)
+    assert second == {"morning": 0, "evening": 0, "errors": 0}
+
+    # Bot received exactly one message.
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_skips_repeat_within_same_minute_evening(
+    session: AsyncSession,
+) -> None:
+    """C-3 companion: same guard applies to the evening digest."""
+    await _onboard(session, telegram_id=1111, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    now = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)  # 21:00 MSK
+
+    first = await tick_digests(bot, now=now)
+    assert first == {"morning": 0, "evening": 1, "errors": 0}
+
+    second = await tick_digests(bot, now=now)
+    assert second == {"morning": 0, "evening": 0, "errors": 0}
+
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_resends_on_next_day(session: AsyncSession) -> None:
+    """C-3 companion: gate is keyed by *date*, so tomorrow's tick fires.
+
+    A second tick the next day at the same HH:MM in the user's local tz
+    must deliver again.
+    """
+    await _onboard(session, telegram_id=1112, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    day1 = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)
+    day2 = datetime(2026, 5, 9, 5, 0, tzinfo=UTC)
+
+    first = await tick_digests(bot, now=day1)
+    second = await tick_digests(bot, now=day1)
+    third = await tick_digests(bot, now=day2)
+
+    assert first == {"morning": 1, "evening": 0, "errors": 0}
+    assert second == {"morning": 0, "evening": 0, "errors": 0}
+    assert third == {"morning": 1, "evening": 0, "errors": 0}
+    assert len(bot.calls) == 2  # day1 + day2, but not the duplicate at day1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_persists_gate_to_db(session: AsyncSession) -> None:
+    """C-3 companion: the gate flip survives a fresh ``session_scope``.
+
+    ``tick_digests`` opens its own session; this test verifies the
+    column was actually committed by re-reading via the test's session.
+    """
+    from app.db.models import User
+
+    await _onboard(session, telegram_id=1113, tz="Europe/Moscow")
+
+    bot = _FakeBot()
+    now = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)
+    await tick_digests(bot, now=now)
+
+    user = (await session.exec(select(User).where(User.telegram_id == 1113))).first()
+    assert user is not None and user.id is not None
+    settings = (
+        await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+    ).first()
+    assert settings is not None
+    # 08:00 MSK on 2026-05-08 in MSK is local date 2026-05-08.
+    assert settings.last_morning_digest_on == datetime(2026, 5, 8).date()
+    # Evening untouched.
+    assert settings.last_evening_digest_on is None

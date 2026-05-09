@@ -8,7 +8,7 @@ Phase 4a: ``reminders``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import JSON, BigInteger, Column, UniqueConstraint
@@ -77,6 +77,13 @@ class UserSettings(SQLModel, table=True):
     # ``terse`` / ``respectful``). See ``docs/REVIEW-2026-05-09.md::C-1``.
     courier_template_style: str = Field(default="neutral", max_length=24)
     week_due_semantic: str = Field(default="deadline_sunday", max_length=24)
+    # Idempotency guards for the digest scheduler: store the *user-local*
+    # date on which we last delivered each digest. Before sending, we
+    # compare this to ``today`` in the user's tz; if equal, we skip — so
+    # a sub-minute scheduler tick can't double-fire the same digest.
+    # See ``docs/REVIEW-2026-05-09.md::C-3``.
+    last_morning_digest_on: date | None = Field(default=None)
+    last_evening_digest_on: date | None = Field(default=None)
 
 
 class InboxEntry(SQLModel, table=True):
