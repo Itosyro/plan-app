@@ -6,6 +6,138 @@
 
 ---
 
+## 2026-05-09 (вечер) — Snapshot после I-fixes + 5/8 Minor: pause + handoff v2
+
+**Контекст:**
+После snapshot-PR #44 юзер согласовал план «закрыть все 7 Important
+findings одним PR с отдельными коммитами и пушить по мере готовности
+для раннего CI feedback». В одной сессии сделаны и Important, и
+половина Minor. Сейчас работа поставлена на паузу: юзер попросил
+зафиксировать состояние, написать мега-handoff v2 для следующей
+нейросети (детальнее v1) и не продолжать M-6 / Phase 5 без
+согласования.
+
+**Сделано в этой части сессии:**
+
+PR #45 — **Fix Important findings I-1..I-7** (squash-merged в main как
+`1036145`, 6 коммитов независимы и читаемы):
+
+  - **I-5** (`f059505`): удалён dead code `app/ai/reminder_extractor.py`
+    + `tests/test_reminder_extractor.py` (160 LOC прода + 5 тестов).
+    Был superseded `time_resolver` + `classifier.due_at` ещё в
+    Phase 2.4, но остался в репо.
+  - **I-6** (`4d19068`): убрал `parse_mode="Markdown"` из 4 callback'ов
+    в `app/bot/routers/settings.py`. Категории и task labels —
+    user-controlled, любая будущая категория с `*`/`_`/`[`/`` ` ``
+    сломала бы Telegram parser. Плюс regression-test
+    `test_settings_panel_no_markdown_parse_mode`.
+  - **I-7** (`4d233a0`): `webhook.received` теперь populates
+    `TelegramUpdate.user_id`. Был лукап `User.id` по `telegram_id`
+    в `_persist_telegram_update`. До этого все строки в таблице
+    `telegram_updates` имели `user_id=NULL` — не аналитическое
+    табло, а просто баг. Плюс 2 теста в `tests/test_webhook.py`.
+  - **I-4** (`8e0baad`): извлёк `_get_router`, `_log_task_exception`,
+    `_run_pipeline` из `app/bot/routers/text.py` в новый модуль
+    `app/bot/routers/_pipeline.py` под публичными именами
+    (`get_groq_router`, `log_task_exception`, `run_pipeline`).
+    `voice.py` и `text.py` теперь оба импортят из `_pipeline`.
+    Никаких приватных импортов между братскими модулями. `text.py`
+    усох с 289 LOC до 121.
+  - **I-1** (`d6acf91`): оживил `GroqKeyRouter.advance()`. Добавил
+    `call_with_rotation[T](router, fn)` хелпер в `app/ai/router.py`,
+    обернул им все 6 Groq call-site'ов (splitter / classifier /
+    critic / courier / reorder / whisper). На `RateLimitError` и
+    `InternalServerError` / 5xx `APIStatusError` — `router.advance()`
+    и retry. На 4xx — propagate. Если все ключи в пуле упали —
+    `GroqKeysExhaustedError`. 6 новых тестов в
+    `tests/test_groq_router.py` (success / 429 / 5xx / 4xx /
+    pool-exhaust / unexpected). Используется PEP-695 generic-syntax
+    `[T]` (Python 3.12+).
+  - **I-2** (`0ae8af6`): включил mypy в CI на `app/`. Починил все
+    30 предсуществующих ошибок: aiogram-3 `InaccessibleMessage`
+    narrowing (`isinstance(callback.message, Message)` вместо
+    `is not None`) в callbacks.py — 7 мест; `# type: ignore[union-attr]`
+    → `[attr-defined]` в services.py (где речь шла о SQLModel
+    column expressions); `zi: ZoneInfo | timezone` annotation в
+    `time.py` и `digest.py` (Python `UTC` — это `timezone`, не
+    `ZoneInfo`); типизированный `scheduler_handle:
+    tuple[asyncio.Task[None], asyncio.Event] | None` в `main.py` —
+    убрал `# type: ignore[arg-type]`. В `pyproject.toml` —
+    `[tool.mypy] files = ["app"]` (тесты с моками сейчас не покрыты).
+    В `.github/workflows/ci.yml` — шаг «Mypy (app/)» между ruff и
+    pytest.
+
+I-3 (README refresh) был сделан раньше в snapshot-PR #44 / `bdeb884`.
+
+PR #45 итог: 197 → 202 теста (+5 чистых; I-1 +6, I-7 +2, I-6 +1,
+I-5 −5, M-3/M-6 не трогаем). mypy 0 errors. ruff чисто. CI ✅
+(ruff + mypy + pytest). Squash-merge в main.
+
+PR #46 (in-flight, not merged) — **Minor cleanup**, ветка
+`devin/1778320409-minor-fixes`, 5 коммитов из 8 запланированных:
+
+  - **M-1 + M-2** (`9135e47`): выпилил `pymorphy3`, `razdel`,
+    `asyncpg` из `[project] dependencies` в `pyproject.toml`.
+    `pymorphy3` и `razdel` — никогда не импортились (только в
+    `russian-nlp/SKILL.md`). `asyncpg` напрямую противоречил
+    `app/db/base.py::_to_async_url`, который явно нормализует на
+    `+psycopg`. `uv.lock` усох на 6 транзитивных deps.
+  - **M-5** (`3c885cd`): заменил `getattr(logging, ...)` на
+    explicit `_LOG_LEVELS` mapping в `app/shared/logging.py`. Это
+    был последний `getattr` в `app/` (по
+    `defensive-programming/SKILL.md` style).
+  - **M-7** (`055a946`): обогащён docstring пустого
+    `app/api/__init__.py`. Поясняет что namespace зарезервирован
+    под Phase 5 mini-app JSON API. Без code change.
+  - **M-8** (`44e2ef5`): починен медленный тест
+    `test_e2e_partial_classify_failure_does_not_kill_batch`.
+    2.78s → 1.54s. Mock-ответ для классификатора #2 поменян с 429
+    на 400 — Groq SDK не делает internal retries на 4xx,
+    `call_with_rotation` тоже propagate'ит 4xx сразу. Test intent
+    («один classifier failed → survivor is persisted») сохранён.
+
+  - **M-3** (services.py 723 LOC split на 5 модулей): **отложен**
+    в отдельный PR. Слишком большой для cleanup-PR, риск
+    сломать import surface в десятке других модулей.
+  - **M-4** (drop `format_exc_info` из structlog chain): **отложен**.
+    Удаление вызывает hang в
+    `test_e2e_partial_classify_failure_does_not_kill_batch`
+    (повторяющиеся retry-loop'ы в groq SDK + структура chained
+    exceptions). Пока в `app/shared/logging.py` оставлен с
+    NB-комментарием. Корневая причина не до конца понята — нужно
+    разбираться отдельно.
+  - **M-6** (morning_anchor / evening_anchor settings + Alembic 0006):
+    **отложен**. Требует миграции и 2 тестов; следующая нейросеть
+    может это закрыть как отдельный коммит в этом же PR или новым
+    PR.
+
+PR #46 НЕ замерджен. Ветка `devin/1778320409-minor-fixes` запушена
+с 5 коммитами; следующая нейросеть может либо доделать M-3/M-4/M-6,
+либо смерджить как-есть с пометкой о неполноте, либо закрыть PR
+без мерджа.
+
+**Итог сессии:**
+- 2 PR'а в main (`1036145` = I-fixes; PR #44 = snapshot/handoff)
+- 1 PR in-flight на `devin/1778320409-minor-fixes` (5 of 8 minor)
+- Тестов: 202 (стабильно зелёных)
+- mypy: 0 errors (теперь гейтит CI)
+- ruff: чисто
+- Открытые findings: M-3, M-4, M-6 (3 Minor) + Phase 5
+
+**Артефакты для следующего агента:**
+- `docs/HANDOFF-2026-05-09.md` (v1, post-PR #44, актуален до момента
+  открытия PR #45) — высокоуровневый обзор
+- `docs/HANDOFF-2026-05-09-v2.md` (v2, **этот snapshot**, 700+ строк) —
+  мега-детальный передаточный документ для следующей нейросети,
+  включая:
+    - точное состояние main (SHA, тесты, mypy)
+    - PR #46 in-flight: каждый коммит, что сделано / что отложено
+    - детальный разбор каждого M-fix (включая deferred с root cause)
+    - конкретные команды для возобновления работы
+    - архивный список секретов / git workflow / CI / уроки
+
+---
+
 ## 2026-05-09 — Snapshot после мерджа PR #42 + #43 + handoff для следующей нейросети
 
 **Контекст:**
