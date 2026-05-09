@@ -34,6 +34,12 @@ ignore = [
 [lint.per-file-ignores]
 "tests/**" = ["S101"]
 "alembic/**" = ["E402"]
+# FastAPI's documented dependency-injection style is `Depends(...)` in
+# argument defaults — it relies on Python evaluating the default once
+# at import time and then re-using the marker. Replacing it with a
+# module-level singleton works but reads worse and breaks the style
+# every FastAPI tutorial uses. We selectively allow B008 here.
+"app/api/**" = ["B008"]
 
 [format]
 quote-style = "double"
