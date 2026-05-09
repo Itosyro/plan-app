@@ -6,6 +6,63 @@
 
 ---
 
+## 2026-05-09 — Snapshot после мерджа PR #42 + #43 + handoff для следующей нейросети
+
+**Контекст:**
+В этот день была долгая сессия: сначала Phase 4c (PR #40), потом
+супер-ревью (PR #42, документ-only) с 22 находками (3 Critical / 7
+Important / 8 Minor / 6 Positive). Юзер дал команду закрыть все
+3 Critical в одном PR с отдельными коммитами на каждый баг и пушем
+после каждого, чтобы CI отстреливал ошибки рано. Это и было
+сделано в PR #43.
+
+**Сделано:**
+- PR #42 (super-review docs, `a54bedf`) и PR #43 (C-1/C-2/C-3 fixes,
+  `5702605`) squash-merged в `main`, ветки удалены.
+- Создан `docs/HANDOFF-2026-05-09.md` (~600 строк) — единый snapshot
+  для передачи проекта другой нейросети: TL;DR, история всех фаз,
+  детальное описание трёх фиксов (что был баг, какой был симптом,
+  как починили), список из 7 Important + 8 Minor открытых находок,
+  env-инструкции (uv, secrets, git workflow с PAT), тестовый базис
+  по файлам, чек-лист «первые 30 минут».
+- Обновлён `README.md`: вывод из «Phase 0 — placeholder» в актуальное
+  состояние «Phase 4c-fixed, 197 tests, prod live».
+
+**Состояние main после мерджа:**
+- `uv run pytest -q` → **197 passed** (172 база + 5 Phase 4c +
+  3 C-1 + 13 C-2 + 4 C-3).
+- `uv run ruff format --check` чисто, `uv run ruff check` чисто.
+- 5 Alembic миграций (последние две — 0004 `courier_template_style`
+  и 0005 `digest_idempotency_guards`).
+- `app/` 4422 LOC, `tests/` 4473 LOC, 23 тест-файла.
+
+**Что починено в этой сессии:**
+- **C-1** (`1d26374`) — `response_style_source` vocab fix:
+  UI шёл `formal/casual/mix`, courier ждал
+  `template_only/llm_only/mix` → 2 из 3 кнопок «Стиль ответа» были
+  мертвы. Плюс новый сеттинг `courier_template_style`
+  (тон шаблона, 6 опций — был захардкожен в `"neutral"` в
+  text.py:239 и voice.py:68). Alembic 0004 + UPDATE legacy
+  `formal/casual → template_only`. +3 теста.
+- **C-2** (`6ca9d41`) — `Task.due_at` UTC normalisation:
+  `dateparser` отдавал aware-MSK, SQLAlchemy дропал tz при insert →
+  naive-MSK в naive-UTC колонке. Новый
+  `app/shared/time.format_due_local()` рендерит naive-UTC в HH:MM
+  в локальной TZ юзера; `to_naive_utc()` нормализует `due_at` перед
+  persist. Все 4 display-сайта обновлены. +13 тестов
+  (новый файл `tests/test_shared_time.py`).
+- **C-3** (`f647415`) — digest double-send guard:
+  `tick_digests` без guard'а задвоил бы дайджест при
+  `SCHEDULER_TICK_INTERVAL_SECONDS < 60`. Добавлены колонки
+  `last_morning_digest_on` / `last_evening_digest_on` (date NULL),
+  гвард по user-local дате. Alembic 0005. +4 теста.
+
+**Не сделано (вынесено за рамки):**
+- 7 Important и 8 Minor находок из ревью — отложены до следующего PR.
+- Phase 5 (mini-app) — следующий блок, разблокирован починкой C-2.
+
+---
+
 ## 2026-05-09 — Super-review всего репо перед Phase 5
 
 **Контекст:**
