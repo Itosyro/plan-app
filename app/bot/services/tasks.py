@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.sql import Insert as _Insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -26,21 +29,57 @@ logger = get_logger(__name__)
 # ── Category / Horizon helpers ────────────────────────────────────────
 
 
+def _dialect_insert(session: AsyncSession, table: type) -> _Insert:
+    """Pick the dialect-flavoured ``INSERT`` so we can use
+    ``ON CONFLICT DO NOTHING`` (Postgres + SQLite both support it).
+
+    We need the dialect-specific Insert because the generic
+    ``sqlalchemy.insert(...)`` doesn't expose ``on_conflict_do_nothing()``.
+    """
+    bind = session.bind
+    dialect_name = bind.dialect.name if bind is not None else "postgresql"
+    if dialect_name == "sqlite":
+        return sqlite_insert(table)
+    return pg_insert(table)
+
+
 async def get_or_create_category(
     session: AsyncSession,
     user_id: int,
     name: str,
 ) -> Category:
-    """Find or create a category for the user."""
+    """Find or create a category for the user.
+
+    Race-safe under concurrent webhook deliveries: two pipelines for
+    the same user that both decide to create the same category will
+    not both raise. We use ``INSERT ... ON CONFLICT DO NOTHING`` (Core
+    SQL — bypasses the ORM identity map so a no-op insert can't poison
+    our session's pending state) followed by a re-SELECT for the row.
+    The cheap SELECT-first path keeps the common case (category already
+    exists) at one round-trip. See ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-2``.
+    """
     result = await session.exec(
         select(Category).where(Category.user_id == user_id, Category.name == name),
     )
     cat = result.first()
     if cat is not None:
         return cat
-    cat = Category(user_id=user_id, name=name)
-    session.add(cat)
+    stmt = (
+        _dialect_insert(session, Category)
+        .values(user_id=user_id, name=name)
+        .on_conflict_do_nothing()
+    )
+    await session.execute(stmt)
     await session.flush()
+    result = await session.exec(
+        select(Category).where(Category.user_id == user_id, Category.name == name),
+    )
+    cat = result.first()
+    if cat is None:
+        # Should never happen: ON CONFLICT DO NOTHING means either we
+        # inserted the row or someone else already had it — either way
+        # the row exists at this point. Keep this branch for safety.
+        raise RuntimeError(f"category {name!r} for user {user_id} not found after upsert")
     return cat
 
 
@@ -49,7 +88,12 @@ async def get_or_create_horizon(
     user_id: int,
     slug: str,
 ) -> Horizon:
-    """Find or create a horizon for the user."""
+    """Find or create a horizon for the user.
+
+    Race-safe under concurrent webhook deliveries — see the docstring
+    of :func:`get_or_create_category` for the upsert strategy.
+    See ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-2``.
+    """
     result = await session.exec(
         select(Horizon).where(Horizon.user_id == user_id, Horizon.slug == slug),
     )
@@ -64,9 +108,19 @@ async def get_or_create_horizon(
         "year": "В этом году",
         "someday": "Когда-нибудь",
     }.get(slug, slug)
-    hor = Horizon(user_id=user_id, slug=slug, label=label)
-    session.add(hor)
+    stmt = (
+        _dialect_insert(session, Horizon)
+        .values(user_id=user_id, slug=slug, label=label)
+        .on_conflict_do_nothing()
+    )
+    await session.execute(stmt)
     await session.flush()
+    result = await session.exec(
+        select(Horizon).where(Horizon.user_id == user_id, Horizon.slug == slug),
+    )
+    hor = result.first()
+    if hor is None:
+        raise RuntimeError(f"horizon {slug!r} for user {user_id} not found after upsert")
     return hor
 
 

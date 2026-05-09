@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,6 +20,7 @@ from app.bot.services import (
     log_ai_run,
     persist_classification,
 )
+from app.db.base import get_sessionmaker
 from app.db.models import AiRun, Category, Horizon, Note, Task, TaskEvent
 
 
@@ -50,6 +53,118 @@ async def test_get_or_create_horizon(session: AsyncSession) -> None:
 
     same = await get_or_create_horizon(session, user.id, "today")
     assert same.id == hor.id
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_category_concurrent_safe(engine: None) -> None:
+    """Regression for R-NEW-I-2: parallel ``get_or_create_category`` calls
+    for the same ``(user_id, name)`` from different sessions must all
+    return the same row, never propagate ``IntegrityError`` to the
+    caller. Mirrors the multi-pipeline race that occurs when several
+    webhook deliveries arrive for one user simultaneously.
+    """
+    sm = get_sessionmaker()
+    async with sm() as setup:
+        user, _ = await get_or_create_user(setup, telegram_id=300)
+        await setup.commit()
+        user_id = user.id
+        assert user_id is not None
+
+    async def one_pipeline() -> int | None:
+        async with sm() as session:
+            cat = await get_or_create_category(session, user_id, "Работа")
+            await session.commit()
+            return cat.id
+
+    results = await asyncio.gather(*[one_pipeline() for _ in range(5)])
+    assert len({r for r in results}) == 1, f"races produced different ids: {results}"
+    assert results[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_category_recovers_from_unique_conflict(
+    engine: None,
+) -> None:
+    """Regression for R-NEW-I-2: when a concurrent transaction inserts
+    the same row between our SELECT and our own INSERT, the SAVEPOINT
+    must roll back our INSERT and we must re-SELECT the winning row
+    instead of letting ``IntegrityError`` propagate.
+
+    We simulate the stale-snapshot scenario by faking the first
+    ``session.exec`` call to return an empty result, while a real row
+    already exists in the database (committed by a separate session).
+    """
+    sm = get_sessionmaker()
+    async with sm() as s:
+        user, _ = await get_or_create_user(s, telegram_id=301)
+        await s.commit()
+        user_id = user.id
+        assert user_id is not None
+
+    async with sm() as winner:
+        winner_cat = Category(user_id=user_id, name="Работа")
+        winner.add(winner_cat)
+        await winner.commit()
+        winner_id = winner_cat.id
+        assert winner_id is not None
+
+    async with sm() as loser:
+        real_exec = loser.exec
+        calls = {"n": 0}
+
+        class _FakeResult:
+            def first(self) -> None:
+                return None
+
+            def all(self) -> list[Any]:
+                return []
+
+            def __iter__(self) -> Any:
+                return iter(())
+
+        async def fake_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Stale snapshot: pretend SELECT-before-INSERT saw nothing,
+                # while the real DB already has the winner's row.
+                return _FakeResult()
+            return await real_exec(stmt, *args, **kwargs)  # type: ignore[no-any-return]
+
+        loser.exec = fake_exec  # type: ignore[method-assign]
+
+        cat = await get_or_create_category(loser, user_id, "Работа")
+        assert cat.id == winner_id
+        assert cat.name == "Работа"
+        # The savepoint rolled back; the outer transaction is still
+        # usable — we can issue further queries on the same session.
+        result = await real_exec(
+            select(Category).where(Category.user_id == user_id, Category.name == "Работа")
+        )
+        assert result.first() is not None
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_horizon_concurrent_safe(engine: None) -> None:
+    """Regression for R-NEW-I-2 (horizon flavour): parallel
+    ``get_or_create_horizon`` calls for the same ``(user_id, slug)`` from
+    different sessions must all return the same row.
+    """
+    sm = get_sessionmaker()
+    async with sm() as setup:
+        user, _ = await get_or_create_user(setup, telegram_id=302)
+        await setup.commit()
+        user_id = user.id
+        assert user_id is not None
+
+    async def one_pipeline() -> int | None:
+        async with sm() as session:
+            hor = await get_or_create_horizon(session, user_id, "today")
+            await session.commit()
+            return hor.id
+
+    results = await asyncio.gather(*[one_pipeline() for _ in range(5)])
+    assert len({r for r in results}) == 1, f"races produced different ids: {results}"
+    assert results[0] is not None
 
 
 @pytest.mark.asyncio
