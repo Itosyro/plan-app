@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
+import { Check, Clock, Flag, Move, Trash2 } from "lucide-react";
 import type { HorizonSlug, Task } from "../types";
-import { formatDue, priorityIcon } from "../lib/format";
+import { formatDue } from "../lib/format";
+import { priorityFlagColor } from "../lib/icons";
 import { haptic } from "../lib/telegram";
 
 const HORIZON_OPTIONS: { slug: HorizonSlug; label: string }[] = [
@@ -26,10 +28,11 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
   const [moveOpen, setMoveOpen] = useState(false);
   const due = formatDue(task.due_at, tz);
   const isDone = task.status === "done";
+  const showFlag = task.priority === "high" || task.priority === "low";
 
   // Phase 5.4b: drag-n-drop. The whole card is draggable; activation
   // is delayed (PointerSensor in App.tsx) so a quick tap on the
-  // ``Готово`` / ``Перенести`` buttons inside still fires onClick.
+  // checkbox / move / delete buttons inside still fires onClick.
   // Long-press → card lifts → user drags up to a horizon pill which
   // is registered as a drop target in HorizonTabs.
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -61,9 +64,11 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
       {...attributes}
       {...listeners}
       className={
-        "rounded-xl border border-tg-divider bg-tg-bg p-3 shadow-sm transition-opacity touch-manipulation " +
+        "rounded-2xl bg-tg-secondary/60 p-3.5 transition-all touch-manipulation " +
         (isDone ? "opacity-50 " : "opacity-100 ") +
-        (isDragging ? "shadow-xl ring-2 ring-tg-button/40 " : "")
+        (isDragging
+          ? "shadow-xl ring-2 ring-tg-button/40 bg-tg-bg "
+          : "active:bg-tg-secondary ")
       }
     >
       <div className="flex items-start gap-3">
@@ -78,46 +83,60 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
             })
           }
           className={
-            "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border " +
+            "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-colors " +
             (isDone
               ? "border-tg-button bg-tg-button text-tg-button-text"
-              : "border-tg-hint hover:border-tg-button")
+              : "border-tg-hint/60 hover:border-tg-button hover:bg-tg-button/5")
           }
         >
-          {isDone ? "✓" : ""}
+          {isDone && <Check size={14} strokeWidth={3} />}
         </button>
-        <div className="flex-1 min-w-0">
-          <div
-            className={
-              "break-words text-base leading-snug " +
-              (isDone ? "text-tg-hint line-through" : "text-tg-text")
-            }
-          >
-            <span className="mr-1.5">{priorityIcon(task.priority)}</span>
-            {task.title}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tg-hint">
-            {due && <span>📅 {due}</span>}
-            {task.category_name && (
-              <span className="rounded-full bg-tg-secondary px-2 py-0.5">
-                {task.category_name}
-              </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            {showFlag && (
+              <Flag
+                size={15}
+                strokeWidth={2}
+                aria-hidden
+                className={"mt-1 shrink-0 " + priorityFlagColor(task.priority)}
+              />
             )}
-            {task.horizon_slug && task.horizon_slug !== "today" && (
-              <span className="text-tg-hint">{task.horizon_slug}</span>
-            )}
+            <div
+              className={
+                "min-w-0 break-words text-[15px] leading-snug " +
+                (isDone ? "text-tg-hint line-through" : "text-tg-text")
+              }
+            >
+              {task.title}
+            </div>
           </div>
+          {(due || task.category_name) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tg-hint">
+              {due && (
+                <span className="inline-flex items-center gap-1">
+                  <Clock size={13} strokeWidth={2} aria-hidden />
+                  {due}
+                </span>
+              )}
+              {task.category_name && (
+                <span className="rounded-full bg-tg-bg px-2 py-0.5 text-[11px] text-tg-text/70">
+                  {task.category_name}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {!isDone && (
-        <div className="mt-3 flex items-center gap-2 border-t border-tg-divider pt-2">
+        <div className="mt-3 flex items-center gap-1 border-t border-tg-divider/50 pt-2">
           <button
             type="button"
             disabled={busy}
             onClick={() => setMoveOpen((v) => !v)}
-            className="rounded-md px-2 py-1 text-xs text-tg-link hover:bg-tg-secondary"
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-tg-link hover:bg-tg-bg"
           >
-            🔄 Перенести
+            <Move size={13} strokeWidth={2} aria-hidden />
+            Перенести
           </button>
           <button
             type="button"
@@ -128,9 +147,10 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
                 await onDelete(task.id);
               })
             }
-            className="rounded-md px-2 py-1 text-xs text-tg-destructive hover:bg-tg-secondary"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-tg-destructive hover:bg-tg-bg"
           >
-            🗑 Удалить
+            <Trash2 size={13} strokeWidth={2} aria-hidden />
+            Удалить
           </button>
         </div>
       )}
@@ -152,7 +172,7 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
                 "rounded-md px-2 py-1.5 text-xs " +
                 (h.slug === task.horizon_slug
                   ? "bg-tg-button/20 text-tg-button"
-                  : "bg-tg-secondary text-tg-text hover:bg-tg-secondary/80")
+                  : "bg-tg-bg text-tg-text hover:bg-tg-bg/70")
               }
             >
               {h.label}
