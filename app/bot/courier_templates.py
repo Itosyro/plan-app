@@ -6,43 +6,62 @@ courier — see ``docs/PROGRESS.md`` (Phase 0 closing decisions) and
 ``docs/PLAN.md`` § "Style of bot replies".
 
 PII rule: templates never reference user content directly.
+
+Onboarding rewrite (post Phase 6.x): tone is short, friendly, no
+awkward placeholders. The first prompt is a timezone inline keyboard
+(see ``app.bot.onboarding``), so the greeting itself is just one line
+above the buttons. Name is asked **after** tz so the user is already
+"in" before we ask for personal data.
 """
 
 from __future__ import annotations
 
 from typing import Final
 
+# Greeting shown alongside the timezone inline-keyboard.
 ONBOARDING_GREETING: Final[str] = (
-    "Привет! Я твой ассистент-планировщик.\n"
-    "Скидываешь голос или текст — раскладываю на задачи, заметки и напоминания.\n\n"
-    "Как тебя зовут? (просто имя — например, «Юсуф»)"
+    "Привет 👋\n"
+    "Я разбираю твои голосовые и текстовые мысли в задачи, "
+    "заметки и напоминания.\n\n"
+    "Сначала — часовой пояс. Выбери свой:"
 )
 
-ONBOARDING_ASK_TZ: Final[str] = (
-    "Приятно, {name}!\n"
-    "Какой у тебя часовой пояс? Напиши в формате IANA — например, "
-    "«Europe/Moscow», «Asia/Tashkent», «Asia/Almaty».\n\n"
-    "Это нужно, чтобы дайджесты и напоминания приходили в твоё время."
-)
+# After timezone is set via the keyboard, ask for a name. We don't
+# include the tz_label in this string (it lives in the keyboard's
+# acknowledgement edit, see ``onb_tz_callback``).
+ONBOARDING_ASK_NAME: Final[str] = "Готово.\n\nКак к тебе обращаться? Напиши имя или ник."
 
-ONBOARDING_BAD_TZ: Final[str] = (
-    "Не узнал такой часовой пояс. Попробуй ещё раз в формате IANA — "
-    "«Europe/Moscow», «Asia/Tashkent», «Asia/Almaty». "
+# Fallback when user typed name longer than allowed.
+ONBOARDING_BAD_NAME: Final[str] = "Слишком длинное. До 64 символов, пожалуйста."
+
+# After tz selection, if user pressed "Указать другой ✏️".
+ONBOARDING_ASK_CUSTOM_TZ: Final[str] = (
+    "Окей. Напиши свой часовой пояс в IANA-формате —\n"
+    "например, ``Europe/Berlin`` или ``America/New_York``.\n\n"
     "Список всех — https://nodatime.org/TimeZones."
 )
 
+# Custom-tz validation failure (legacy ``ONBOARDING_BAD_TZ`` is kept as
+# alias for back-compat with anything that imports it).
+ONBOARDING_BAD_TZ: Final[str] = (
+    "Не узнал такой часовой пояс. Попробуй ещё раз в IANA-формате —\n"
+    "например, ``Europe/Moscow`` или ``Asia/Tashkent``."
+)
+
+# Final confirmation. Short — full settings live behind /settings.
 ONBOARDING_DONE: Final[str] = (
-    "Готово, {name}. Записал часовой пояс {tz}.\n\n"
-    "Дефолты, которые поставил:\n"
-    "• утренний дайджест в 08:00, вечерний — в 21:00\n"
-    "• напоминания внутри дня — за 1 ч и за 15 мин до события\n"
-    "• напоминания на N дней вперёд — за 1 день и за 1 час\n"
-    "• критик включён в режиме «по уверенности» (порог 0.7)\n"
-    "• курьер — микс шаблонов и LLM\n"
-    "• «на этой неделе» = дедлайн воскресенье 23:59\n\n"
-    "Всё это потом можно будет поменять в /settings (когда сделаю эту команду).\n\n"
-    "AI-разбор подключу следующим шагом (Phase 2). А пока могу принимать "
-    "сообщения и складывать их во входящие — попробуй написать что-нибудь."
+    "Готово, {name}. Часовой пояс — {tz}.\n\n"
+    "Дайджесты: утром в 08:00, вечером в 21:00.\n"
+    "Поменять — /settings.\n\n"
+    "Скидывай мысли — голосом или текстом."
+)
+
+# Re-onboarding (already onboarded, runs /start again).
+ONBOARDING_ALREADY_DONE: Final[str] = (
+    "Уже знакомы, {name}.\n"
+    "Часовой пояс: {tz}.\n\n"
+    "Поменять часовой пояс — нажми кнопку. "
+    "Или просто пиши задачи как обычно."
 )
 
 TEXT_ACK_PHASE1: Final[str] = "Принял. AI-разбор подключу в Phase 2 — пока сохраняю во входящие."
@@ -50,7 +69,7 @@ TEXT_ACK_PHASE1: Final[str] = "Принял. AI-разбор подключу в
 HELP: Final[str] = (
     "Я — бот-планировщик. Принимаю текст и голос, раскладываю на задачи и заметки.\n\n"
     "Команды:\n"
-    "/start — настройка (имя + часовой пояс)\n"
+    "/start — настройка (часовой пояс + имя)\n"
     "/help — это сообщение\n"
     "/today — задачи на сегодня\n"
     "/tomorrow — задачи на завтра\n"
