@@ -2,38 +2,48 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-10):**
-> Phase 0..7b — **done и в проде**. Работает: голосовое/текстовое
+> **Status (на 2026-05-10, после PR #78 + #79):**
+> Phase 0..7c — **done и в проде**. Работает: голосовое/текстовое
 > сообщение → задачи + заметки + напоминания, утренний/вечерний
 > дайджест (с pinned live-update), команды `/today /week /...`,
 > callback-кнопки, /settings, **Mini-App** на `/app/` в стиле
 > Todoist (lucide-icons + capsule bottom nav + drag-n-drop +
-> per-horizon counts + CloudStorage prefs), **построчная**
-> (streaming) выдача ответов бота, **emoji reactions** как
-> ack/result-индикаторы, **quote replies** (`reply_parameters` +
-> `quote`), **онбординг через inline-клавиатуру** (12 популярных
-> CIS-часовых поясов + «Указать другой»). 306 тестов, ruff/mypy
-> clean, https://plan-app-t6nx.onrender.com .
+> per-horizon counts + CloudStorage prefs **+ настоящая Settings
+> страница** с PATCH /api/me и picker'ом часовых поясов),
+> **построчная** (streaming) выдача ответов бота, **emoji
+> reactions** как ack/result-индикаторы, **quote replies**
+> (`reply_parameters` + `quote`), **онбординг через inline-
+> клавиатуру** (12 популярных CIS-часовых поясов + «Указать другой»).
+> **323 теста**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
 >
 > Все critical (C-1..C-6) и important (I-1..I-8) findings из
-> `docs/REVIEW-2026-05-09-v2.md` — закрыты.
+> `docs/REVIEW-2026-05-09-v2.md` — закрыты. Плюс закрыты три
+> reminder-бага (см. PR #79 в PROGRESS.md): `в 12` без минут теперь
+> парсится, `is_reminder` пробрасывается в pipeline, `offset=0`
+> валиден.
 >
 > **Прод-операция:**
 > - Alembic migrations 0001..0008 накатаны на Neon.
-> - Render `startCommand` теперь авто-применяет `alembic upgrade
->   head` на каждом деплое (free plan не имеет preDeployCommand,
->   так что вписали в startCommand).
+> - Render `startCommand` авто-применяет `alembic upgrade head` на
+>   каждом деплое.
+> - Render env: `GROQ_API_KEYS` поддерживает comma-separated список
+>   из 1+ ключей. Для ротации на 3 ключа нужно вручную обновить
+>   на Render (юзер должен сделать).
 >
 > Что осталось:
-> - **Phase 7c** (Settings page в Mini-App) — **next** session.
-> - **Phase 7d** (Task detail + inline edit) — после 7c.
-> - **Phase 5.5** (FullCalendar) — после 7c/7d, на полу-готовом
->   состоянии (см. `devin/*-phase5-5-calendar` ветка).
-> - **Phase 8** (Graph view, Obsidian-style связи задач/категорий) —
->   future, по запросу пользователя; большой объём работы (force-
->   directed layout, edges, mobile gestures).
+> - **Phase 8** (voice/text-команды на удаление/перенос/изменение
+>   задач) — **next priority**, юзер просил. Нужен action-classifier
+>   + context-tracker + service-binding.
+> - **Slash-команды** (`/add`, `/done`, `/move`, `/del`) — короткий
+>   PR на ~150 LOC.
+> - **Excel export/import** + table-classifier — отдельная фаза.
+> - **Phase 7d** (Task detail + inline edit modal) — после 7c.
+> - **Phase 5.5** (FullCalendar) — есть полу-готовая ветка
+>   `devin/*-phase5-5-calendar`.
 > - Phase 7 polish (наблюдаемость + эвалы) — **частично**
 >   (structlog ✓, mypy strict ✓; golden-evals/DSPy/backup/Sentry ✗).
+> - **Brand design / design tokens** — ждём go-ahead от юзера, пока
+>   белая палитра.
 > - Minor M-1..M-9 из v2-ревью — открыты.
 
 ---
