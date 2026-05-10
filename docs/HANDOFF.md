@@ -2,10 +2,12 @@
 
 > Этот файл — **единственное**, что нужно прочитать, чтобы войти в курс дела. Всё остальное (`PLAN.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `IDEAS.md`) — детализация.
 >
-> **Самый свежий контекст:** [`docs/HANDOFF-2026-05-09-v9.md`](HANDOFF-2026-05-09-v9.md)
-> (Phase 5 + Phase 6.1-6.4, прод-миграции, авто-deploy с alembic).
+> **Самый свежий контекст:** [`docs/HANDOFF-2026-05-10-v10.md`](HANDOFF-2026-05-10-v10.md)
+> (Phase 7a онбординг с inline-keyboard + Phase 7b Mini-App design polish: lucide-icons, capsule bottom nav, cleaner cards. 306 тестов, белая палитра сохранена.)
 >
-> Если ты — нейронка, открывшая репо впервые: прочти **HANDOFF v9 → §0.1 (актуальный handoff)**, потом `docs/PROGRESS.md` (две верхние записи), потом [`docs/PLAN.md`](PLAN.md), потом [`docs/ARCHITECTURE.md`](ARCHITECTURE.md), потом [`.agents/skills/CATALOG.md`](../.agents/skills/CATALOG.md), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
+> Предыдущий: [`docs/HANDOFF-2026-05-09-v9.md`](HANDOFF-2026-05-09-v9.md) (Phase 5 + 6.1-6.4 + ops fix).
+>
+> Если ты — нейронка, открывшая репо впервые: прочти **v10 целиком** (там и что сделано, и что дальше, и список граблей), потом `docs/PROGRESS.md` (верхние 2-3 записи), потом `docs/ROADMAP.md` § Phase 7c/7d (next steps), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
 
 ---
 
