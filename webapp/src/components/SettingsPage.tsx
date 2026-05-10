@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
+  ChevronRight,
   Globe,
   Languages,
   MessageSquare,
@@ -26,6 +27,7 @@ import {
 import { ApiError, apiClient } from "../api/client";
 import { haptic } from "../lib/telegram";
 import type { Me, Timezone } from "../types";
+import { IconTile, type TileTone } from "./IconTile";
 
 // Option vocabularies. These match the labels used in
 // app/bot/routers/settings.py::SETTING_OPTIONS so the bot and the
@@ -133,16 +135,17 @@ export function SettingsPage({ me, onUpdated }: Props) {
   const settings = me.settings;
 
   return (
-    <div className="flex flex-col gap-4 pb-4">
+    <div className="flex flex-col gap-5 pb-4">
       {error && (
-        <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100">
           {error}
         </div>
       )}
 
-      <SettingsSection icon={User} title="Основные">
+      <SettingsSection title="Основные">
         <SettingsTextRow
           icon={User}
+          tone="indigo"
           label="Имя"
           value={me.display_name ?? ""}
           placeholder="Без имени"
@@ -162,6 +165,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
         <SettingsTimezoneRow
           icon={Globe}
+          tone="blue"
           label="Часовой пояс"
           currentIana={me.tz}
           currentLabel={tzLabel}
@@ -182,9 +186,10 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection icon={Bell} title="Дайджест">
+      <SettingsSection title="Дайджест">
         <SettingsSelectRow
           icon={Sun}
+          tone="orange"
           label="Утром"
           value={settings?.morning_digest_at ?? "08:00"}
           options={MORNING_DIGEST_OPTIONS}
@@ -195,6 +200,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
         <SettingsSelectRow
           icon={Sunset}
+          tone="amber"
           label="Вечером"
           value={settings?.evening_digest_at ?? "21:00"}
           options={EVENING_DIGEST_OPTIONS}
@@ -205,9 +211,10 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection icon={MessageSquare} title="Ответы бота">
+      <SettingsSection title="Ответы бота">
         <SettingsSelectRow
           icon={Languages}
+          tone="teal"
           label="Источник"
           value={settings?.response_style_source ?? "mix"}
           options={RESPONSE_STYLE_OPTIONS}
@@ -218,6 +225,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
         <SettingsSelectRow
           icon={MessageSquare}
+          tone="emerald"
           label="Тон"
           value={settings?.courier_template_style ?? "neutral"}
           options={COURIER_TEMPLATE_OPTIONS}
@@ -228,9 +236,10 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection icon={ShieldCheck} title="Поведение">
+      <SettingsSection title="Поведение">
         <SettingsSelectRow
           icon={ShieldCheck}
+          tone="violet"
           label="Критик"
           value={settings?.critic_mode ?? "confidence"}
           options={CRITIC_MODE_OPTIONS}
@@ -239,6 +248,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
         <SettingsSelectRow
           icon={Moon}
+          tone="slate"
           label="«На неделе»"
           value={settings?.week_due_semantic ?? "deadline_sunday"}
           options={WEEK_DUE_SEMANTIC_OPTIONS}
@@ -248,29 +258,87 @@ export function SettingsPage({ me, onUpdated }: Props) {
           }
         />
       </SettingsSection>
+
+      <SettingsSection title="Уведомления">
+        <BellRow />
+      </SettingsSection>
     </div>
   );
 }
 
 // ── Section wrapper ─────────────────────────────────────────────────
+//
+// Each section now renders its rows as **independent bento cards**
+// separated by a small gap, rather than one card with internal
+// dividers. The section title sits above the cards, in the same
+// hint-color uppercase style that iOS Settings uses.
 
 interface SectionProps {
-  icon: LucideIcon;
   title: string;
   children: React.ReactNode;
 }
 
-function SettingsSection({ icon: Icon, title, children }: SectionProps) {
+function SettingsSection({ title, children }: SectionProps) {
   return (
-    <section className="overflow-hidden rounded-2xl bg-tg-secondary/60">
-      <header className="flex items-center gap-2 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-tg-hint">
-        <Icon size={14} strokeWidth={2} aria-hidden />
-        <span>{title}</span>
+    <section>
+      <header className="mb-2 px-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
+        {title}
       </header>
-      <div className="flex flex-col divide-y divide-tg-divider/60">
-        {children}
-      </div>
+      <div className="flex flex-col gap-1.5">{children}</div>
     </section>
+  );
+}
+
+// ── Card row primitive ──────────────────────────────────────────────
+
+interface CardRowProps {
+  children: React.ReactNode;
+  as?: "div" | "label" | "button" | "form";
+  disabled?: boolean;
+  onClick?: () => void;
+}
+
+function CardRow({ children, as = "div", disabled, onClick }: CardRowProps) {
+  const className =
+    "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-black/5 transition-all duration-200 " +
+    (disabled ? "opacity-60 " : "") +
+    (onClick && !disabled ? "active:scale-[0.99] hover:bg-bento-card/90" : "");
+  if (as === "button") {
+    return (
+      <button
+        type="button"
+        className={"text-left " + className}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {children}
+      </button>
+    );
+  }
+  if (as === "label") {
+    return <label className={className}>{children}</label>;
+  }
+  return <div className={className}>{children}</div>;
+}
+
+// ── Bell info row (static for now) ──────────────────────────────────
+
+function BellRow() {
+  return (
+    <CardRow>
+      <span className="flex min-w-0 flex-1 items-center gap-3 text-[15px] text-tg-text">
+        <IconTile icon={Bell} tone="rose" size="md" />
+        <span className="min-w-0">
+          <span className="block truncate font-medium">Напоминания</span>
+          <span className="block truncate text-[12px] text-tg-hint">
+            Управляются ботом / голосом
+          </span>
+        </span>
+      </span>
+      <span className="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600">
+        Включены
+      </span>
+    </CardRow>
   );
 }
 
@@ -278,6 +346,7 @@ function SettingsSection({ icon: Icon, title, children }: SectionProps) {
 
 interface SelectRowProps {
   icon: LucideIcon;
+  tone: TileTone;
   label: string;
   value: string;
   options: { value: string; label: string }[];
@@ -286,7 +355,8 @@ interface SelectRowProps {
 }
 
 function SettingsSelectRow({
-  icon: Icon,
+  icon,
+  tone,
   label,
   value,
   options,
@@ -294,18 +364,13 @@ function SettingsSelectRow({
   onChange,
 }: SelectRowProps) {
   return (
-    <label
-      className={
-        "flex items-center justify-between gap-3 px-4 py-3 " +
-        (disabled ? "opacity-60" : "")
-      }
-    >
-      <span className="flex min-w-0 items-center gap-3 text-sm text-tg-text">
-        <Icon size={16} strokeWidth={2} className="text-tg-hint" aria-hidden />
-        <span className="truncate">{label}</span>
+    <CardRow as="label" disabled={disabled}>
+      <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+        <IconTile icon={icon} tone={tone} size="md" />
+        <span className="truncate font-medium">{label}</span>
       </span>
       <select
-        className="shrink-0 rounded-lg bg-tg-bg px-2 py-1.5 text-sm font-medium text-tg-text shadow-sm focus:outline-none focus:ring-2 focus:ring-tg-button"
+        className="font-display shrink-0 rounded-xl bg-bento px-3 py-1.5 text-[14px] font-medium tracking-tight text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
@@ -316,7 +381,7 @@ function SettingsSelectRow({
           </option>
         ))}
       </select>
-    </label>
+    </CardRow>
   );
 }
 
@@ -324,6 +389,7 @@ function SettingsSelectRow({
 
 interface TextRowProps {
   icon: LucideIcon;
+  tone: TileTone;
   label: string;
   value: string;
   placeholder: string;
@@ -335,7 +401,8 @@ interface TextRowProps {
 }
 
 function SettingsTextRow({
-  icon: Icon,
+  icon,
+  tone,
   label,
   value,
   placeholder,
@@ -352,39 +419,35 @@ function SettingsTextRow({
 
   if (!editing) {
     return (
-      <button
-        type="button"
-        className="flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-tg-secondary"
-        onClick={onEdit}
-        disabled={pending}
-      >
-        <span className="flex min-w-0 items-center gap-3 text-sm text-tg-text">
-          <Icon size={16} strokeWidth={2} className="text-tg-hint" aria-hidden />
-          <span className="truncate">{label}</span>
+      <CardRow as="button" disabled={pending} onClick={onEdit}>
+        <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+          <IconTile icon={icon} tone={tone} size="md" />
+          <span className="truncate font-medium">{label}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-2 text-sm text-tg-hint">
-          <span className="max-w-[180px] truncate">
+        <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
+          <span className="max-w-[160px] truncate">
             {value || placeholder}
           </span>
-          <Pencil size={14} strokeWidth={2} aria-hidden />
+          <Pencil size={13} strokeWidth={2.25} aria-hidden />
+          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
         </span>
-      </button>
+      </CardRow>
     );
   }
 
   return (
     <form
-      className="flex items-center gap-2 px-4 py-3"
+      className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
       onSubmit={(e) => {
         e.preventDefault();
         void onSubmit(draft);
       }}
     >
-      <Icon size={16} strokeWidth={2} className="shrink-0 text-tg-hint" aria-hidden />
+      <IconTile icon={icon} tone={tone} size="md" />
       <input
         autoFocus
         type="text"
-        className="min-w-0 flex-1 rounded-lg bg-tg-bg px-2 py-1.5 text-sm text-tg-text shadow-sm focus:outline-none focus:ring-2 focus:ring-tg-button"
+        className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
         value={draft}
         maxLength={128}
         placeholder={placeholder}
@@ -400,14 +463,14 @@ function SettingsTextRow({
       <button
         type="button"
         onClick={onCancel}
-        className="shrink-0 rounded-lg px-2 py-1.5 text-sm text-tg-hint"
+        className="ease-apple shrink-0 rounded-xl px-2.5 py-1.5 text-[13px] text-tg-hint transition-all duration-200 active:scale-[0.96]"
         disabled={pending}
       >
         Отмена
       </button>
       <button
         type="submit"
-        className="shrink-0 rounded-lg bg-tg-text px-2 py-1.5 text-sm font-medium text-tg-bg disabled:opacity-50"
+        className="ease-apple shrink-0 rounded-xl bg-tg-button px-2.5 py-1.5 text-[13px] font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
         disabled={pending}
       >
         Сохранить
@@ -420,6 +483,7 @@ function SettingsTextRow({
 
 interface TimezoneRowProps {
   icon: LucideIcon;
+  tone: TileTone;
   label: string;
   currentIana: string;
   currentLabel: string;
@@ -432,7 +496,8 @@ interface TimezoneRowProps {
 }
 
 function SettingsTimezoneRow({
-  icon: Icon,
+  icon,
+  tone,
   label,
   currentIana,
   currentLabel,
@@ -458,38 +523,34 @@ function SettingsTimezoneRow({
 
   if (!editing) {
     return (
-      <button
-        type="button"
-        className="flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-tg-secondary"
-        onClick={onEdit}
-        disabled={pending}
-      >
-        <span className="flex min-w-0 items-center gap-3 text-sm text-tg-text">
-          <Icon size={16} strokeWidth={2} className="text-tg-hint" aria-hidden />
-          <span className="truncate">{label}</span>
+      <CardRow as="button" disabled={pending} onClick={onEdit}>
+        <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+          <IconTile icon={icon} tone={tone} size="md" />
+          <span className="truncate font-medium">{label}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-2 text-sm text-tg-hint">
-          <span className="max-w-[180px] truncate">{currentLabel}</span>
-          <Pencil size={14} strokeWidth={2} aria-hidden />
+        <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
+          <span className="max-w-[160px] truncate">{currentLabel}</span>
+          <Pencil size={13} strokeWidth={2.25} aria-hidden />
+          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
         </span>
-      </button>
+      </CardRow>
     );
   }
 
   return (
     <form
-      className="flex flex-col gap-2 px-4 py-3"
+      className="ease-apple flex flex-col gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
       onSubmit={(e) => {
         e.preventDefault();
         void onSubmit(draft);
       }}
     >
       <div className="flex items-center gap-2">
-        <Icon size={16} strokeWidth={2} className="shrink-0 text-tg-hint" aria-hidden />
+        <IconTile icon={icon} tone={tone} size="md" />
         {mode === "popular" ? (
           <select
             autoFocus
-            className="min-w-0 flex-1 rounded-lg bg-tg-bg px-2 py-1.5 text-sm text-tg-text shadow-sm focus:outline-none focus:ring-2 focus:ring-tg-button"
+            className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
             value={draft}
             disabled={pending || timezones.length === 0}
             onChange={(e) => setDraft(e.target.value)}
@@ -504,7 +565,7 @@ function SettingsTimezoneRow({
           <input
             autoFocus
             type="text"
-            className="min-w-0 flex-1 rounded-lg bg-tg-bg px-2 py-1.5 text-sm text-tg-text shadow-sm focus:outline-none focus:ring-2 focus:ring-tg-button"
+            className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
             value={draft}
             maxLength={64}
             placeholder="Europe/Moscow"
@@ -520,10 +581,10 @@ function SettingsTimezoneRow({
           />
         )}
       </div>
-      <div className="flex items-center justify-between gap-2 text-xs">
+      <div className="flex items-center justify-between gap-2 text-[13px]">
         <button
           type="button"
-          className="text-tg-link"
+          className="ease-apple rounded-xl px-2 py-1 text-tg-link transition-all duration-200 active:scale-[0.96]"
           onClick={() => setMode((m) => (m === "popular" ? "custom" : "popular"))}
           disabled={pending}
         >
@@ -533,14 +594,14 @@ function SettingsTimezoneRow({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg px-2 py-1.5 text-tg-hint"
+            className="ease-apple rounded-xl px-2.5 py-1.5 text-tg-hint transition-all duration-200 active:scale-[0.96]"
             disabled={pending}
           >
             Отмена
           </button>
           <button
             type="submit"
-            className="rounded-lg bg-tg-text px-2 py-1.5 font-medium text-tg-bg disabled:opacity-50"
+            className="ease-apple rounded-xl bg-tg-button px-2.5 py-1.5 font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
             disabled={pending}
           >
             Сохранить
