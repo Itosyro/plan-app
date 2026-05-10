@@ -144,6 +144,66 @@ def test_segodnya_v_hhmm_future_still_today() -> None:
     assert result.horizon_hint == "today"
 
 
+def test_bare_hour_v_12() -> None:
+    """«в 12» (no minutes) is the dominant Russian way to say "at noon".
+
+    Before the fix the time-fragment regex required ``в HH:MM`` so
+    "напомни про обед в 12" returned ``None`` and the bot silently
+    persisted a task with no due_at and no reminder. Regression: the
+    bare-hour pattern must be picked up and normalised to ``HH:00``.
+    """
+    result = resolve_time("напомни про обед в 12", _TZ, now=_NOW)
+    assert result is not None, "bare-hour «в 12» must resolve"
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 12
+    assert result.resolved_dt.minute == 0
+    assert result.is_reminder is True
+
+
+def test_bare_hour_v_8() -> None:
+    """«в 8» (single-digit hour) — same fix applies."""
+    result = resolve_time("напомни в 8 принять лекарство", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 8
+    assert result.resolved_dt.minute == 0
+    assert result.is_reminder is True
+
+
+def test_v_12_chasov() -> None:
+    """«в 12 часов» — explicit "12 o'clock" wording."""
+    result = resolve_time("обед в 12 часов", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 12
+    assert result.resolved_dt.minute == 0
+
+
+def test_napominanie_noun_form() -> None:
+    """«поставь напоминание» (noun form) must set is_reminder=True.
+
+    Before the fix the regex ``\\bнапомн`` matched the verb forms but
+    not the noun «напоминание» (no «н» right after «напоми»). Users say
+    "поставь напоминание ..." just as often as "напомни ...".
+    """
+    result = resolve_time("поставь напоминание про обед в 12:00", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.is_reminder is True
+
+
+def test_v_12_does_not_match_dotted_date() -> None:
+    """``в 12.05`` must NOT be normalised to ``в 12:00`` (it's a date)."""
+    # Dotted notation is interpreted as time by dateparser when the second
+    # part is a valid minute count, so this test pins down that we don't
+    # rewrite the user-supplied minutes to ``:00``.
+    result = resolve_time("совещание в 12:30", _TZ, now=_NOW)
+    assert result is not None
+    assert result.resolved_dt is not None
+    assert result.resolved_dt.hour == 12
+    assert result.resolved_dt.minute == 30
+
+
 def test_weekday_on_same_weekday_still_rolls_forward() -> None:
     """«во вторник» when today *is* Tuesday must still resolve to NEXT
     Tuesday — preserves the original intent of the rollover branch.

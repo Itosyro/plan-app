@@ -163,11 +163,31 @@ def _select_reminder_offsets(
     """Pick which minute-offsets to schedule reminders at.
 
     Explicit offsets from the classifier (LLM-detected "напомни за 30 минут")
-    win over the user's defaults. Otherwise fall back to ``same_day`` (for
-    today/tomorrow horizons) or ``multi_day`` (for week/month/year/someday).
+    win over the user's defaults. ``0`` is preserved — it means "fire AT
+    ``due_at``" and is the canonical offset for the bare "напомни мне в
+    12:00" use case where the user wants exactly one reminder, at the
+    due time itself.
+
+    Defaults are drawn from ``UserSettings.default_reminder_offsets``
+    (or ``DEFAULT_REMINDER_OFFSETS`` as a fallback) and only apply when
+    the classifier did not request explicit offsets. Defaults are
+    *advance-warning* offsets (e.g. 60 minutes before), so a non-positive
+    value there is dropped.
     """
-    if cr.reminder_offsets:
-        return [int(o) for o in cr.reminder_offsets if int(o) > 0]
+    if cr.reminder_offsets is not None:
+        # Explicit list — preserve order and de-duplicate while keeping 0
+        # as a legitimate "fire at due_at" sentinel. Negative values are
+        # nonsense (would imply firing *after* the due time) and are
+        # filtered out.
+        seen: set[int] = set()
+        result: list[int] = []
+        for o in cr.reminder_offsets:
+            v = int(o)
+            if v < 0 or v in seen:
+                continue
+            seen.add(v)
+            result.append(v)
+        return result
     defaults = default_offsets or DEFAULT_REMINDER_OFFSETS
     bucket = "same_day" if cr.horizon in {"today", "tomorrow"} else "multi_day"
     raw = defaults.get(bucket) or []
@@ -201,7 +221,10 @@ async def schedule_reminders(
     ref_now = to_naive_utc(now) if now is not None else utcnow_naive()
     created: list[Reminder] = []
     for offset in offsets:
-        if offset <= 0:
+        # ``offset == 0`` is the canonical "напомни в точно в это время"
+        # case (fire AT ``due_at``). Negative offsets are nonsense
+        # (would imply firing *after* the due time) and are skipped.
+        if offset < 0:
             continue
         fire_at = ref_due - timedelta(minutes=offset)
         if fire_at <= ref_now:

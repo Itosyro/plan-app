@@ -19,6 +19,35 @@ from app.shared.logging import get_logger
 logger = get_logger(__name__)
 
 # Препроцесс: замена русских идиом на формы, понятные dateparser
+# Bare-hour normalisation: ``в 12`` (without :MM) is the dominant
+# Russian phrasing for "at twelve o'clock" but dateparser treats the
+# fragment as a date — we expand it to ``в 12:00`` so it parses as a
+# time-of-day. Run before the other replacements so subsequent
+# substitutions see the canonical form. Lookahead avoids matching
+# ranges like ``в 12 30`` (spaced-time) and dotted-date forms like
+# ``в 12.05``.
+_BARE_HOUR_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"\b(в|во)\s+(\d{1,2})\b(?!\s*[:.]\s*\d|\s+\d|\s*час)",
+            re.I,
+        ),
+        r"\1 \2:00",
+    ),
+    # ``в 12 часов`` / ``в 12 ч.`` → ``в 12:00`` so dateparser sees a
+    # bare time. Russian users say "в 12 часов" interchangeably with
+    # "в 12". The trailing ``часов``/``часа``/``час`` token is
+    # otherwise ignored by dateparser, but specifying ``:00`` makes
+    # the parse deterministic.
+    (
+        re.compile(
+            r"\b(в|во)\s+(\d{1,2})\s+час(?:ов|а|у|е|ом)?\b",
+            re.I,
+        ),
+        r"\1 \2:00",
+    ),
+]
+
 _REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bчерез\s+полчаса\b", re.I), "через 30 минут"),
     (re.compile(r"\bчерез\s+полтора\s+часа\b", re.I), "через 1 час 30 минут"),
@@ -59,7 +88,13 @@ _TIME_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(завтра(?:\s+в\s+\d{1,2}[:.]\d{2})?)", re.I),
     re.compile(r"(послезавтра(?:\s+в\s+\d{1,2}[:.]\d{2})?)", re.I),
     re.compile(r"(сегодня(?:\s+в\s+\d{1,2}[:.]\d{2})?)", re.I),
+    # Match ``в HH:MM`` first (more specific), then bare ``в HH`` /
+    # ``в HH часов``. The bare-hour pattern is preprocessed to
+    # ``в HH:00`` before dateparser sees it; here we only need the
+    # *fragment extractor* to grab the right slice of the user text.
     re.compile(r"(в\s+\d{1,2}[:.]\d{2})", re.I),
+    re.compile(r"((?:в|во)\s+\d{1,2}\s+час(?:ов|а|у|е|ом)?)", re.I),
+    re.compile(r"((?:в|во)\s+\d{1,2})\b(?!\s*[:.]\s*\d|\s+\d)", re.I),
     re.compile(
         r"(до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья))", re.I
     ),
@@ -90,6 +125,8 @@ def _preprocess(
     "вечером" mean. See ``docs/REVIEW-2026-05-09.md::M-6``.
     """
     result = text
+    for pattern, repl in _BARE_HOUR_PATTERNS:
+        result = pattern.sub(repl, result)
     for pattern, replacement in _REPLACEMENTS:
         # Override anchor replacements with per-user values.
         if pattern.pattern == r"\bвечером\b":
@@ -183,8 +220,11 @@ def resolve_time(
 
     horizon_hint = _horizon_from_delta(now, dt)
 
-    # Проверяем, есть ли в тексте «напомни» / «напомнить»
-    is_reminder = bool(re.search(r"\bнапомн", text, re.I))
+    # Detect explicit reminder intent. Matches «напомни», «напомнить»,
+    # «напомню», «напоминание», «напоминай», «поставь напоминание»,
+    # «поставь напоминалку», «напоминалку». The ``\bнапомн`` prefix
+    # covers the verb forms; ``\bнапомина`` covers the noun forms.
+    is_reminder = bool(re.search(r"\b(?:напомн|напомина)", text, re.I))
 
     logger.info(
         "time_resolver.done",
