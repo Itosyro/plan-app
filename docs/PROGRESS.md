@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-05-10 — docs: mega-review v3 после мерджа bento-редизайна (PR-A)
+
+Полное ревью репо после мерджа PR #83. Результат — отчёт
+`docs/REVIEW-2026-05-10.md` (~7k слов): сверка всех находок из трёх
+предыдущих ревью (всё закрыто, кроме `_pluralize`-«элемент»), плюс
+~16 новых пунктов сгруппированных под roadmap PR-B → PR-F.
+
+Кода не правил — это аналитический PR. Финальный baseline:
+- `uv run ruff format --check . && uv run ruff check . && uv run mypy app`
+  все зелёные.
+- `uv run pytest -q` — 323 passed.
+- `cd webapp && npm run typecheck && npm run build` — зелёные,
+  bundle 219KB JS / 20KB CSS.
+
+Ключевые выводы для следующих PR-ов:
+- **PR-B (UX-итерация):** упрощение шапки, спрятать Move/Delete за
+  detail page, кастомный bottom-sheet picker вместо нативных `<select>`,
+  bottom nav в стиле «иконка сверху + подпись снизу», новая страница
+  деталей задачи (бекенд уже готов, только фронт).
+- **PR-C (Заметки UI):** модель `Note` и `/api/notes` уже есть, нужен
+  только новый таб в BottomNav + страница `NotesPage` + детальный
+  экран. Плюс `DELETE /api/notes/{id}` (отсутствует).
+- **PR-D (Корзина):** новая колонка `deleted_at` на Task/Note/Reminder
+  + миграция, partial-индекс, переписать 6 SELECT-путей под фильтр,
+  worker `purge_trash` (24h), новый роутер `/api/trash`, страница
+  `TrashPage` внизу настроек.
+- **PR-E (Бот):** `build_summary` отдаёт структуру вместо строки;
+  каждое сообщение — обычный текст + inline-keyboard с
+  `☐ → ✅` тогглами вместо «бирок-пинов»; переписать тексты в
+  `courier_templates.py` дружелюбнее; новое опциональное поле
+  `first_step` в `ClassifierResult` (фича «make it concrete»);
+  настройка `concretize_tasks` на `UserSettings`.
+- **PR-F (NLU + multi-provider):** перерайт `splitter.md` с ≥6
+  негативными примерами + регресс-тест; абстракция `LLMKeyRouter[P]`
+  на провайдера (Groq + OpenRouter), per-stage маршрутизация через
+  env (`PLAN_LLM_SPLITTER_ROUTING=…`); 3-стадийный critic-chain
+  (semantic / temporal / dedup) на разных моделях; ротация
+  N OpenRouter аккаунтов с graceful fallback на Groq.
+
+См. `docs/HANDOFF-2026-05-10-v13.md` — там полный контекст для
+следующего агента (запрос юзера, мой разбор, ответы юзера, детальные
+acceptance criteria по каждому PR).
+
+---
+
 ## 2026-05-10 — feat(webapp): bento redesign foundation (WIP, branch `…-miniapp-bento-redesign`)
 
 **Статус: незавершено.** На ветке `devin/1778436411-miniapp-bento-redesign`
