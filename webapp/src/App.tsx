@@ -6,7 +6,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CategoryFilter } from "./components/CategoryFilter";
@@ -316,7 +316,8 @@ export default function App() {
             />
             {tasks.length === 0 ? (
               <EmptyState
-                emoji="🎉"
+                icon={Sparkles}
+                tone="emerald"
                 title="Ничего на горизонте"
                 hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
               />
@@ -339,6 +340,7 @@ export default function App() {
         ) : activeTab === "calendar" ? (
           <ComingSoon
             icon={CalendarDays}
+            tone="violet"
             title="Календарь скоро"
             description="Задачи с датами в сетке на месяц и неделю с drag-n-drop."
           />

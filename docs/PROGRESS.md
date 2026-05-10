@@ -6,6 +6,102 @@
 
 ---
 
+## 2026-05-10 — feat(webapp): bento redesign foundation (WIP, branch `…-miniapp-bento-redesign`)
+
+**Статус: незавершено.** На ветке `devin/1778436411-miniapp-bento-redesign`
+лежит черновой коммит — фундамент под Apple-Bento редизайн Mini-App.
+Юзер попросил остановиться раньше, чем мы дошли до TaskCard / Settings /
+CategoryFilter / EmptyState. Никто не мерджит — это база для следующего
+агента.
+
+Что уже есть:
+- `webapp/package.json`: добавлена зависимость
+  `@fontsource-variable/inter@^5.2.8` — единый Variable-файл с `opsz`-осью,
+  отдаёт и Inter Text (опт.размер 14), и Inter Display (опт.размер 32),
+  с кириллическим subset'ом. Self-hosted, без Google Fonts CDN.
+- `webapp/src/index.css`: полностью переписан. Импорт `opsz.css`,
+  переменные `--bento-bg` / `--bento-card` (берут значения из Telegram
+  theme + iOS-fallback `#F2F2F7`/`#FFFFFF`), глобальное
+  `font-feature-settings: "cv11", "ss01", "ss03"` + `font-optical-sizing: auto`.
+  Утилиты `.font-display` (opsz=32, letter-spacing -0.02em),
+  `.tabular`, `.ease-spring`, `.ease-apple`.
+- `webapp/tailwind.config.js`: расширен `fontFamily.sans` (Inter Variable
+  во главе стека), добавлены токены цвета `bento` / `bento-card`,
+  borderRadius `2.5xl`/`4xl`, boxShadow `bento`/`bento-lg`/`island`.
+  Цвет `tg-secondary` теперь по умолчанию `#f2f2f7` (был `#f4f4f5`),
+  `tg-hint` — `#8e8e93` (iOS systemGray) вместо `#6b7280`.
+- `webapp/src/components/IconTile.tsx` (НОВЫЙ): примитив для цветной
+  rounded-square плашки с lucide-иконкой. 11 тонов
+  (violet/indigo/blue/sky/teal/emerald/amber/orange/rose/pink/slate),
+  3 размера (sm/md/lg). Tailwind видит литеральные имена классов
+  через `TONE_BG`-словари → ничего не теряется при tree-shake.
+- `webapp/src/components/BottomNav.tsx`: floating-island как на
+  референсе Mira. Полупрозрачный bento-card фон, `backdrop-blur-xl`,
+  `shadow-island`, `ring-1 ring-black/5`, активный таб — `bg-tg-button/10`
+  с `text-tg-button`. Лейбл показывается только на активном табе.
+  `transition-all duration-300 ease-apple active:scale-[0.96]`.
+- `webapp/src/components/Header.tsx`: переписан — крупный display-заголовок
+  (`font-display text-[28px]`), под ним hint-subtitle. Поддержан опц.
+  пропс `greeting` (для будущего «Доброе утро, …»).
+- `webapp/src/components/HorizonTabs.tsx`: pills с tone-coded активным
+  состоянием (`HORIZON_TONE`: today=orange, tomorrow=amber, week=violet,
+  month=indigo, year=blue, someday=slate). Активный pill — tinted
+  background соответствующего тона + ring + shadow. Inactive — белая
+  карточка с `ring-1 ring-black/5`. Бейдж счётчика — tabular-nums.
+
+Что НЕ переделано (и нужно следующему агенту):
+- `TaskCard.tsx` — старый стиль `rounded-2xl bg-tg-secondary/60`.
+- `CategoryFilter.tsx` — старые пилюли с border'ами.
+- `SettingsPage.tsx` — старый секционный layout, без icon-tile'ов.
+- `EmptyState.tsx` — крупный emoji + текст, без bento-карточки.
+- `App.tsx` — общий padding/spacing страницы.
+
+Tests: 323 passing (как до правок — никаких python-изменений).
+`npm run typecheck && npm run build` — зелёные. Bundle размер
++~120KB сырых woff2 (cyrillic+latin subsets), ~270KB уже сжатого
+не считаем — браузер тянет только нужный subset.
+
+См. `docs/HANDOFF-2026-05-10-v12.md` — там детали и пошаговый план.
+
+---
+
+## 2026-05-10 — Phase 8b: slash-команды для quick-input + Render keep-alive (PR #82)
+
+Цель — закрыть две вещи одним PR'ом:
+- **Quick-input через слэш-команды** (план §8b): `/add /done /del
+  /move /postpone` — чтобы юзер мог писать `/done молоко` без
+  открывания Mini-App.
+- **Cold-start на Render Free**: если 15 минут не было трафика,
+  dyno засыпает, и при открытии Mini-App юзер видит экран
+  «Render запускает приложение…» на 30-60 секунд. Прокидываем
+  GitHub Actions cron-ping каждые 10 минут.
+
+Что сделано:
+- `app/bot/routers/commands.py`: 5 новых хендлеров + парсер
+  `parse_horizon` (HORIZON_ALIASES в RU/EN: сегодня/today,
+  завтра/tomorrow, неделя/week, …) + `parse_move_args` (split
+  args на query+horizon, validate). Обновлён `HELP`.
+- `app/bot/routers/_pipeline.py`: вынесен `enqueue_text_pipeline`
+  helper — общий код между catch-all-text и `/add` (одинаковый UX:
+  reaction ack, ⏳ placeholder, streaming reply, success/error).
+- `app/bot/routers/text.py`: остался тонкий wrapper, дёргает
+  `enqueue_text_pipeline`. Сократился с 162 до 35 строк.
+- `app/bot/courier_templates.py::HELP`: переписан, секция
+  «⚡ Быстрый ввод» с новыми командами.
+- `.github/workflows/keepalive.yml` (НОВЫЙ): cron `*/10 * * * *`,
+  curl на `/healthz` и `/app/`. Concurrency-group `keepalive`,
+  не cancel-in-progress, timeout 3 мин. Manual dispatch разрешён.
+- `tests/test_commands.py`: +13 тестов (parse_horizon round-trip,
+  Russian aliases, case-insensitivity, parse_move_args edge-cases,
+  service-composition для done/del/move через find_task_by_query,
+  cross-user isolation).
+- `tests/test_voice_router.py`: обновлены docstring'и и assertions
+  (читаем `_pipeline.py`, не `text.py`).
+
+Tests: 323 → 334 passing, ruff/mypy clean, webapp build OK.
+
+---
+
 ## 2026-05-10 — fix(reminders): «напомни в 12» actually creates a reminder row (PR #79)
 
 Три бага в одном пользовательском сценарии («напоминания не работают»):

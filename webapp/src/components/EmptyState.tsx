@@ -1,15 +1,43 @@
+import { Sparkles, type LucideIcon } from "lucide-react";
+import { IconTile, type TileTone } from "./IconTile";
+
 interface Props {
-  emoji: string;
+  // Backwards-compatible: callers can still pass an emoji string, but
+  // new usage should pass ``icon`` so the empty state matches the
+  // bento illustration style.
+  emoji?: string;
+  icon?: LucideIcon;
+  tone?: TileTone;
   title: string;
   hint: string;
 }
 
-export function EmptyState({ emoji, title, hint }: Props) {
+// Bento empty-state card. Large IconTile illustration + display
+// heading + soft hint. Sits inside a rounded card on the bento
+// background so it reads as "intentional empty" rather than a gap.
+export function EmptyState({
+  emoji,
+  icon,
+  tone = "slate",
+  title,
+  hint,
+}: Props) {
+  const Icon: LucideIcon = icon ?? Sparkles;
   return (
-    <div className="mt-12 flex flex-col items-center px-6 text-center">
-      <div className="text-5xl">{emoji}</div>
-      <h2 className="mt-3 text-lg font-medium text-tg-text">{title}</h2>
-      <p className="mt-1 text-sm text-tg-hint">{hint}</p>
+    <div className="mt-8 flex flex-col items-center rounded-3xl bg-bento-card px-6 py-10 text-center shadow-bento ring-1 ring-black/5">
+      {emoji && !icon ? (
+        <div aria-hidden className="mb-3 text-5xl">
+          {emoji}
+        </div>
+      ) : (
+        <IconTile icon={Icon} tone={tone} size="lg" label={title} />
+      )}
+      <h2 className="font-display mt-4 text-[20px] font-semibold tracking-tight text-tg-text">
+        {title}
+      </h2>
+      <p className="mt-1.5 max-w-xs text-[14px] leading-relaxed text-tg-hint">
+        {hint}
+      </p>
     </div>
   );
 }
