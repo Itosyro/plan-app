@@ -1,3 +1,5 @@
+@import "@fontsource-variable/inter/opsz.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,18 +8,41 @@
 :root {
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Bento background: a soft tinted grey. We default to iOS-style
+     systemGroupedBackground (#F2F2F7) and let Telegram override via
+     the secondary-bg-color when the client provides it. */
+  --bento-bg: var(--tg-theme-secondary-bg-color, #f2f2f7);
+  --bento-card: var(--tg-theme-bg-color, #ffffff);
 }
 
 html,
 body,
 #root {
   height: 100%;
-  background-color: var(--tg-theme-bg-color, #ffffff);
-  color: var(--tg-theme-text-color, #111827);
+  background-color: var(--bento-bg);
+  color: var(--tg-theme-text-color, #0f172a);
   -webkit-font-smoothing: antialiased;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Oxygen,
-    Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  /* Tabular figures for counts/badges; case-sensitive forms; OpenType
+     features that make Inter feel native on iOS. */
+  font-feature-settings: "cv11", "ss01", "ss03";
+  font-optical-sizing: auto;
+}
+
+/* Display optical sizing — used for big titles and headings. The Inter
+   Variable opsz axis ranges 14–32. 32 picks the Display (looser) variant. */
+.font-display {
+  font-variation-settings: "opsz" 32;
+  letter-spacing: -0.02em;
+}
+
+/* Tabular numbers for badges/counts so layout doesn't shift when a
+   single-digit count flips to two digits. */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Hide native scrollbar in WebView while keeping scrolling functional. */
@@ -26,4 +51,15 @@ body,
 }
 .no-scrollbar {
   scrollbar-width: none;
+}
+
+/* Apple-style spring easing for our transitions. Slight overshoot
+   gives the "settle" feel of native iOS without a JS animation lib. */
+@layer utilities {
+  .ease-spring {
+    transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .ease-apple {
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
 }
