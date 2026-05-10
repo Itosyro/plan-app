@@ -6,6 +6,36 @@
 
 ---
 
+## 2026-05-09 (поздно вечер) — Phase 5.4b: drag-n-drop reorder
+
+Добавлен `@dnd-kit/core@6.3` (38 КБ gzip → итоговый bundle 63 КБ).
+В Mini-App теперь можно перенести задачу между горизонтами драг-н-дропом
+без открытия меню «Перенести».
+
+UX:
+- Long-press на карточке задачи (250 мс) → drag activates →
+  карточка приподнимается с тенью и кольцом обводки.
+- При наведении на pill горизонта pill подсвечивается ring-2.
+- Drop → optimistic update + PATCH (`horizon_slug`) +
+  refresh counts.
+- Tap < 250 мс на «Готово» / «Перенести» / «Удалить» работает как
+  раньше (PointerSensor с `activationConstraint: { delay: 250 }`).
+- На done-задачах drag отключен (`disabled: isDone`).
+
+Реализация:
+- `App.tsx`: `<DndContext sensors={sensors} onDragEnd={handleDragEnd}>`
+  оборачивает весь main view. `handleDragEnd` валидирует `over.id`
+  по allow-list горизонтов, нет ли совпадения с текущим, и зовёт
+  `handleMove`.
+- `TaskCard.tsx`: `useDraggable({ id: task.id })` →
+  ref/listeners/attributes на корневой div + transform style.
+- `HorizonTabs.tsx`: каждый pill вынесен в `<HorizonPill>` чтобы
+  иметь свой `useDroppable({ id: slug })` ref.
+
+Tests: 296 passing, ruff/mypy clean, webapp build green.
+
+---
+
 ## 2026-05-09 (вечер, после 6.x) — Phase 5.4a: counts endpoint
 
 `GET /api/tasks/counts` возвращает счётчики открытых задач по всем

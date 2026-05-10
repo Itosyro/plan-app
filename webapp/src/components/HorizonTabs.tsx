@@ -1,3 +1,4 @@
+import { useDroppable } from "@dnd-kit/core";
 import type { Horizon, TaskCounts } from "../types";
 import { haptic } from "../lib/telegram";
 
@@ -14,45 +15,65 @@ interface Props {
   onChange: (slug: string) => void;
 }
 
+interface PillProps {
+  horizon: Horizon;
+  isActive: boolean;
+  count: number;
+  onChange: (slug: string) => void;
+}
+
+// Each pill is its own component so it can register a separate
+// ``useDroppable`` ref. Phase 5.4b: dropping a TaskCard on a pill
+// moves the task to that horizon (handled in App.tsx::onDragEnd).
+function HorizonPill({ horizon, isActive, count, onChange }: PillProps) {
+  const { isOver, setNodeRef } = useDroppable({ id: horizon.slug });
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={() => {
+        haptic("select");
+        onChange(horizon.slug);
+      }}
+      className={
+        "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-sm transition-colors " +
+        (isActive
+          ? "bg-tg-button text-tg-button-text shadow-sm "
+          : "bg-tg-secondary text-tg-text/80 hover:bg-tg-secondary/80 ") +
+        (isOver ? "ring-2 ring-tg-button ring-offset-2 ring-offset-tg-bg " : "")
+      }
+    >
+      <span>{horizon.label}</span>
+      {count > 0 && (
+        <span
+          className={
+            "ml-1.5 inline-block min-w-5 rounded-full px-1.5 text-xs " +
+            (isActive
+              ? "bg-tg-button-text/20 text-tg-button-text"
+              : "bg-tg-bg/60 text-tg-hint")
+          }
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
 export function HorizonTabs({ horizons, active, counts, onChange }: Props) {
   const lookup = counts as Record<string, number> | undefined;
   return (
     <div className="sticky top-0 z-10 -mx-4 mb-3 bg-tg-bg/90 px-4 pb-2 pt-1 backdrop-blur">
       <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
-        {horizons.map((h) => {
-          const isActive = h.slug === active;
-          const count = lookup?.[h.slug] ?? 0;
-          return (
-            <button
-              key={h.slug}
-              type="button"
-              onClick={() => {
-                haptic("select");
-                onChange(h.slug);
-              }}
-              className={
-                "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-sm transition-colors " +
-                (isActive
-                  ? "bg-tg-button text-tg-button-text shadow-sm"
-                  : "bg-tg-secondary text-tg-text/80 hover:bg-tg-secondary/80")
-              }
-            >
-              <span>{h.label}</span>
-              {count > 0 && (
-                <span
-                  className={
-                    "ml-1.5 inline-block min-w-5 rounded-full px-1.5 text-xs " +
-                    (isActive
-                      ? "bg-tg-button-text/20 text-tg-button-text"
-                      : "bg-tg-bg/60 text-tg-hint")
-                  }
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {horizons.map((h) => (
+          <HorizonPill
+            key={h.slug}
+            horizon={h}
+            isActive={h.slug === active}
+            count={lookup?.[h.slug] ?? 0}
+            onChange={onChange}
+          />
+        ))}
       </div>
     </div>
   );
