@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDraggable } from "@dnd-kit/core";
 import type { HorizonSlug, Task } from "../types";
 import { formatDue, priorityIcon } from "../lib/format";
 import { haptic } from "../lib/telegram";
@@ -26,6 +27,23 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
   const due = formatDue(task.due_at, tz);
   const isDone = task.status === "done";
 
+  // Phase 5.4b: drag-n-drop. The whole card is draggable; activation
+  // is delayed (PointerSensor in App.tsx) so a quick tap on the
+  // ``Готово`` / ``Перенести`` buttons inside still fires onClick.
+  // Long-press → card lifts → user drags up to a horizon pill which
+  // is registered as a drop target in HorizonTabs.
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+    disabled: isDone,
+  });
+
+  const dragStyle = transform
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        zIndex: 50,
+      }
+    : undefined;
+
   const wrap = async (fn: () => Promise<void> | void) => {
     if (busy) return;
     setBusy(true);
@@ -38,9 +56,14 @@ export function TaskCard({ task, tz, onDone, onMove, onDelete }: Props) {
 
   return (
     <div
+      ref={setNodeRef}
+      style={dragStyle}
+      {...attributes}
+      {...listeners}
       className={
-        "rounded-xl border border-tg-divider bg-tg-bg p-3 shadow-sm transition-opacity " +
-        (isDone ? "opacity-50" : "opacity-100")
+        "rounded-xl border border-tg-divider bg-tg-bg p-3 shadow-sm transition-opacity touch-manipulation " +
+        (isDone ? "opacity-50 " : "opacity-100 ") +
+        (isDragging ? "shadow-xl ring-2 ring-tg-button/40 " : "")
       }
     >
       <div className="flex items-start gap-3">

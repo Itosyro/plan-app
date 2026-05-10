@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { ApiError, apiClient } from "./api/client";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { EmptyState } from "./components/EmptyState";
 import { Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { TaskCard } from "./components/TaskCard";
+import { haptic } from "./lib/telegram";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
 import type {
   Category,
@@ -226,6 +234,34 @@ export default function App() {
     [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
 
+  // Phase 5.4b: drag-n-drop. PointerSensor with delay activation so
+  // a quick tap on a button inside the card still fires onClick;
+  // long-press (250 ms) starts the drag. ``tolerance`` allows a few
+  // pixels of jitter before activation cancels — important on touch
+  // devices where the finger trembles slightly while pressing.
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (over === null) return;
+      const taskId = Number(active.id);
+      const targetSlug = String(over.id);
+      if (!Number.isFinite(taskId) || taskId <= 0) return;
+      if (!VALID_HORIZONS.has(targetSlug as HorizonSlug)) return;
+      const task = tasks.find((t) => t.id === taskId);
+      if (task === undefined) return;
+      if (task.horizon_slug === targetSlug) return; // no-op same horizon
+      haptic("success");
+      void handleMove(taskId, targetSlug as HorizonSlug);
+    },
+    [tasks, handleMove],
+  );
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-tg-hint">
@@ -247,46 +283,48 @@ export default function App() {
   const tz = me?.tz ?? "Europe/Moscow";
 
   return (
-    <div
-      className="mx-auto max-w-md px-4"
-      style={{
-        paddingTop: "calc(var(--safe-top) + 0.75rem)",
-        paddingBottom: "calc(var(--safe-bottom) + 1rem)",
-      }}
-    >
-      <Header me={me} />
-      <HorizonTabs
-        horizons={horizons}
-        active={activeHorizon}
-        counts={counts}
-        onChange={handleHorizonChange}
-      />
-      <CategoryFilter
-        categories={categories}
-        selectedId={selectedCategory}
-        onChange={handleCategoryChange}
-      />
-      {tasks.length === 0 ? (
-        <EmptyState
-          emoji="🎉"
-          title="Ничего на горизонте"
-          hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <div
+        className="mx-auto max-w-md px-4"
+        style={{
+          paddingTop: "calc(var(--safe-top) + 0.75rem)",
+          paddingBottom: "calc(var(--safe-bottom) + 1rem)",
+        }}
+      >
+        <Header me={me} />
+        <HorizonTabs
+          horizons={horizons}
+          active={activeHorizon}
+          counts={counts}
+          onChange={handleHorizonChange}
         />
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {tasks.map((task) => (
-            <li key={task.id}>
-              <TaskCard
-                task={task}
-                tz={tz}
-                onDone={handleDone}
-                onMove={handleMove}
-                onDelete={handleDelete}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+        <CategoryFilter
+          categories={categories}
+          selectedId={selectedCategory}
+          onChange={handleCategoryChange}
+        />
+        {tasks.length === 0 ? (
+          <EmptyState
+            emoji="🎉"
+            title="Ничего на горизонте"
+            hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+          />
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {tasks.map((task) => (
+              <li key={task.id}>
+                <TaskCard
+                  task={task}
+                  tz={tz}
+                  onDone={handleDone}
+                  onMove={handleMove}
+                  onDelete={handleDelete}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </DndContext>
   );
 }

@@ -214,8 +214,9 @@
   возвращает счётчики по всем горизонтам; pill-табы Mini-App теперь
   сразу показывают `Сегодня (3) / Завтра (1) / Неделя (8)`. Done в PR
   с веткой `devin/*-phase5-4-counts`.
-- ❌ 5.4b Drag-n-drop reorder — `dnd-kit`, колонки = горизонты, drag
-  меняет horizon через PATCH.
+- ✅ 5.4b Drag-n-drop reorder — `@dnd-kit/core@6.3`, long-press на
+  карточке (250 мс) → drag → drop на pill горизонта → PATCH с
+  optimistic update. Done в PR с веткой `devin/*-phase5-4b-dnd`.
 - ❌ 5.5 Календарный вид — FullCalendar/react, события по `due_at`.
 - ❌ 5.6 Карточка задачи — модалка с TaskEvent-историей и оригиналом
   inbox_entry.
