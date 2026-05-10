@@ -87,6 +87,28 @@ class TaskUpdateIn(BaseModel):
     due_at: datetime | None = None
 
 
+class TaskCountsOut(_ConfiguredModel):
+    """Counts of open (non-``done``) tasks per horizon.
+
+    Returned by ``GET /api/tasks/counts`` so the Mini-App can render
+    `Сегодня (3) / Завтра (1) / Неделя (8)` badges on the horizon
+    pills without paginating each tab.
+
+    Fields mirror ``HorizonSlug`` literals 1-to-1 plus a ``no_horizon``
+    bucket for tasks whose horizon was never resolved (legacy rows or
+    Notes-likes). Default 0 keeps clients oblivious to whether the
+    user has any task at all yet.
+    """
+
+    today: int = 0
+    tomorrow: int = 0
+    week: int = 0
+    month: int = 0
+    year: int = 0
+    someday: int = 0
+    no_horizon: int = 0
+
+
 # ── /api/notes ───────────────────────────────────────────────────────
 
 
@@ -138,6 +160,7 @@ __all__ = [
     "InboxEntryOut",
     "MeOut",
     "NoteOut",
+    "TaskCountsOut",
     "TaskOut",
     "TaskPriority",
     "TaskStatus",

@@ -85,6 +85,7 @@ import type {
   Me,
   Note,
   Task,
+  TaskCounts,
   TaskUpdate,
 } from "../types";
 
@@ -96,6 +97,7 @@ export const apiClient = {
     api<Category>("/categories", { method: "POST", body: { name } }),
   tasks: (q?: { horizon?: string; category_id?: number; status?: string; include_done?: boolean }) =>
     api<Task[]>("/tasks", { query: q }),
+  taskCounts: () => api<TaskCounts>("/tasks/counts"),
   patchTask: (id: number, body: TaskUpdate) =>
     api<Task>(`/tasks/${id}`, { method: "PATCH", body }),
   deleteTask: (id: number) => api<void>(`/tasks/${id}`, { method: "DELETE" }),

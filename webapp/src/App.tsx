@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiClient } from "./api/client";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { EmptyState } from "./components/EmptyState";
@@ -6,7 +6,24 @@ import { Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { TaskCard } from "./components/TaskCard";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
-import type { Category, Horizon, HorizonSlug, Me, Task } from "./types";
+import type {
+  Category,
+  Horizon,
+  HorizonSlug,
+  Me,
+  Task,
+  TaskCounts,
+} from "./types";
+
+const EMPTY_COUNTS: TaskCounts = {
+  today: 0,
+  tomorrow: 0,
+  week: 0,
+  month: 0,
+  year: 0,
+  someday: 0,
+  no_horizon: 0,
+};
 
 const DEFAULT_HORIZON: HorizonSlug = "today";
 const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
@@ -23,6 +40,7 @@ export default function App() {
   const [horizons, setHorizons] = useState<Horizon[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [counts, setCounts] = useState<TaskCounts>(EMPTY_COUNTS);
   const [activeHorizon, setActiveHorizon] = useState<string>(DEFAULT_HORIZON);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +92,20 @@ export default function App() {
     [],
   );
 
+  // Phase 5.4: per-horizon badges. Single round-trip → counts for all
+  // horizons. Refreshed on every mutation so badges stay live without
+  // optimistic logic per-action (cheap query, predictable answer).
+  const loadCounts = useCallback(async () => {
+    try {
+      const resp = await apiClient.taskCounts();
+      setCounts(resp);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
+        console.error("loadCounts failed", err);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadShell().finally(() => setLoading(false));
   }, [loadShell]);
@@ -113,6 +145,16 @@ export default function App() {
     }
   }, [activeHorizon, selectedCategory, authError, prefsHydrated, loadTasks]);
 
+  // Counts don't depend on the active horizon — fetch once when the
+  // shell is ready and again after each successful mutation. Category
+  // filter does NOT scope the badges (we want to show «3 tasks today»
+  // regardless of which category is selected).
+  useEffect(() => {
+    if (!authError && prefsHydrated) {
+      void loadCounts();
+    }
+  }, [authError, prefsHydrated, loadCounts]);
+
   // Persist horizon choice. We don't persist on every render — the
   // setActiveHorizon path is the only way it changes.
   const handleHorizonChange = useCallback((slug: string) => {
@@ -140,13 +182,14 @@ export default function App() {
         setTimeout(() => {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }, 350);
+        void loadCounts();
       } catch (err) {
         // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
         console.error("done failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks],
+    [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
 
   const handleMove = useCallback(
@@ -160,12 +203,13 @@ export default function App() {
         if (slug !== activeHorizon) {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }
+        void loadCounts();
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
         console.error("move failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks],
+    [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
 
   const handleDelete = useCallback(
@@ -173,21 +217,14 @@ export default function App() {
       setTasks((prev) => prev.filter((t) => t.id !== id));
       try {
         await apiClient.deleteTask(id);
+        void loadCounts();
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
         console.error("delete failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks],
+    [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
-
-  const counts = useMemo(() => {
-    // Quick hint counts shown next to horizon tabs. We only populate the
-    // active horizon's count from the loaded tasks; other counts come
-    // back as 0 until that tab is opened. A future PR can switch to a
-    // single ``GET /api/tasks/counts`` endpoint.
-    return { [activeHorizon]: tasks.length };
-  }, [activeHorizon, tasks.length]);
 
   if (loading) {
     return (
