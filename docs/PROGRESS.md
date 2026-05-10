@@ -6,6 +6,78 @@
 
 ---
 
+## 2026-05-10 — Phase 7b: Mini-App design polish (PR #74)
+
+Pure visual polish, никаких новых API/БД/бизнес-логики.
+
+- Подключён `lucide-react@^0.460.0` (+~4 KB gzip, tree-shake
+  работает: импортируем 11 иконок, бандл вырос только на это).
+- Новый `webapp/src/lib/icons.ts` — централизованный mapping:
+  `horizonIcon(slug)` → `Sun` / `Sunrise` / `CalendarDays` /
+  `Sunset`; `priorityFlagColor(p)` → tailwind-цвет для `Flag`.
+- Новый `webapp/src/components/BottomNav.tsx` — плавающая
+  капсула с 3 табами (Задачи / Календарь / Настройки). Активный
+  таб с лейблом, неактивные icon-only. Haptic-feedback при
+  переключении. Только Tasks реально работает; Календарь/
+  Настройки рендерят `ComingSoon` placeholder.
+- Новый `webapp/src/components/ComingSoon.tsx` — minimal empty-
+  state с иконкой + заголовком + описанием. Используется для
+  не-готовых табов.
+- `TaskCard.tsx` переписан под lucide: `Check` (галка в
+  чекбоксе), `Clock` (due_at), `Flag` (priority high/low —
+  medium-задачи флаг скрывают), `Move` / `Trash2` (action-row).
+  Карточка теперь rounded-2xl с фоном `bg-tg-secondary/60` и
+  `active:bg-tg-secondary` вместо border.
+- `HorizonTabs.tsx`: leading icon перед лейблом; активный pill
+  solid dark (`bg-tg-text` / `text-tg-bg`) вместо прежнего
+  `bg-tg-button`.
+- `Header.tsx`: упрощён до `План` h1 + `display_name` справа;
+  убрана подпись «Привет, X 👋».
+- `App.tsx`: добавлено `activeTab` state; Tasks tab рендерит
+  существующий flow; Calendar/Settings tabs → `ComingSoon`.
+  paddingBottom +5rem чтобы последняя карточка не уходила под
+  плавающий bottom nav.
+- Палитра НЕ изменена — оставлена белая Telegram-theme через
+  CSS-переменные (--tg-theme-bg-color и т.д.).
+
+Bundle: 193 → 202 KB raw / 62 → 65.6 KB gzip.
+
+Tests: 306 passing (без новых — pure visual), ruff/mypy clean.
+
+---
+
+## 2026-05-10 — Phase 7a: bot onboarding redesign (PR #73)
+
+- Новый `app/bot/onboarding.py` — `POPULAR_TIMEZONES` (12 пар
+  Russian-label + IANA-tz: Москва / Минск / Киев / Калининград /
+  Ереван / Тбилиси / Алма-Ата / Ташкент / Бишкек / Екатеринбург /
+  Новосибирск / Владивосток), `tz_keyboard()`, `label_for_iana()`,
+  `parse_tz_callback()`. Callback-формат `onb:tz:<iana>` или
+  `onb:tz:custom`.
+- `app/bot/routers/start.py`: новый callback-handler
+  `onb_tz_callback`. `cmd_start` теперь шлёт inline-keyboard.
+  FSM-state `Onboarding.timezone` сохранён как fallback (юзер тапает
+  «Указать другой ✏️» → бот просит IANA в свободном тексте).
+- Re-onboarding shortcut: если у user уже есть `display_name`,
+  тап по новой tz-кнопке обновляет `user.tz` и пропускает
+  повторный запрос имени. `complete_onboarding()` идемпотентен,
+  поэтому существующие `UserSettings` не теряются.
+- `app/bot/courier_templates.py`: переписаны короче — greeting,
+  ask-name, ask-custom-tz, done, re-onboarding. Старый
+  `ONBOARDING_BAD_TZ` сохранён как alias для backward compat.
+- +10 unit-тестов (`tests/test_onboarding.py`):
+  `test_popular_timezones_all_iana_valid`, `test_popular_timezones_no_duplicates`,
+  `test_tz_keyboard_layout`, `test_tz_keyboard_callback_data_under_64_bytes`,
+  `test_label_for_iana_*`, `test_parse_tz_callback_*`,
+  `test_re_onboarding_preserves_name_and_settings`.
+- Новый skill `.agents/skills/lazyweb-design/SKILL.md` — будущие
+  сессии Devin самостоятельно установят Lazyweb MCP (curl
+  install-token) и будут юзать его для UI-design references.
+
+Tests: 296 → 306, ruff/mypy clean.
+
+---
+
 ## 2026-05-09 (поздно вечер) — Phase 5.4b: drag-n-drop reorder
 
 Добавлен `@dnd-kit/core@6.3` (38 КБ gzip → итоговый bundle 63 КБ).
