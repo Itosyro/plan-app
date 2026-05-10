@@ -6,6 +6,79 @@
 
 ---
 
+## 2026-05-10 — Phase 8b: slash-команды для quick-input + Render keep-alive
+
+Две связанные вещи в одном PR — быстрый ввод задач без Mini-App плюс
+устранение cold-start'а на Render Free, который юзер видел при открытии
+Mini-App из бот-меню после длительного простоя.
+
+### Phase 8b — `/add /done /del /move /postpone`
+
+Раньше управлять задачами текстом можно было только через свободно
+сформулированный poток мысли, который шёл через AI-pipeline. Теперь
+есть детерминистичный путь:
+
+- `/add <текст>` — прокидывает аргументы в тот же pipeline
+  (split → time → classify → critic → persist → courier reply), что
+  и обычное текстовое сообщение. Полезно когда юзер хочет «забить
+  всё что было до /add как задачу», или когда модераторы группы
+  ограничивают авто-разбор только командами.
+- `/done <часть названия>` — поиск через `find_task_by_query` (LIKE
+  по `tasks.title` со scope `user_id`, исключая `status='done'`) +
+  `mark_task_done`. Без AI; работает мгновенно.
+- `/del <часть названия>` — то же самое, но `delete_task`.
+- `/move <часть названия> <горизонт>` — переносит задачу. Парсер
+  отделяет последнее слово как горизонт и принимает aliasы:
+  `today/сегодня`, `tomorrow/завтра`, `week/неделя/неделю`,
+  `month/месяц`, `year/год`, `someday/когда-нибудь/потом`.
+- `/postpone <…> <…>` — softsynonym для `/move`. Юзеры в чатах
+  чаще говорят «отложи на», чем «перенеси на», поэтому оба глагола.
+
+Что сделано:
+- `app/bot/routers/_pipeline.py` — вынес тело инбокс-+-pipeline-glue
+  из `text.py` в новую функцию `enqueue_text_pipeline(message, text)`.
+  Этот же helper теперь зовёт `/add`. Поведение байт-в-байт совпадает
+  со свободным текстом: реакция-ack, «⏳ Разбираю…» placeholder,
+  streamed reply, error-fallback. `text.py` сократился до ~25 LOC.
+- `app/bot/routers/commands.py` — пять новых хэндлеров; общий
+  `_ensure_onboarded` гард; `parse_horizon()` + `parse_move_args()`
+  как чистые функции под изолированные тесты.
+- `app/bot/courier_templates.py::HELP` — обновлён, разделён на
+  «Просмотр / Быстрый ввод / Прочее» секции.
+- `tests/test_commands.py` — +13 тестов: parser round-trips
+  (canonical slugs + Russian aliases + case-insensitivity + edge
+  cases), service-композиция трёх write-команд (done/del/move),
+  cross-user isolation (find_task_by_query scoped to user_id).
+- `tests/test_voice_router.py` — обновлён под новое расположение
+  pipeline glue: assertion `default_reminder_offsets=` теперь
+  читает `_pipeline.py` вместо `text.py`.
+
+Воздержался от Phase 8a (action-classifier) — это отдельный бóльший
+PR; backlog №A в HANDOFF v11.
+
+### Render keep-alive (`.github/workflows/keepalive.yml`)
+
+Юзер пожаловался: «спустя час открыл Mini-App — Render показывает,
+что только что запускает приложение, до этого спал». Render Free
+после ~15 минут idle спускает dyno; первый запрос потом висит
+30-60 секунд.
+
+Решение — внешний keep-alive каждые 10 минут:
+- `GET /healthz` через `curl --fail`. Любой 4xx/5xx → красный билд
+  в Actions tab + email.
+- `HEAD /app/` (best-effort) — прогрев Mini-App static bundle
+  чтобы первый клик «Открыть план» из бота был мгновенным.
+- `concurrency: keepalive` без cancel-in-progress — если
+  предыдущий пинг застрял в холодном старте, новый не убивает
+  его, а просто ждёт.
+
+`docs/RENDER.md` уже описывал этот паттерн (Option 2), но самого
+workflow в репо не было — теперь есть.
+
+Tests: 323 → 334 passing, ruff/mypy clean, webapp build green.
+
+---
+
 ## 2026-05-10 — fix(reminders): «напомни в 12» actually creates a reminder row (PR #79)
 
 Три бага в одном пользовательском сценарии («напоминания не работают»):
