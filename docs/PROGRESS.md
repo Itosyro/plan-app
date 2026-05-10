@@ -6,6 +6,79 @@
 
 ---
 
+## 2026-05-10 — fix(reminders): «напомни в 12» actually creates a reminder row (PR #79)
+
+Три бага в одном пользовательском сценарии («напоминания не работают»):
+
+1. **`в 12` без минут не парсился** — `_TIME_PATTERNS` требовал
+   `в HH:MM`, поэтому самая частая русская формулировка «обед в 12»
+   возвращала `ResolvedTime=None`, и в БД ложилась задача без `due_at`.
+2. **`ResolvedTime.is_reminder=True` никем не читалось** — поле
+   существовало с Phase 2.2, но в pipeline никто на него не ветвился.
+3. **`offset=0` фильтровалось как `<= 0`** — и в `_select_reminder_offsets`,
+   и в `schedule_reminders`. Канонический «напомни ровно в 12:00»
+   (offset=0 = «fire AT due_at») уезжал в /dev/null.
+
+Что сделано:
+- `app/ai/time_resolver.py`: добавлен `_BARE_HOUR_PATTERNS` —
+  нормализация `в 12` / `в 12 часов` → `в 12:00` ДО основной таблицы
+  замен (lookahead защищает от dotted-dates типа `в 12.05`). Расширен
+  `_TIME_PATTERNS` под голое `в HH` и `в HH часов`. Расширен
+  reminder-detector до `\b(?:напомн|напомина)` — теперь существительное
+  «напоминание» тоже триггерит `is_reminder=True`.
+- `app/bot/services/tasks.py::_select_reminder_offsets`: явный `[0]`
+  сохраняется, дедупликация, отрицательные дропаются. Defaults
+  по-прежнему по `> 0` (там `0` — мусор).
+- `app/bot/services/tasks.py::schedule_reminders`: `offset == 0`
+  создаёт строку с `fire_at == due_at`. Только negative дропаются.
+- `app/bot/routers/_pipeline.py::_run_pipeline_inner`: если
+  `resolved.is_reminder`, `cr.is_task`, `due_at` есть и классификатор
+  не дал явных `reminder_offsets` — синтезируем `[0]` через
+  `cr.model_copy(update=...)`.
+- 8 новых тестов: 5 в `test_time_resolver.py` (`в 12`, `в 8`,
+  «в 12 часов», noun-form `напоминание`, защита от `в 12:30`),
+  3 в `test_reminders.py` (`offset=0`, `[0,30]`, drop negatives).
+  Обновлён `test_select_offsets_drops_non_positive` под новый
+  контракт (новое имя: `test_select_offsets_drops_negative_keeps_zero`).
+
+Tests: 315 → 323 passing, ruff/mypy clean.
+
+---
+
+## 2026-05-10 — Phase 7c: Settings page в Mini-App (PR #78)
+
+Заменили `<ComingSoon>`-плейсхолдер на вкладке «Настройки»
+работающим экраном.
+
+- `app/api/schemas.py`: новые `MeUpdateIn`, `UserSettingsUpdateIn`,
+  `TimezoneOut`. Все поля опциональные, `extra="forbid"` на Pydantic.
+- `app/api/routers/me.py`: добавлен `PATCH /api/me`. Валидация tz
+  через `is_valid_timezone`, значений settings — через
+  `ALLOWED_SETTING_VALUES` (allow-list). Возвращает свежий `MeOut`.
+- `app/api/routers/timezones.py` (новый): `GET /api/timezones` —
+  отдаёт `POPULAR_TIMEZONES` из `app/bot/onboarding.py`.
+- `app/main.py`: `include_router` для нового роутера.
+- `webapp/src/types.ts`: типы `UserSettingsUpdate`, `MeUpdate`, `Timezone`.
+- `webapp/src/api/client.ts`: `apiClient.patchMe()`, `apiClient.timezones()`.
+- `webapp/src/components/SettingsPage.tsx` (новый, 552 LOC): секции
+  «Основные» (имя + tz), «Дайджест» (утро/вечер), «Ответы бота»
+  (источник + тон), «Поведение» (критик + неделя). Стилистика
+  Phase 7b: white palette, lucide-иконки, `rounded-2xl`, без рамок.
+  Inline-редактирование имени и tz (popular dropdown + «указать
+  другой»), select-row для остальных. Per-field pending state.
+- `webapp/src/App.tsx`: вкладка `settings` теперь рендерит
+  `<SettingsPage me={me} onUpdated={setMe} />`.
+- 9 новых API-тестов в `tests/test_api_endpoints.py`.
+
+Все мутации settings идут через тот же `update_user_settings`-сервис,
+что и `/settings`-callbacks бота — две поверхности байт-идентичны.
+
+Bundle: 202 → 213.95 KB raw / 65.6 → 68.31 KB gzip.
+
+Tests: 306 → 315 passing, ruff/mypy clean.
+
+---
+
 ## 2026-05-10 — Phase 7b: Mini-App design polish (PR #74)
 
 Pure visual polish, никаких новых API/БД/бизнес-логики.
