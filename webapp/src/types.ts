@@ -64,3 +64,16 @@ export interface TaskUpdate {
   category_id?: number;
   due_at?: string;
 }
+
+// Mirrors app/api/schemas.py::TaskCountsOut. One bucket per horizon
+// plus ``no_horizon`` for legacy tasks. ``done`` and ``cancelled``
+// are excluded server-side.
+export interface TaskCounts {
+  today: number;
+  tomorrow: number;
+  week: number;
+  month: number;
+  year: number;
+  someday: number;
+  no_horizon: number;
+}

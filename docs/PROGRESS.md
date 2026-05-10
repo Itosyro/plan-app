@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-05-09 (вечер, после 6.x) — Phase 5.4a: counts endpoint
+
+`GET /api/tasks/counts` возвращает счётчики открытых задач по всем
+горизонтам одним запросом. Schema: `TaskCountsOut` с шестью
+полями-горизонтами (`today/tomorrow/week/month/year/someday`) +
+`no_horizon` для legacy/notes-likes тасок. `done` и `cancelled`
+исключены — они живут в архивных flow-ах, не в списке.
+
+Реализация:
+- SQL: один `GROUP BY horizons.slug` с outer join, чтобы тасочки без
+  горизонта не пропадали тихо.
+- Маршрут зарегистрирован **до** `/{task_id}` иначе FastAPI пытается
+  скастовать `"counts"` в int → 422.
+- Frontend (`webapp/`): `apiClient.taskCounts()`, `loadCounts()` в
+  `App.tsx`, рефреш после каждой mutation (done/move/delete). Pill-табы
+  HorizonTabs теперь показывают живые цифры рядом с названием горизонта.
+- 3 новых интеграционных теста в `tests/test_api_endpoints.py`:
+  group-by, auth required, cross-user isolation.
+
+Тесты: 293 → **296 passing**, ruff/mypy clean, webapp build green.
+
+---
+
 ## 2026-05-09 (вечер) — Phase 6.1-6.4 + ops: prod migrations + auto-deploy
 
 **Phase 6.1 Reactions (PR #66):** `app/bot/reactions.py` — bot

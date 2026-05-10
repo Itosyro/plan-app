@@ -210,10 +210,11 @@
   10.0).
 
 **Что осталось (Phase 5.4+, follow-up):**
-- ❌ 5.4 Counts endpoint (`GET /api/tasks/counts`) — один запрос
-  возвращает счётчики по всем горизонтам, чтобы pill-табы сразу
-  показывали `Сегодня (3) / Завтра (1) / Неделе (8)`.
-- ❌ 5.4 Drag-n-drop reorder — `dnd-kit`, колонки = горизонты, drag
+- ✅ 5.4a Counts endpoint (`GET /api/tasks/counts`) — один запрос
+  возвращает счётчики по всем горизонтам; pill-табы Mini-App теперь
+  сразу показывают `Сегодня (3) / Завтра (1) / Неделя (8)`. Done в PR
+  с веткой `devin/*-phase5-4-counts`.
+- ❌ 5.4b Drag-n-drop reorder — `dnd-kit`, колонки = горизонты, drag
   меняет horizon через PATCH.
 - ❌ 5.5 Календарный вид — FullCalendar/react, события по `due_at`.
 - ❌ 5.6 Карточка задачи — модалка с TaskEvent-историей и оригиналом

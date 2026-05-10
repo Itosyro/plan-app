@@ -5,10 +5,17 @@ from __future__ import annotations
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.api.auth import current_user
-from app.api.schemas import HorizonSlug, TaskOut, TaskStatus, TaskUpdateIn
+from app.api.schemas import (
+    HorizonSlug,
+    TaskCountsOut,
+    TaskOut,
+    TaskStatus,
+    TaskUpdateIn,
+)
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
@@ -115,6 +122,49 @@ async def list_tasks(
         _task_to_out(task, horizon_slug, category_name)
         for task, horizon_slug, category_name in rows
     ]
+
+
+@router.get("/counts", response_model=TaskCountsOut)
+async def task_counts(user: User = Depends(current_user)) -> TaskCountsOut:
+    """Return per-horizon counts of open (non-``done``) tasks.
+
+    One round-trip serves all horizon badges in the Mini-App so we
+    don't paginate every tab on first paint. ``done`` and ``cancelled``
+    are excluded — those live in archive flows, not the list. Tasks
+    with no horizon (legacy rows or notes-likes) are aggregated under
+    ``no_horizon`` so the totals never silently drop.
+
+    The route is registered **before** ``/{task_id}`` so FastAPI
+    matches ``GET /api/tasks/counts`` to this handler instead of
+    coercing ``"counts"`` into an int and returning 422.
+    """
+    if user.id is None:
+        raise RuntimeError("authenticated user has no id")
+
+    async with session_scope() as session:
+        # Single GROUP BY on ``horizons.slug``. ``isouter=True`` keeps
+        # tasks without a horizon visible (we bucket them as ``None``
+        # and surface as ``no_horizon`` in the response below).
+        stmt = (
+            select(Horizon.slug, func.count(Task.id))  # type: ignore[arg-type]
+            .join(Horizon, Horizon.id == Task.horizon_id, isouter=True)  # type: ignore[arg-type]
+            .where(Task.user_id == user.id, Task.status != "done", Task.status != "cancelled")
+            .group_by(Horizon.slug)
+        )
+        result = await session.exec(stmt)
+        rows = list(result.all())
+
+    payload: dict[str, int] = dict.fromkeys(get_args(HorizonSlug), 0)
+    payload["no_horizon"] = 0
+    for slug, n in rows:
+        if slug is None:
+            payload["no_horizon"] = int(n)
+        elif slug in payload:
+            payload[slug] = int(n)
+        # Unknown slugs (shouldn't happen — schema is fixed) are dropped
+        # silently rather than raising; callers see only the documented
+        # buckets.
+    return TaskCountsOut.model_validate(payload)
 
 
 async def _load_task_owned(user_id: int, task_id: int) -> tuple[Task, str | None, str | None]:

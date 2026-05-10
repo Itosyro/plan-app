@@ -322,6 +322,117 @@ async def test_tasks_delete_then_404(
 
 
 @pytest.mark.asyncio
+async def test_tasks_counts_groups_by_horizon(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    session: AsyncSession,
+) -> None:
+    """``GET /api/tasks/counts`` returns one bucket per horizon.
+
+    The seeded fixture inserts one ``today`` task. We add a few more
+    across horizons to exercise the GROUP BY, including a ``done``
+    task that must NOT count and a horizon-less task that lands in
+    ``no_horizon``.
+    """
+    user_id = seeded
+    tomorrow = await get_or_create_horizon(session, user_id, "tomorrow")
+    week = await get_or_create_horizon(session, user_id, "week")
+    today = await get_or_create_horizon(session, user_id, "today")
+    session.add(
+        Task(
+            user_id=user_id,
+            horizon_id=tomorrow.id,
+            title="Завтра-1",
+            priority="medium",
+        )
+    )
+    session.add(
+        Task(
+            user_id=user_id,
+            horizon_id=week.id,
+            title="Неделя-1",
+            priority="medium",
+        )
+    )
+    session.add(
+        Task(
+            user_id=user_id,
+            horizon_id=week.id,
+            title="Неделя-2",
+            priority="medium",
+        )
+    )
+    session.add(
+        Task(
+            user_id=user_id,
+            horizon_id=today.id,
+            title="Готовая",
+            priority="medium",
+            status="done",
+        )
+    )
+    session.add(
+        Task(
+            user_id=user_id,
+            horizon_id=None,
+            title="Без горизонта",
+            priority="medium",
+        )
+    )
+    await session.commit()
+
+    resp = await aclient.get("/api/tasks/counts", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["today"] == 1  # the seeded one only; ``done`` excluded
+    assert body["tomorrow"] == 1
+    assert body["week"] == 2
+    assert body["month"] == 0
+    assert body["year"] == 0
+    assert body["someday"] == 0
+    assert body["no_horizon"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tasks_counts_requires_auth(aclient: httpx.AsyncClient, seeded: int) -> None:
+    resp = await aclient.get("/api/tasks/counts")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_tasks_counts_isolated_per_user(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    session: AsyncSession,
+) -> None:
+    """A different user's counts must never leak across the auth boundary."""
+    other, _ = await get_or_create_user(session, telegram_id=_OTHER_TG_USER)
+    assert other.id is not None
+    other.display_name = "Другой"
+    other.tz = "Europe/Moscow"
+    other.onboarded_at = utcnow_naive()
+    session.add(other)
+    session.add(UserSettings(user_id=other.id))
+    other_today = await get_or_create_horizon(session, other.id, "today")
+    session.add(
+        Task(
+            user_id=other.id,
+            horizon_id=other_today.id,
+            title="Чужая задача",
+            priority="medium",
+        )
+    )
+    await session.commit()
+
+    # First user still sees only their own one ``today`` task.
+    resp = await aclient.get("/api/tasks/counts", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["today"] == 1
+
+
+@pytest.mark.asyncio
 async def test_tasks_cross_user_isolation(
     aclient: httpx.AsyncClient,
     seeded: int,
