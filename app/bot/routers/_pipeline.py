@@ -325,6 +325,23 @@ async def _run_pipeline_inner(
         for cr, resolved in reviewed:
             due_at = resolved.resolved_dt if resolved else None
 
+            # When the user said «напомни …» (or «напоминание»), the
+            # canonical behaviour is to fire ONE reminder at the
+            # ``due_at`` itself — not the user's default advance offsets.
+            # If the classifier already supplied explicit offsets we
+            # respect them; otherwise we synthesise ``[0]`` so the
+            # reminder is scheduled. Without this branch, ``is_reminder``
+            # was set on ``ResolvedTime`` but never actually translated
+            # into a row in the ``reminders`` table.
+            if (
+                resolved is not None
+                and resolved.is_reminder
+                and cr.is_task
+                and due_at is not None
+                and not cr.reminder_offsets
+            ):
+                cr = cr.model_copy(update={"reminder_offsets": [0]})
+
             await persist_classification(
                 session,
                 user_id=user_id,

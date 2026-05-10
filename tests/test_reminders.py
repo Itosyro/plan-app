@@ -67,9 +67,25 @@ def test_select_offsets_uses_user_defaults() -> None:
     assert _select_reminder_offsets(cr, custom) == [180, 30]
 
 
-def test_select_offsets_drops_non_positive() -> None:
-    cr = _cr(horizon="today", reminder_offsets=[0, -5, 30])
-    assert _select_reminder_offsets(cr, None) == [30]
+def test_select_offsets_drops_negative_keeps_zero() -> None:
+    """Explicit ``0`` means «fire AT due_at» — must be preserved.
+
+    Negative offsets are nonsense (would imply firing AFTER due_at) and
+    are dropped. Duplicates are de-duplicated while preserving order.
+    """
+    cr = _cr(horizon="today", reminder_offsets=[0, -5, 30, 0])
+    assert _select_reminder_offsets(cr, None) == [0, 30]
+
+
+def test_select_offsets_zero_alone_is_kept() -> None:
+    """The «напомни в 12:00» case: ``[0]`` survives unchanged.
+
+    Without this, the bare-reminder use case (one reminder at the due
+    time itself) silently lost its scheduled row and the user thought
+    «напоминания не работают».
+    """
+    cr = _cr(horizon="today", reminder_offsets=[0])
+    assert _select_reminder_offsets(cr, None) == [0]
 
 
 # ── schedule_reminders ──────────────────────────────────────────────
@@ -135,6 +151,67 @@ async def test_schedule_reminders_skips_past_offsets(session: AsyncSession) -> N
     )
     assert len(created) == 1
     assert created[0].fire_at == _to_naive_utc(due_at) - timedelta(minutes=15)
+
+
+@pytest.mark.asyncio
+async def test_schedule_reminders_offset_zero_fires_at_due_at(
+    session: AsyncSession,
+) -> None:
+    """``offset=0`` schedules a reminder at exactly ``due_at``.
+
+    Regression for the «напомни в 12:00» bug: before the fix, ``0`` was
+    filtered out by ``offset <= 0`` so no reminder row was created.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=210)
+    await session.commit()
+    assert user.id is not None
+
+    task = Task(user_id=user.id, title="Обед")
+    session.add(task)
+    await session.flush()
+    assert task.id is not None
+
+    now = datetime(2026, 5, 8, 11, 0, tzinfo=UTC)
+    due_at = now + timedelta(hours=1)  # 12:00 UTC
+
+    created = await schedule_reminders(
+        session,
+        user_id=user.id,
+        task_id=task.id,
+        due_at=due_at,
+        offsets=[0],
+        now=now,
+    )
+    assert len(created) == 1
+    assert created[0].fire_at == _to_naive_utc(due_at)
+    assert created[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_schedule_reminders_drops_negative_offsets(
+    session: AsyncSession,
+) -> None:
+    """Negative offsets are nonsense and silently dropped."""
+    user, _ = await get_or_create_user(session, telegram_id=211)
+    await session.commit()
+    assert user.id is not None
+
+    task = Task(user_id=user.id, title="X")
+    session.add(task)
+    await session.flush()
+    assert task.id is not None
+
+    now = datetime(2026, 5, 8, 11, 0, tzinfo=UTC)
+    created = await schedule_reminders(
+        session,
+        user_id=user.id,
+        task_id=task.id,
+        due_at=now + timedelta(hours=2),
+        offsets=[-5, 0, 30],
+        now=now,
+    )
+    # ``-5`` skipped, ``0`` and ``30`` both produce a reminder
+    assert len(created) == 2
 
 
 @pytest.mark.asyncio
