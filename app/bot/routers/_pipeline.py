@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 
+from aiogram.types import Message
+
 from app.ai.classifier import classify_intent
 from app.ai.courier import courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
@@ -32,13 +34,20 @@ from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
+from app.bot import reactions
+from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.quote_replies import reply_to
 from app.bot.services import (
     find_task_by_query,
+    get_or_create_user,
     get_user_categories,
+    get_user_settings,
     log_ai_run,
     persist_classification,
+    store_inbox_text,
     update_task_horizon,
 )
+from app.bot.streaming import stream_reply
 from app.db.base import session_scope
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
@@ -366,3 +375,123 @@ async def _run_pipeline_inner(
         mode=courier_mode,
         style=courier_style,
     )
+
+
+# ── Shared text-pipeline glue (text router + /add command) ───────────
+
+
+async def enqueue_text_pipeline(message: Message, text: str) -> None:
+    """Run the full Groq pipeline on *text* on behalf of *message*'s sender.
+
+    Shared by the catch-all text router and the ``/add`` slash command:
+    both want the same UX (reaction ack, "⏳ Разбираю…" placeholder,
+    streamed reply, success/error reactions) and the same persistence
+    semantics (text stored in ``inbox_entries``, settings honoured).
+
+    Returns immediately after spawning the background task — the caller
+    keeps control of the aiogram update so other middleware can finish.
+    Any exception raised by the pipeline is logged and surfaced to the
+    user as a fallback "stored to inbox" message.
+    """
+    if message.from_user is None:
+        return
+
+    async with session_scope() as session:
+        user, _ = await get_or_create_user(
+            session,
+            telegram_id=message.from_user.id,
+            lang_code=message.from_user.language_code,
+        )
+        if user.onboarded_at is None:
+            await message.answer(NOT_ONBOARDED)
+            return
+        assert user.id is not None
+        entry = await store_inbox_text(
+            session,
+            user_id=user.id,
+            raw_text=text,
+            telegram_message_id=message.message_id,
+        )
+        user_id = user.id
+        user_tz = user.tz
+        inbox_id = entry.id
+        settings = await get_user_settings(session, user.id)
+        critic_mode = settings.critic_mode if settings else "confidence"
+        critic_threshold = settings.critic_confidence_threshold if settings else 0.7
+        courier_mode = settings.response_style_source if settings else "mix"
+        courier_style = settings.courier_template_style if settings else "neutral"
+        default_offsets: dict[str, list[int]] | None = (
+            {k: list(v) for k, v in settings.default_reminder_offsets.items()} if settings else None
+        )
+        morning_anchor = settings.morning_anchor if settings else "09:00"
+        evening_anchor = settings.evening_anchor if settings else "19:00"
+
+    logger.info(
+        "inbox.text_stored",
+        user_id=message.from_user.id,
+        text_len=len(text),
+    )
+
+    groq_router = get_groq_router()
+    if groq_router is None:
+        await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
+        return
+
+    from_user_id = message.from_user.id
+    chat_id = message.chat.id
+    user_message_id = message.message_id
+
+    # Tell the user "I see you" immediately via a reaction. Bot API
+    # 10.0 ``setMessageReaction`` is cheap, doesn't bump unread badges
+    # in the chat list, and reads as ack without producing yet
+    # another bubble. Best-effort — never blocks the pipeline.
+    if message.bot is not None:
+        await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.RECEIVE)
+
+    # Send a placeholder and edit it progressively once the
+    # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
+    # then the real reply types itself line-by-line.
+    placeholder = await message.answer(
+        "⏳ Разбираю…",
+        reply_parameters=reply_to(chat_id=chat_id, message_id=user_message_id),
+    )
+
+    async def _background() -> None:
+        try:
+            reply = await run_pipeline(
+                groq_router,
+                text,
+                from_user_id,
+                user_id,
+                user_tz,
+                inbox_id,
+                critic_mode=critic_mode,
+                confidence_threshold=critic_threshold,
+                courier_mode=courier_mode,
+                courier_style=courier_style,
+                default_reminder_offsets=default_offsets,
+                morning_anchor=morning_anchor,
+                evening_anchor=evening_anchor,
+            )
+            await stream_reply(placeholder, reply, bot=message.bot)
+            if message.bot is not None:
+                await reactions.set_reaction(
+                    message.bot, chat_id, user_message_id, reactions.SUCCESS
+                )
+        except Exception:
+            logger.exception(
+                "pipeline.error",
+                tg_user_id=from_user_id,
+                text_len=len(text),
+            )
+            if message.bot is not None:
+                await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.ERROR)
+            try:
+                await placeholder.edit_text(
+                    "Ошибка при разборе — сохранил во входящие, разберу позже."
+                )
+            except Exception:
+                await message.answer("Ошибка при разборе — сохранил во входящие, разберу позже.")
+
+    task = asyncio.create_task(_background())
+    task.add_done_callback(log_task_exception)

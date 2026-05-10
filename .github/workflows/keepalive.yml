@@ -1,0 +1,71 @@
+name: keepalive
+
+# Render Free spins down a web service after ~15 minutes of inactivity.
+# A cold-start can take 30-60 seconds, during which the user opening the
+# Mini-App via the bot menu sees Render's "service is starting" page.
+#
+# This workflow pings ``/healthz`` every ~10 minutes so the dyno never
+# idles long enough to spin down. The in-process scheduler tick
+# (``app.workers.runner``) also stays warm, so digests and reminders
+# fire on time even if the user isn't actively chatting with the bot.
+#
+# GitHub Actions cron is best-effort (can drift by a few minutes,
+# especially during peak hours) but free, automatic, and good enough
+# as a keep-alive — see ``docs/RENDER.md`` for the rationale.
+#
+# The Mini-App URL ``${BASE}/app/`` is also fetched once so the static
+# bundle and ``StaticFiles`` mount are warm on first user click; the
+# bulk of the cold-start latency is the Python boot, but priming the
+# static files saves an additional disk-read round-trip when the user
+# opens the bot menu seconds later.
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub-cron's hard floor is 5 minutes; we run
+    # less aggressively to stay polite to Render and avoid hammering
+    # the service when our own bot traffic already keeps it warm.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+# Don't pile up runs if a previous keepalive is still in flight (e.g.
+# Render returns a slow 200 during cold-start). Cancel-in-progress
+# would also cancel useful work; a small concurrency group with no
+# cancel is the right trade-off.
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /healthz
+        env:
+          BASE: https://plan-app-t6nx.onrender.com
+        # ``--fail`` exits non-zero on HTTP 4xx/5xx so a sustained
+        # outage shows up in the Actions tab as a failure email; the
+        # 60-second connect timeout matches Render's worst-case wake.
+        # ``-sS`` keeps the log clean on success but still surfaces
+        # error messages on failure.
+        run: |
+          set -euo pipefail
+          curl --fail -sS --max-time 60 "${BASE}/healthz" -o /dev/null \
+            && echo "healthz: 200 OK"
+
+      - name: Warm Mini-App static bundle
+        env:
+          BASE: https://plan-app-t6nx.onrender.com
+        # The Mini-App lives behind StaticFiles at ``/app``. A HEAD
+        # request is cheap and primes the bundle so the user's tap on
+        # "Открыть план" loads instantly.
+        # Best-effort — a non-2xx here doesn't fail the workflow,
+        # because /healthz is the contract; this is just an extra warm.
+        run: |
+          set +e
+          curl -sS --max-time 30 -I "${BASE}/app/" -o /dev/null \
+            && echo "app: warmed" \
+            || echo "app: warm failed (non-fatal)"
