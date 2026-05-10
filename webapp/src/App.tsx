@@ -6,8 +6,11 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { CalendarDays, Settings as SettingsIcon } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
+import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CategoryFilter } from "./components/CategoryFilter";
+import { ComingSoon } from "./components/ComingSoon";
 import { EmptyState } from "./components/EmptyState";
 import { Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
@@ -54,6 +57,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
+  // Phase 7b: top-level nav state. Settings + Calendar tabs render
+  // "coming soon" placeholders for now (PR C ships Settings, Phase 5.5
+  // ships Calendar). Tasks tab is the main content.
+  const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const loadShell = useCallback(async () => {
     try {
@@ -288,43 +295,62 @@ export default function App() {
         className="mx-auto max-w-md px-4"
         style={{
           paddingTop: "calc(var(--safe-top) + 0.75rem)",
-          paddingBottom: "calc(var(--safe-bottom) + 1rem)",
+          // Reserve space at bottom for the floating nav bar so the
+          // last task card isn't hidden behind it.
+          paddingBottom: "calc(var(--safe-bottom) + 5rem)",
         }}
       >
         <Header me={me} />
-        <HorizonTabs
-          horizons={horizons}
-          active={activeHorizon}
-          counts={counts}
-          onChange={handleHorizonChange}
-        />
-        <CategoryFilter
-          categories={categories}
-          selectedId={selectedCategory}
-          onChange={handleCategoryChange}
-        />
-        {tasks.length === 0 ? (
-          <EmptyState
-            emoji="🎉"
-            title="Ничего на горизонте"
-            hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+        {activeTab === "tasks" ? (
+          <>
+            <HorizonTabs
+              horizons={horizons}
+              active={activeHorizon}
+              counts={counts}
+              onChange={handleHorizonChange}
+            />
+            <CategoryFilter
+              categories={categories}
+              selectedId={selectedCategory}
+              onChange={handleCategoryChange}
+            />
+            {tasks.length === 0 ? (
+              <EmptyState
+                emoji="🎉"
+                title="Ничего на горизонте"
+                hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+              />
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {tasks.map((task) => (
+                  <li key={task.id}>
+                    <TaskCard
+                      task={task}
+                      tz={tz}
+                      onDone={handleDone}
+                      onMove={handleMove}
+                      onDelete={handleDelete}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : activeTab === "calendar" ? (
+          <ComingSoon
+            icon={CalendarDays}
+            title="Календарь скоро"
+            description="Задачи с датами в сетке на месяц и неделю с drag-n-drop."
           />
         ) : (
-          <ul className="flex flex-col gap-2">
-            {tasks.map((task) => (
-              <li key={task.id}>
-                <TaskCard
-                  task={task}
-                  tz={tz}
-                  onDone={handleDone}
-                  onMove={handleMove}
-                  onDelete={handleDelete}
-                />
-              </li>
-            ))}
-          </ul>
+          <ComingSoon
+            icon={SettingsIcon}
+            title="Настройки скоро"
+            description="Часовой пояс, время дайджестов, лимиты и тон-оф-войс ответов — всё это переедет сюда в следующей итерации."
+          />
         )}
       </div>
+      <BottomNav active={activeTab} onChange={setActiveTab} />
     </DndContext>
   );
 }
