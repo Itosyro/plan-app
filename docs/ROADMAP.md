@@ -2,18 +2,30 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-09):**
-> Phase 0..4 — **done и в проде**. Работает: голосовое/текстовое
+> **Status (на 2026-05-09 вечер):**
+> Phase 0..6.4 — **done и в проде**. Работает: голосовое/текстовое
 > сообщение → задачи + заметки + напоминания, утренний/вечерний
-> дайджест, команды `/today /week /...`, callback-кнопки, /settings.
-> 243 теста, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
+> дайджест (с pinned live-update), команды `/today /week /...`,
+> callback-кнопки, /settings, **Mini-App** в стиле Todoist на
+> `/app/`, **построчная** (streaming) выдача ответов бота, **emoji
+> reactions** как ack/result-индикаторы, **quote replies**
+> (`reply_parameters` + `quote`), **CloudStorage** для UI-prefs.
+> 293 теста, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
 >
 > Все critical (C-1..C-6) и important (I-1..I-8) findings из
 > `docs/REVIEW-2026-05-09-v2.md` — закрыты.
 >
+> **Прод-операция:**
+> - Alembic migrations 0001..0008 накатаны на Neon.
+> - Render `startCommand` теперь авто-применяет `alembic upgrade
+>   head` на каждом деплое (free plan не имеет preDeployCommand,
+>   так что вписали в startCommand).
+>
 > Что осталось:
-> - Phase 5 (Mini App) — **не начат**.
-> - Phase 6 (Polish) — **частично** (structlog ✓, mypy strict ✓; golden-evals/DSPy/backup ✗).
+> - Phase 5.4+ (Mini-App углубление: counts, drag-drop, calendar) —
+>   **next**.
+> - Phase 7 (наблюдаемость + эвалы) — **частично** (structlog ✓,
+>   mypy strict ✓; golden-evals/DSPy/backup/Sentry ✗).
 > - Minor M-1..M-9 из v2-ревью — открыты.
 
 ---
@@ -149,7 +161,7 @@
 
 ---
 
-## Phase 5 — Telegram mini-app 🟡 NOT STARTED
+## Phase 5 — Telegram mini-app 🟢 DONE (5.1-5.3) / 🟡 NEXT (5.4+)
 
 **Цель:** красивый веб-UI внутри Telegram.
 
@@ -184,9 +196,72 @@
 полностью equivalent'но; всё что есть в mini-app — отражается в боте
 и наоборот.
 
+**Что сделано (PR #64, #65 hotfix):**
+- ✅ 5.1 Backend API — `/api/me`, `/api/tasks`, `/api/notes`,
+  `/api/categories`, `/api/horizons`, `/api/inbox` с HMAC-валидацией
+  initData (TTL 24 ч).
+- ✅ 5.2 Каркас фронта — React 18 + Vite 5 + Tailwind 3 + TypeScript
+  strict, mobile-first под Telegram theme (CSS vars).
+- ✅ 5.3 Список с фильтрами — pill-табы горизонтов, фильтр по
+  категории, карточки с done/move/delete, optimistic updates.
+- ✅ Streaming-replies в боте: построчное `editMessageText` с
+  rate-limit-aware retry-ами и `sendChatAction("typing")`.
+- ✅ `MenuButtonWebApp` глобально через `setChatMenuButton` (Bot API
+  10.0).
+
+**Что осталось (Phase 5.4+, follow-up):**
+- ❌ 5.4 Counts endpoint (`GET /api/tasks/counts`) — один запрос
+  возвращает счётчики по всем горизонтам, чтобы pill-табы сразу
+  показывали `Сегодня (3) / Завтра (1) / Неделе (8)`.
+- ❌ 5.4 Drag-n-drop reorder — `dnd-kit`, колонки = горизонты, drag
+  меняет horizon через PATCH.
+- ❌ 5.5 Календарный вид — FullCalendar/react, события по `due_at`.
+- ❌ 5.6 Карточка задачи — модалка с TaskEvent-историей и оригиналом
+  inbox_entry.
+
 ---
 
-## Phase 6 — Polish, наблюдаемость, эвалы 🟡 PARTIAL
+## Phase 6 — Bot API 10.0 polish 🟢 DONE
+
+**Цель:** довести бот до состояния, использующего новинки Bot API
+10.0 (8 мая 2026) для улучшения «человечности» взаимодействия.
+
+Из 4 фич, заявленных пользователем (1, 2, 3, 6 из списка 10.0),
+реализованы все четыре. Остальные (Stars / Donations / Business
+Mode / Biometric auth) — **отложены явно, не приоритетные**.
+
+**Что сделано:**
+- ✅ **6.1 Reactions** (PR #66, merged) — `setMessageReaction`. 👀 при
+  получении user message → 🎉 при успехе → 😢 при ошибке. Allow-list
+  эмодзи + best-effort: ошибки Telegram never break the pipeline.
+  Файл: `app/bot/reactions.py`, 7 unit-тестов.
+- ✅ **6.2 Quote replies** (PR #67, merged) — `reply_parameters` +
+  `quote` (Bot API 7.0+). Бот «прикрепляет» свой ответ к user
+  message с tap-to-jump стрелкой; `safe_quote()` валидирует, что
+  фрагмент действительно substring оригинала (Telegram возвращает
+  `QUOTE_TEXT_INVALID` иначе). Файл: `app/bot/quote_replies.py`,
+  7 unit-тестов.
+- ✅ **6.3 Pinned «top today»** (PR #69, merged) — утренний дайджест
+  пинится в чате, в течение дня live-обновляется через
+  `editMessageText` при каждом mark-done (через inline-кнопку или
+  Mini-App). Migration 0008 добавляет `pinned_morning_*` на
+  `user_settings`. Файл: `app/bot/pinned_today.py`, 7 unit-тестов.
+- ✅ **6.4 CloudStorage** (PR #68, merged) — Mini-App UI prefs
+  (`last_horizon`, `last_category`) персистятся через
+  `WebApp.CloudStorage` (Bot API 6.9+) с откатом на `localStorage`.
+  Синкается между Telegram-клиентами одного юзера. Файл:
+  `webapp/src/lib/storage.ts`.
+
+**Что НЕ делаем (по решению пользователя):**
+- ❌ Stars / Telegram Payments — отложено в будущее.
+- ❌ Business Mode — отложено в будущее.
+- ❌ Biometric auth в Mini-App — отложено в будущее.
+- ❌ HapticFeedback расширенный (extra точечные вибрации) — низкий
+  ROI, текущий уровень достаточный.
+
+---
+
+## Phase 7 — Polish, наблюдаемость, эвалы 🟡 PARTIAL
 
 **Цель:** довести до состояния «не стыдно показать».
 
