@@ -6,7 +6,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { CalendarDays, Settings as SettingsIcon } from "lucide-react";
+import { CalendarDays } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CategoryFilter } from "./components/CategoryFilter";
@@ -14,6 +14,7 @@ import { ComingSoon } from "./components/ComingSoon";
 import { EmptyState } from "./components/EmptyState";
 import { Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
+import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { haptic } from "./lib/telegram";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
@@ -57,9 +58,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
-  // Phase 7b: top-level nav state. Settings + Calendar tabs render
-  // "coming soon" placeholders for now (PR C ships Settings, Phase 5.5
-  // ships Calendar). Tasks tab is the main content.
+  // Phase 7c: Tasks + Settings tabs are real screens. Calendar still
+  // renders a "coming soon" placeholder (Phase 5.5).
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const loadShell = useCallback(async () => {
@@ -342,13 +342,9 @@ export default function App() {
             title="Календарь скоро"
             description="Задачи с датами в сетке на месяц и неделю с drag-n-drop."
           />
-        ) : (
-          <ComingSoon
-            icon={SettingsIcon}
-            title="Настройки скоро"
-            description="Часовой пояс, время дайджестов, лимиты и тон-оф-войс ответов — всё это переедет сюда в следующей итерации."
-          />
-        )}
+        ) : me ? (
+          <SettingsPage me={me} onUpdated={setMe} />
+        ) : null}
       </div>
       <BottomNav active={activeTab} onChange={setActiveTab} />
     </DndContext>

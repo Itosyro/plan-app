@@ -172,6 +172,136 @@ async def test_me_happy(
     assert "critic_mode" in body["settings"]
 
 
+@pytest.mark.asyncio
+async def test_me_patch_display_name_and_tz(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={"display_name": "Юсуф-2", "tz": "Asia/Almaty"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["display_name"] == "Юсуф-2"
+    assert body["tz"] == "Asia/Almaty"
+    # Settings unchanged because nothing was supplied for them.
+    assert body["settings"]["critic_mode"] == "confidence"
+
+    # GET reflects the persisted state.
+    fresh = await aclient.get("/api/me", headers=auth_headers)
+    assert fresh.json()["tz"] == "Asia/Almaty"
+
+
+@pytest.mark.asyncio
+async def test_me_patch_settings_subset(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "morning_digest_at": "07:00",
+                "courier_template_style": "playful",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["settings"]["morning_digest_at"] == "07:00"
+    assert body["settings"]["courier_template_style"] == "playful"
+    # Untouched fields keep their defaults.
+    assert body["settings"]["evening_digest_at"] == "21:00"
+
+
+@pytest.mark.asyncio
+async def test_me_patch_rejects_invalid_tz(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={"tz": "Mars/Phobos"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_me_patch_rejects_invalid_setting_value(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={"settings": {"critic_mode": "yelling"}},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_me_patch_rejects_unknown_field(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``extra=\"forbid\"`` rejects fields the client made up."""
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={"settings": {"made_up": "1"}},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_me_patch_empty_body_is_noop(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.patch("/api/me", headers=auth_headers, json={})
+    assert resp.status_code == 200
+    assert resp.json()["display_name"] == "Тестер"
+
+
+@pytest.mark.asyncio
+async def test_me_patch_requires_init_data(aclient: httpx.AsyncClient, seeded: int) -> None:
+    resp = await aclient.patch("/api/me", json={"display_name": "X"})
+    assert resp.status_code == 401
+
+
+# ── /api/timezones ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_timezones_returns_popular_list(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.get("/api/timezones", headers=auth_headers)
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert {row["iana"] for row in rows} >= {"Europe/Moscow", "Asia/Almaty"}
+    # Each row has a friendly Russian label.
+    assert any(row["label"] == "Москва" for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_timezones_requires_init_data(aclient: httpx.AsyncClient, seeded: int) -> None:
+    resp = await aclient.get("/api/timezones")
+    assert resp.status_code == 401
+
+
 # ── /api/horizons ────────────────────────────────────────────────────
 
 

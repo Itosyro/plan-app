@@ -47,6 +47,32 @@ export interface UserSettings {
   week_due_semantic: string;
 }
 
+// Mirrors app/api/schemas.py::UserSettingsUpdateIn — every field
+// optional. Server validates each value against the allow-list in
+// app/bot/services/settings.py::ALLOWED_SETTING_VALUES.
+export interface UserSettingsUpdate {
+  critic_mode?: string;
+  morning_digest_at?: string;
+  evening_digest_at?: string;
+  response_style_source?: string;
+  courier_template_style?: string;
+  week_due_semantic?: string;
+}
+
+// Mirrors app/api/schemas.py::MeUpdateIn.
+export interface MeUpdate {
+  display_name?: string;
+  tz?: string;
+  settings?: UserSettingsUpdate;
+}
+
+// Mirrors app/api/schemas.py::TimezoneOut. ``label`` is the friendly
+// Russian city name; ``iana`` is the persisted value.
+export interface Timezone {
+  label: string;
+  iana: string;
+}
+
 export interface Me {
   id: number;
   telegram_id: number;

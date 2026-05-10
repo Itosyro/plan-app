@@ -133,6 +133,42 @@ class UserSettingsOut(_ConfiguredModel):
     week_due_semantic: str
 
 
+class UserSettingsUpdateIn(BaseModel):
+    """Body for ``PATCH /api/me`` ``settings`` field.
+
+    Every key is optional; only the supplied fields are mutated. Each
+    value is validated against the same allow-list as the bot
+    ``/settings`` callbacks (``ALLOWED_SETTING_VALUES``). Unknown values
+    bubble up as 422 from the service layer; unknown keys are rejected
+    here by ``extra="forbid"``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    critic_mode: str | None = None
+    morning_digest_at: str | None = None
+    evening_digest_at: str | None = None
+    response_style_source: str | None = None
+    courier_template_style: str | None = None
+    week_due_semantic: str | None = None
+
+
+class MeUpdateIn(BaseModel):
+    """Body for ``PATCH /api/me``.
+
+    All fields optional; only supplied keys are mutated. ``display_name``
+    must be non-empty when present (``None`` means "don't touch it").
+    ``tz`` is validated as a real IANA timezone server-side.
+    ``settings`` is a nested patch against ``UserSettings``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    tz: str | None = Field(default=None, min_length=1, max_length=64)
+    settings: UserSettingsUpdateIn | None = None
+
+
 class MeOut(_ConfiguredModel):
     id: int
     telegram_id: int
@@ -140,6 +176,21 @@ class MeOut(_ConfiguredModel):
     tz: str
     onboarded: bool
     settings: UserSettingsOut | None = None
+
+
+# ── /api/timezones ───────────────────────────────────────────────────
+
+
+class TimezoneOut(_ConfiguredModel):
+    """A single popular-timezone choice for the Settings UI.
+
+    Mirrors ``app/bot/onboarding.py::POPULAR_TIMEZONES``. ``label`` is
+    the friendly Russian city name shown in the picker; ``iana`` is the
+    persisted value.
+    """
+
+    label: str
+    iana: str
 
 
 # ── /api/inbox ───────────────────────────────────────────────────────
@@ -159,11 +210,14 @@ __all__ = [
     "HorizonOut",
     "InboxEntryOut",
     "MeOut",
+    "MeUpdateIn",
     "NoteOut",
     "TaskCountsOut",
     "TaskOut",
     "TaskPriority",
     "TaskStatus",
     "TaskUpdateIn",
+    "TimezoneOut",
     "UserSettingsOut",
+    "UserSettingsUpdateIn",
 ]
