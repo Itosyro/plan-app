@@ -83,14 +83,18 @@ import type {
   Category,
   Horizon,
   Me,
+  MeUpdate,
   Note,
   Task,
   TaskCounts,
   TaskUpdate,
+  Timezone,
 } from "../types";
 
 export const apiClient = {
   me: () => api<Me>("/me"),
+  patchMe: (body: MeUpdate) => api<Me>("/me", { method: "PATCH", body }),
+  timezones: () => api<Timezone[]>("/timezones"),
   horizons: () => api<Horizon[]>("/horizons"),
   categories: () => api<Category[]>("/categories"),
   createCategory: (name: string) =>
