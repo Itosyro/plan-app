@@ -6,6 +6,59 @@
 
 ---
 
+## 2026-05-09 (вечер) — Phase 6.1-6.4 + ops: prod migrations + auto-deploy
+
+**Phase 6.1 Reactions (PR #66):** `app/bot/reactions.py` — bot
+ставит 👀 на полученное сообщение, 🎉 на успех, 😢 на ошибку
+через `setMessageReaction` (Bot API 7.0+). Allow-list эмодзи,
+best-effort: ошибки Telegram не валят пайплайн. 7 unit-тестов.
+
+**Phase 6.2 Quote replies (PR #67):** `app/bot/quote_replies.py`
++ `app/bot/streaming.py`. Ответ бота прикрепляется к user
+message с tap-to-jump стрелкой через `reply_parameters.quote`
+(Bot API 7.0+). `safe_quote()` проверяет, что фрагмент
+действительно substring оригинала (Telegram возвращает
+`QUOTE_TEXT_INVALID` иначе). 7 unit-тестов.
+
+**Phase 6.3 Pinned morning digest (PR #69):**
+`app/bot/pinned_today.py`. Утренний дайджест пинится в чате,
+в течение дня live-обновляется через `editMessageText` при
+mark-done (callback ИЛИ Mini-App PATCH). Migration 0008
+добавляет `pinned_morning_chat_id`/`message_id`/`date` на
+`user_settings`. App.state.bot для cross-router доступа в
+API. 7 unit-тестов.
+
+**Phase 6.4 CloudStorage (PR #68):** `webapp/src/lib/storage.ts`
+— unified async storage поверх `WebApp.CloudStorage` с откатом
+на `localStorage`. Mini-App запоминает `last_horizon` /
+`last_category` между сессиями и между Telegram-клиентами.
+
+**Прод-операция:**
+- **Migrations 0002-0008 накатаны на Neon** (раньше прод был
+  на 0001, тiлько 5 базовых таблиц существовали; 7 таблиц из
+  Phase 2-6 отсутствовали).
+- **Render `startCommand`** обновлён до
+  `uv run alembic upgrade head && uv run uvicorn ...` —
+  изменение и в `render.yaml`, и в живом Render service через
+  API. Свежие деплои теперь авто-мигрируют, дрифт
+  невозможен.
+- Удалены legacy Render services plan-bot и plan-api.
+
+**Тесты:** 286 → 293 passing (+7 от 6.3).
+ruff/mypy clean. CI green на всех 4 PR-ах.
+
+**Доки:** `docs/HANDOFF-2026-05-09-v9.md`,
+`docs/ROADMAP.md` (Phase 5 → DONE 5.1-5.3 / NEXT 5.4+,
+Phase 6 → DONE по 4 фичам, Phase 7 → polish).
+
+**Из Bot API 10.0 пользователь явно отказался от:** Stars,
+Business Mode, Biometric auth — отложены в будущее.
+
+**Что дальше:** Phase 5.4 (counts endpoint, drag-n-drop
+reorder, calendar/kanban view).
+
+---
+
 ## 2026-05-09 — Phase 5: Telegram Mini App + streaming bot replies
 
 **Бэкенд (REST API под `/api/*`):**

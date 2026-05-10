@@ -44,7 +44,12 @@ services:
       npm ci --no-audit --no-fund
       npm run build
       cd ..
-    startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Run Alembic migrations on every deploy so the schema follows the
+    # code automatically. Free plan doesn't have ``preDeployCommand`` →
+    # we prepend the upgrade step to ``startCommand`` so it runs once
+    # per container start. Idempotent: on subsequent deploys with no new
+    # migrations, ``alembic upgrade head`` is a few-ms no-op.
+    startCommand: uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ENV
         value: production

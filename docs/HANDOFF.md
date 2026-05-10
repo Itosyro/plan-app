@@ -2,7 +2,10 @@
 
 > Этот файл — **единственное**, что нужно прочитать, чтобы войти в курс дела. Всё остальное (`PLAN.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `IDEAS.md`) — детализация.
 >
-> Если ты — нейронка, открывшая репо впервые: прочти **§0.1 (актуальный handoff)**, потом `docs/PROGRESS.md` (две верхние записи), потом [`docs/PLAN.md`](PLAN.md), потом [`docs/ARCHITECTURE.md`](ARCHITECTURE.md), потом [`.agents/skills/CATALOG.md`](../.agents/skills/CATALOG.md), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
+> **Самый свежий контекст:** [`docs/HANDOFF-2026-05-09-v9.md`](HANDOFF-2026-05-09-v9.md)
+> (Phase 5 + Phase 6.1-6.4, прод-миграции, авто-deploy с alembic).
+>
+> Если ты — нейронка, открывшая репо впервые: прочти **HANDOFF v9 → §0.1 (актуальный handoff)**, потом `docs/PROGRESS.md` (две верхние записи), потом [`docs/PLAN.md`](PLAN.md), потом [`docs/ARCHITECTURE.md`](ARCHITECTURE.md), потом [`.agents/skills/CATALOG.md`](../.agents/skills/CATALOG.md), потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
 
 ---
 
