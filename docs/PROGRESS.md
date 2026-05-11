@@ -6,6 +6,63 @@
 
 ---
 
+## 2026-05-11 — feat: soft-delete trash bin with 24h retention (PR-D)
+
+Мягкое удаление задач и заметок вместо физического. Удалённые записи
+остаются в БД 24 часа, после чего воркер вычищает их. Пользователь может
+восстановить или удалить навсегда через страницу «Корзина» в настройках.
+
+**Backend**
+- `app/db/models.py` — добавлено поле `deleted_at: datetime | None` к моделям
+  `Task` и `Note`.
+- `alembic/versions/0009_soft_delete.py` — миграция: `ADD COLUMN deleted_at` +
+  partial-индексы `ix_tasks_active`, `ix_notes_active` (`WHERE deleted_at IS NULL`)
+  для быстрых горячих SELECT.
+- `app/bot/services/tasks.py::delete_task` — `session.delete(task)` →
+  `task.deleted_at = utcnow_naive()`. Зависимые `TaskEvent` и `Reminder`
+  остаются (CASCADE сработает при физическом удалении воркером).
+- `app/api/routers/notes.py::delete_note` — аналогично, soft-delete.
+- Все SELECT-пути добавляют `.where(Model.deleted_at.is_(None))`:
+  `list_tasks`, `task_counts`, `list_notes`, `get_note`, `patch_note`,
+  `get_tasks_by_horizon`, `get_all_notes`, `get_categories_with_counts`,
+  `find_task_by_query`, `get_task_by_id`.
+- `app/workers/scheduler.py` — `tick_reminders` не шлёт напоминания для
+  soft-deleted задач; новая функция `purge_trash()` физически удаляет записи
+  старше 24 ч (вызывается в `main_async`).
+- `app/api/routers/trash.py` (НОВЫЙ):
+  - `GET /api/trash` — список soft-deleted задач/заметок юзера.
+  - `GET /api/trash/counts` — кол-во удалённых по типу (badge в UI).
+  - `POST /api/trash/{kind}/{id}/restore` — восстановление (`deleted_at = None`).
+  - `DELETE /api/trash/{kind}/{id}` — физическое удаление из корзины.
+- `app/api/schemas.py` — `TrashItemOut`, `TrashCountsOut`, `TrashKind`.
+- `app/main.py` — подключен `api_trash` router на `/api/trash`.
+
+**Frontend**
+- `webapp/src/types.ts` — `TrashItem`, `TrashCounts`, `TrashKind`.
+- `webapp/src/api/client.ts` — `trash()`, `trashCounts()`, `restoreTrashItem()`,
+  `hardDeleteTrashItem()`.
+- `webapp/src/lib/router.ts` — маршрут `/trash`.
+- `webapp/src/components/TrashPage.tsx` (НОВЫЙ) — страница корзины с секциями
+  «Задачи» / «Заметки», кнопками восстановления (RotateCcw) и удаления навсегда
+  (Trash2), timestamp «X ч назад». Empty state при пустой корзине.
+- `webapp/src/components/SettingsPage.tsx` — секция «Данные» с строкой «Корзина»
+  (IconTile slate Trash2) + badge с количеством удалённых элементов. Тап →
+  navigate("/trash").
+- `webapp/src/App.tsx` — рендер `<TrashPage />` при `route.path === "/trash"`.
+
+**Tests** (+ 7 новых, всего 338 passed)
+- `test_soft_delete_filters_lists` — DELETE 204, списки пустые, строки в БД
+  с `deleted_at`.
+- `test_purge_after_24h` — `purge_trash()` удаляет записи старше 24 ч.
+- `test_purge_ignores_recent` — свежие записи не трогает.
+- `test_restore_idempotent` — второй restore → 404.
+- `test_trash_lists_only_users_own` — ownership isolation в корзине.
+- `test_trash_counts` — `GET /api/trash/counts` корректные значения.
+- `test_hard_delete_from_trash` — физическое удаление через API.
+- `test_delete_task_fk` — обновлён под soft-delete + CASCADE при purge.
+
+---
+
 ## 2026-05-11 — feat(webapp): Notes tab — list/detail/create UI (PR-C)
 
 Заметки как отдельный таб в Mini-App. До этого `Note` модель + GET-эндпоинт

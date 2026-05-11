@@ -237,6 +237,28 @@ class InboxEntryOut(_ConfiguredModel):
     received_at: datetime
 
 
+# ── /api/trash ───────────────────────────────────────────────────────
+
+TrashKind = Literal["task", "note"]
+
+
+class TrashItemOut(_ConfiguredModel):
+    """One soft-deleted record shown in the Trash page."""
+
+    id: int
+    kind: TrashKind
+    title: str
+    deleted_at: datetime
+    category_name: str | None = None
+
+
+class TrashCountsOut(_ConfiguredModel):
+    """Aggregate counts for the trash badge."""
+
+    tasks: int = 0
+    notes: int = 0
+
+
 __all__ = [
     "CategoryCreateIn",
     "CategoryOut",
@@ -253,6 +275,9 @@ __all__ = [
     "TaskStatus",
     "TaskUpdateIn",
     "TimezoneOut",
+    "TrashCountsOut",
+    "TrashItemOut",
+    "TrashKind",
     "UserSettingsOut",
     "UserSettingsUpdateIn",
 ]

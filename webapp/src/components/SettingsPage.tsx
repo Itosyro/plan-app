@@ -21,12 +21,14 @@ import {
   ShieldCheck,
   Sun,
   Sunset,
+  Trash2,
   User,
   type LucideIcon,
 } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { haptic } from "../lib/telegram";
-import type { Me, Timezone } from "../types";
+import { navigate } from "../lib/router";
+import type { Me, TrashCounts, Timezone } from "../types";
 import { BottomSheetSelect } from "./BottomSheetSelect";
 import { IconTile, type TileTone } from "./IconTile";
 
@@ -88,6 +90,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [editingTz, setEditingTz] = useState(false);
+  const [trashCounts, setTrashCounts] = useState<TrashCounts | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,8 +100,15 @@ export function SettingsPage({ me, onUpdated }: Props) {
         if (!cancelled) setTimezones(rows);
       })
       .catch(() => {
-        // Non-fatal: the picker falls back to free-text entry.
         if (!cancelled) setTimezones([]);
+      });
+    apiClient
+      .trashCounts()
+      .then((counts) => {
+        if (!cancelled) setTrashCounts(counts);
+      })
+      .catch(() => {
+        // Non-fatal: badge won't show.
       });
     return () => {
       cancelled = true;
@@ -263,6 +273,10 @@ export function SettingsPage({ me, onUpdated }: Props) {
       <SettingsSection title="Уведомления">
         <BellRow />
       </SettingsSection>
+
+      <SettingsSection title="Данные">
+        <TrashRow trashCounts={trashCounts} />
+      </SettingsSection>
     </div>
   );
 }
@@ -338,6 +352,28 @@ function BellRow() {
       </span>
       <span className="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600">
         Включены
+      </span>
+    </CardRow>
+  );
+}
+
+// ── Trash row ───────────────────────────────────────────────────────
+
+function TrashRow({ trashCounts }: { trashCounts: TrashCounts | null }) {
+  const total = trashCounts ? trashCounts.tasks + trashCounts.notes : 0;
+  return (
+    <CardRow as="button" onClick={() => navigate("/trash")}>
+      <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+        <IconTile icon={Trash2} tone="slate" size="md" />
+        <span className="truncate font-medium">Корзина</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
+        {total > 0 && (
+          <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-600">
+            {total}
+          </span>
+        )}
+        <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
       </span>
     </CardRow>
   );

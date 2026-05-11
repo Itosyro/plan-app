@@ -9,6 +9,7 @@ from app.api.auth import current_user
 from app.api.schemas import NoteCreateIn, NoteOut, NoteUpdateIn
 from app.db.base import session_scope
 from app.db.models import Category, Note, User
+from app.shared.time import utcnow_naive
 
 router = APIRouter()
 
@@ -38,7 +39,10 @@ async def list_notes(
     if user.id is None:
         raise RuntimeError("authenticated user has no id")
     async with session_scope() as session:
-        stmt = select(Note, Category.name).where(Note.user_id == user.id)
+        stmt = select(Note, Category.name).where(
+            Note.user_id == user.id,
+            Note.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
         stmt = stmt.join(Category, Category.id == Note.category_id, isouter=True)  # type: ignore[arg-type]
         if category_id is not None:
             stmt = stmt.where(Note.category_id == category_id)
@@ -56,7 +60,7 @@ async def get_note(note_id: int, user: User = Depends(current_user)) -> NoteOut:
         result = await session.exec(
             select(Note, Category.name)
             .join(Category, Category.id == Note.category_id, isouter=True)  # type: ignore[arg-type]
-            .where(Note.id == note_id)
+            .where(Note.id == note_id, Note.deleted_at.is_(None))  # type: ignore[union-attr]
         )
         row = result.first()
         if row is None or row[0].user_id != user.id:
@@ -124,7 +128,9 @@ async def patch_note(
         raise RuntimeError("authenticated user has no id")
 
     async with session_scope() as session:
-        result = await session.exec(select(Note).where(Note.id == note_id))
+        result = await session.exec(
+            select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))  # type: ignore[union-attr]
+        )
         note = result.first()
         if note is None or note.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
@@ -167,10 +173,13 @@ async def delete_note(note_id: int, user: User = Depends(current_user)) -> None:
     if user.id is None:
         raise RuntimeError("authenticated user has no id")
     async with session_scope() as session:
-        result = await session.exec(select(Note).where(Note.id == note_id))
+        result = await session.exec(
+            select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))  # type: ignore[union-attr]
+        )
         note = result.first()
         if note is None or note.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
-        await session.delete(note)
+        note.deleted_at = utcnow_naive()
+        session.add(note)
         await session.flush()
     return None

@@ -35,6 +35,7 @@ from app.api.routers import me as api_me
 from app.api.routers import notes as api_notes
 from app.api.routers import tasks as api_tasks
 from app.api.routers import timezones as api_timezones
+from app.api.routers import trash as api_trash
 from app.bot import build_dispatcher
 from app.bot.services import claim_update
 from app.db.base import dispose_engine, init_engine, session_scope
@@ -181,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_me.router, prefix="/api/me", tags=["me"])
     app.include_router(api_tasks.router, prefix="/api/tasks", tags=["tasks"])
     app.include_router(api_notes.router, prefix="/api/notes", tags=["notes"])
+    app.include_router(api_trash.router, prefix="/api/trash", tags=["trash"])
     app.include_router(api_categories.router, prefix="/api/categories", tags=["categories"])
     app.include_router(api_horizons.router, prefix="/api/horizons", tags=["horizons"])
     app.include_router(api_inbox.router, prefix="/api/inbox", tags=["inbox"])

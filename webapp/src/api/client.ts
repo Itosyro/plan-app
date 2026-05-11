@@ -91,6 +91,9 @@ import type {
   TaskCounts,
   TaskUpdate,
   Timezone,
+  TrashCounts,
+  TrashItem,
+  TrashKind,
 } from "../types";
 
 export const apiClient = {
@@ -115,4 +118,10 @@ export const apiClient = {
   patchNote: (id: number, body: NoteUpdate) =>
     api<Note>(`/notes/${id}`, { method: "PATCH", body }),
   deleteNote: (id: number) => api<void>(`/notes/${id}`, { method: "DELETE" }),
+  trash: () => api<TrashItem[]>("/trash"),
+  trashCounts: () => api<TrashCounts>("/trash/counts"),
+  restoreTrashItem: (kind: TrashKind, id: number) =>
+    api<{ status: string }>(`/trash/${kind}/${id}/restore`, { method: "POST" }),
+  hardDeleteTrashItem: (kind: TrashKind, id: number) =>
+    api<void>(`/trash/${kind}/${id}`, { method: "DELETE" }),
 };

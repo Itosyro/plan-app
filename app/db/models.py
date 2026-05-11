@@ -190,6 +190,7 @@ class Task(SQLModel, table=True):
     needs_clarification: bool = Field(default=False)
     confidence: float = Field(default=1.0)
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+    deleted_at: datetime | None = Field(default=None)
 
 
 class Note(SQLModel, table=True):
@@ -204,6 +205,7 @@ class Note(SQLModel, table=True):
     body: str | None = Field(default=None)
     source_inbox_id: int | None = Field(default=None, foreign_key="inbox_entries.id")
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+    deleted_at: datetime | None = Field(default=None)
 
 
 class AiRun(SQLModel, table=True):

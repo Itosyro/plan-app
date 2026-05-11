@@ -346,6 +346,7 @@ async def find_task_by_query(
             Task.user_id == user_id,
             Task.title.ilike(pattern, escape="\\"),  # type: ignore[attr-defined]
             Task.status != "done",
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(Task.created_at.desc()),  # type: ignore[attr-defined]
     )
@@ -442,6 +443,7 @@ async def get_tasks_by_horizon(
             Task.user_id == user_id,
             Task.horizon_id == horizon.id,
             Task.status != "done",
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(Task.created_at.desc()),  # type: ignore[attr-defined]
     )
@@ -454,10 +456,13 @@ async def get_all_notes(
     *,
     limit: int = 20,
 ) -> list[Note]:
-    """Return the most recent notes for a user."""
+    """Return the most recent notes for a user (excludes soft-deleted)."""
     result = await session.exec(
         select(Note)
-        .where(Note.user_id == user_id)
+        .where(
+            Note.user_id == user_id,
+            Note.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
         .order_by(Note.created_at.desc())  # type: ignore[attr-defined]
         .limit(limit),
     )
@@ -477,7 +482,9 @@ async def get_categories_with_counts(
         select(Category, func.count(Task.id))  # type: ignore[arg-type]
         .join(
             Task,
-            (Task.category_id == Category.id) & (Task.status != "done"),  # type: ignore[arg-type]
+            (Task.category_id == Category.id)
+            & (Task.status != "done")
+            & (Task.deleted_at.is_(None)),  # type: ignore[union-attr]
             isouter=True,
         )
         .where(Category.user_id == user_id)
@@ -517,7 +524,11 @@ async def delete_task(
     task: Task,
     user_id: int,
 ) -> None:
-    """Delete a task and log the event."""
+    """Soft-delete a task by setting ``deleted_at``.
+
+    The record stays in the DB for 24 hours (recoverable via the Trash
+    page); a background worker purges it after that.
+    """
     if task.id is not None:
         session.add(
             TaskEvent(
@@ -528,9 +539,10 @@ async def delete_task(
         )
         await session.flush()
 
-    await session.delete(task)
+    task.deleted_at = utcnow_naive()
+    session.add(task)
     await session.flush()
-    logger.info("task.deleted", task_id=task.id, user_id=user_id)
+    logger.info("task.soft_deleted", task_id=task.id, user_id=user_id)
 
 
 async def get_task_by_id(
@@ -538,8 +550,12 @@ async def get_task_by_id(
     user_id: int,
     task_id: int,
 ) -> Task | None:
-    """Return a task by ID if it belongs to the user."""
+    """Return a task by ID if it belongs to the user (excludes soft-deleted)."""
     result = await session.exec(
-        select(Task).where(Task.id == task_id, Task.user_id == user_id),
+        select(Task).where(
+            Task.id == task_id,
+            Task.user_id == user_id,
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        ),
     )
     return result.first()
