@@ -118,3 +118,60 @@ class ReorderRequest(BaseModel):
         default=None,
         description="Raw time expression from the user",
     )
+
+
+# ── PR-I1: Edit intent detection ─────────────────────────────────────
+
+
+class EditIntent(BaseModel):
+    """Output of the intent detection LLM call (PR-I1..I3).
+
+    Determines whether the user wants to *edit* an existing task
+    (complete / delete / reopen / rename / change deadline / priority /
+    category) or *create* a new one (the default path).
+    """
+
+    intent: Literal[
+        "create",
+        "reorder_horizon",
+        "reorder_time",
+        "complete",
+        "delete",
+        "reopen",
+        "rename",
+        "set_due",
+        "set_priority",
+        "set_category",
+        "list_done",
+        "none",
+    ] = Field(description="Detected user intent")
+    task_query: str | None = Field(
+        default=None,
+        description="Search string to find the target task (Russian)",
+    )
+    new_horizon: Literal["today", "tomorrow", "week", "month", "year", "someday"] | None = Field(
+        default=None,
+        description="Target horizon for reorder_horizon intent",
+    )
+    new_due_raw: str | None = Field(
+        default=None,
+        description="Raw time expression for reorder_time / set_due",
+    )
+    new_title: str | None = Field(
+        default=None,
+        description="New title for rename intent",
+    )
+    new_priority: Literal["high", "medium", "low"] | None = Field(
+        default=None,
+        description="New priority for set_priority intent",
+    )
+    new_category: str | None = Field(
+        default=None,
+        description="New category name for set_category intent",
+    )
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Model confidence in the detected intent",
+    )
