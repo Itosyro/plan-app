@@ -35,7 +35,7 @@ from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
-from app.bot.edit_executor import EDIT_INTENTS_I1, execute_edit
+from app.bot.edit_executor import EDIT_INTENTS_ALL, execute_edit
 from app.bot.services import (
     find_task_by_query,
     get_user_categories,
@@ -257,7 +257,7 @@ async def _run_pipeline_inner(
     """Inner pipeline body, called only while both semaphores are held."""
     # PR-I1: detect edit intent before falling through to create-path.
     edit_intent = await detect_intent(groq_router, text)
-    if edit_intent.intent in EDIT_INTENTS_I1:
+    if edit_intent.intent in EDIT_INTENTS_ALL:
         return await execute_edit(edit_intent, user_id)
 
     # Legacy reorder path — kept as fallback for intents not yet in

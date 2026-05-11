@@ -484,6 +484,87 @@ async def update_task_category(
     return task
 
 
+async def update_task_title(
+    session: AsyncSession,
+    task: Task,
+    new_title: str,
+    user_id: int,
+) -> Task:
+    """Rename a task and log the event."""
+    old_title = task.title
+    task.title = new_title
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="renamed",
+                payload_json={"old_title": old_title, "new_title": new_title},
+            ),
+        )
+        await session.flush()
+
+    logger.info("task.renamed", task_id=task.id, user_id=user_id)
+    return task
+
+
+async def update_task_due_at(
+    session: AsyncSession,
+    task: Task,
+    new_due_at: datetime | None,
+    user_id: int,
+) -> Task:
+    """Change a task's due_at and log the event."""
+    old_due = task.due_at.isoformat() if task.due_at else None
+    task.due_at = new_due_at
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="due_changed",
+                payload_json={
+                    "old": old_due,
+                    "new": new_due_at.isoformat() if new_due_at else None,
+                },
+            ),
+        )
+        await session.flush()
+
+    logger.info("task.due_changed", task_id=task.id, user_id=user_id)
+    return task
+
+
+async def update_task_priority(
+    session: AsyncSession,
+    task: Task,
+    new_priority: str,
+    user_id: int,
+) -> Task:
+    """Change a task's priority and log the event."""
+    old_priority = task.priority
+    task.priority = new_priority
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="priority_changed",
+                payload_json={"old": old_priority, "new": new_priority},
+            ),
+        )
+        await session.flush()
+
+    logger.info("task.priority_changed", task_id=task.id, user_id=user_id)
+    return task
+
+
 # ── View queries ──────────────────────────────────────────────────────
 
 

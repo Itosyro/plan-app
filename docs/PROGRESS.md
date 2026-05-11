@@ -6,6 +6,28 @@
 
 ---
 
+## 2026-05-11 — feat: edit executors — rename/set_due/set_priority/set_category/reorder_time (PR-I2)
+
+PR-I2 расширяет intent-based редактирование задач из PR-I1:
+
+- **Новые executors** (`app/bot/edit_executor.py`): `_execute_rename`,
+  `_execute_set_due`, `_execute_set_priority`, `_execute_set_category`,
+  `_execute_reorder_time`. Каждый в собственной `session_scope`.
+- **Новые сервисы** (`app/bot/services/tasks.py`): `update_task_title`,
+  `update_task_due_at`, `update_task_priority` — все логируют `TaskEvent`.
+- **Парсинг дат**: `_execute_set_due` и `_execute_reorder_time` используют
+  `dateparser.parse` с `languages=["ru"]` и `PREFER_DATES_FROM=future`.
+- **Pipeline**: `EDIT_INTENTS_ALL` объединяет I1 + I2 (9 интентов), pipeline
+  роутит все через `execute_edit`.
+- **13 новых тестов** (services + executors + dispatch).
+- Итого 390 тестов, все зелёные (2 skipped — webapp/dist).
+
+Файлы: `app/bot/edit_executor.py`, `app/bot/services/tasks.py`,
+`app/bot/services/__init__.py`, `app/bot/routers/_pipeline.py`,
+`tests/test_edit_i2.py`.
+
+---
+
 ## 2026-05-11 — feat: voice/text task editing — complete/delete/reopen (PR-I1)
 
 PR-I1 добавляет первый набор intent-based редактирования задач через
