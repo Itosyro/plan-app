@@ -19,6 +19,7 @@ import { NotesList } from "./components/NotesList";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
+import { TrashPage } from "./components/TrashPage";
 import { haptic } from "./lib/telegram";
 import { navigate, navigateHome, useRoute } from "./lib/router";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
@@ -384,6 +385,29 @@ export default function App() {
           onMutated={handleNoteMutated}
           onDeleted={handleCloseDetail}
         />
+        <BottomNav
+          active={activeTab}
+          onChange={(tab) => {
+            navigateHome();
+            setActiveTab(tab);
+          }}
+        />
+      </DndContext>
+    );
+  }
+
+  if (route.path === "/trash") {
+    return (
+      <DndContext sensors={sensors}>
+        <div
+          className="mx-auto max-w-md px-4"
+          style={{
+            paddingTop: "calc(var(--safe-top) + 0.75rem)",
+            paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
+          }}
+        >
+          <TrashPage />
+        </div>
         <BottomNav
           active={activeTab}
           onChange={(tab) => {

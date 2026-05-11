@@ -4,11 +4,10 @@ The default test fixtures do not enable SQLite's ``PRAGMA
 foreign_keys = ON``, so any FK violation passes silently. These
 tests use a dedicated engine with FK enforcement turned on to prove:
 
-* ``delete_task`` works when the task has dependent ``TaskEvent`` and
-  ``Reminder`` rows. Before the model change to
-  ``ondelete='CASCADE'`` (and the corresponding alembic migration
-  ``0007``) this would FK-violate on Postgres — and now would FK-violate
-  on SQLite too with FKs enforced. The tests confirm the new behaviour.
+* ``delete_task`` soft-deletes the task (sets ``deleted_at``) while
+  keeping dependent ``TaskEvent`` and ``Reminder`` rows intact.
+* Physical deletion (``session.delete``) still cascades correctly via
+  ``ondelete='CASCADE'``.
 """
 
 from __future__ import annotations
@@ -90,17 +89,26 @@ async def test_delete_task_with_event_and_reminder_succeeds(
     )
     await fk_session.commit()
 
-    # The big call. Must not raise on Postgres / FK-enforcing SQLite.
+    # Soft-delete: task stays in DB with deleted_at set.
     await delete_task(fk_session, task, user.id)
     await fk_session.commit()
 
-    # The CASCADE deletes both dependents.
     remaining_tasks = (await fk_session.exec(select(Task))).all()
-    assert remaining_tasks == []
+    assert len(remaining_tasks) == 1
+    assert remaining_tasks[0].deleted_at is not None
+
+    # Dependents are untouched (still linked to the soft-deleted task).
     remaining_events = (await fk_session.exec(select(TaskEvent))).all()
-    assert remaining_events == []
+    assert len(remaining_events) == 2  # "created" + "deleted"
     remaining_reminders = (await fk_session.exec(select(Reminder))).all()
-    assert remaining_reminders == []
+    assert len(remaining_reminders) == 1
+
+    # Physical delete cascades dependents (purge path).
+    await fk_session.delete(remaining_tasks[0])
+    await fk_session.commit()
+    assert (await fk_session.exec(select(Task))).all() == []
+    assert (await fk_session.exec(select(TaskEvent))).all() == []
+    assert (await fk_session.exec(select(Reminder))).all() == []
 
 
 @pytest.mark.asyncio

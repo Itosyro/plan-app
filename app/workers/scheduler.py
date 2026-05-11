@@ -13,7 +13,7 @@ dispatched only when the user's *local* HH:MM exactly matches their
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot
 from sqlalchemy import update
@@ -22,7 +22,7 @@ from sqlmodel import select
 
 from app.bot.digest import tick_digests
 from app.db.base import dispose_engine, init_engine, session_scope
-from app.db.models import Reminder, Task, User
+from app.db.models import Note, Reminder, Task, User
 from app.shared.config import get_settings
 from app.shared.logging import configure_logging, get_logger
 from app.shared.time import format_due_local, utcnow_naive
@@ -86,6 +86,7 @@ async def tick_reminders(
                     .join(User, User.id == Reminder.user_id)  # type: ignore[arg-type]
                     .where(Reminder.status == "pending")
                     .where(Reminder.fire_at <= cutoff)
+                    .where(Task.deleted_at.is_(None))  # type: ignore[union-attr]
                     .order_by(Reminder.fire_at)  # type: ignore[arg-type]
                     .limit(REMINDER_BATCH_SIZE),
                 )
@@ -149,6 +150,62 @@ async def tick_reminders(
     return {"sent": sent, "retry": retry, "failed": failed}
 
 
+TRASH_RETENTION_HOURS = 24
+PURGE_BATCH_SIZE = 200
+
+
+async def purge_trash(*, now: datetime | None = None) -> dict[str, int]:
+    """Permanently delete soft-deleted records older than 24 hours.
+
+    Tasks are deleted via ``session.delete`` so the FK CASCADE
+    on ``reminders`` and ``task_events`` cleans up dependents.
+    """
+    cutoff = (now if now is not None else utcnow_naive()) - timedelta(hours=TRASH_RETENTION_HOURS)
+    purged_tasks = 0
+    purged_notes = 0
+
+    async with session_scope() as session:
+        stale_tasks = list(
+            (
+                await session.exec(
+                    select(Task)
+                    .where(
+                        Task.deleted_at.is_not(None),  # type: ignore[union-attr]
+                        Task.deleted_at <= cutoff,  # type: ignore[operator]
+                    )
+                    .limit(PURGE_BATCH_SIZE)
+                )
+            ).all()
+        )
+        for task in stale_tasks:
+            await session.delete(task)
+            purged_tasks += 1
+        if stale_tasks:
+            await session.flush()
+
+        stale_notes = list(
+            (
+                await session.exec(
+                    select(Note)
+                    .where(
+                        Note.deleted_at.is_not(None),  # type: ignore[union-attr]
+                        Note.deleted_at <= cutoff,  # type: ignore[operator]
+                    )
+                    .limit(PURGE_BATCH_SIZE)
+                )
+            ).all()
+        )
+        for note in stale_notes:
+            await session.delete(note)
+            purged_notes += 1
+        if stale_notes:
+            await session.flush()
+
+    if purged_tasks or purged_notes:
+        logger.info("trash.purged", tasks=purged_tasks, notes=purged_notes)
+    return {"tasks": purged_tasks, "notes": purged_notes}
+
+
 async def main_async() -> int:
     """Entrypoint coroutine for the cron worker."""
     configure_logging()
@@ -164,7 +221,8 @@ async def main_async() -> int:
     try:
         rem = await tick_reminders(bot)
         dig = await tick_digests(bot)
-        logger.info("scheduler.done", reminders=rem, digests=dig)
+        trash = await purge_trash()
+        logger.info("scheduler.done", reminders=rem, digests=dig, trash=trash)
     finally:
         await bot.session.close()
         await dispose_engine()

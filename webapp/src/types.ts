@@ -118,3 +118,20 @@ export interface TaskCounts {
   someday: number;
   no_horizon: number;
 }
+
+// ── Trash ───────────────────────────────────────────────────────────
+
+export type TrashKind = "task" | "note";
+
+export interface TrashItem {
+  id: number;
+  kind: TrashKind;
+  title: string;
+  deleted_at: string;
+  category_name: string | null;
+}
+
+export interface TrashCounts {
+  tasks: number;
+  notes: number;
+}

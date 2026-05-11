@@ -90,7 +90,10 @@ async def list_tasks(
         raise RuntimeError("authenticated user has no id")
 
     async with session_scope() as session:
-        stmt = select(Task, Horizon.slug, Category.name).where(Task.user_id == user.id)
+        stmt = select(Task, Horizon.slug, Category.name).where(
+            Task.user_id == user.id,
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
         # ``isouter=True`` so tasks with no horizon (only Notes-likes) still appear.
         stmt = stmt.join(Horizon, Horizon.id == Task.horizon_id, isouter=True)  # type: ignore[arg-type]
         stmt = stmt.join(Category, Category.id == Task.category_id, isouter=True)  # type: ignore[arg-type]
@@ -148,7 +151,12 @@ async def task_counts(user: User = Depends(current_user)) -> TaskCountsOut:
         stmt = (
             select(Horizon.slug, func.count(Task.id))  # type: ignore[arg-type]
             .join(Horizon, Horizon.id == Task.horizon_id, isouter=True)  # type: ignore[arg-type]
-            .where(Task.user_id == user.id, Task.status != "done", Task.status != "cancelled")
+            .where(
+                Task.user_id == user.id,
+                Task.status != "done",
+                Task.status != "cancelled",
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
             .group_by(Horizon.slug)
         )
         result = await session.exec(stmt)
