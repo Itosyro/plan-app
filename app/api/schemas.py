@@ -80,6 +80,7 @@ class TaskUpdateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=4096)
     status: TaskStatus | None = None
     priority: TaskPriority | None = None
     horizon_slug: HorizonSlug | None = None
