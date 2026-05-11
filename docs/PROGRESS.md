@@ -80,30 +80,75 @@ PR-G доводит утренний и вечерний дайджесты до
 
 ---
 
-## 2026-05-11 — feat(ops): in-process keep-alive self-ping for Render free-tier (PR-keepalive)
+## 2026-05-11 — feat(ops): in-process keep-alive self-ping (Render free-tier)
 
-PR #89 — в lifespan приложения запускается фоновая asyncio-задача, которая
-каждые 10 минут делает `GET https://<webhook_base_url>/healthz` через
-`httpx.AsyncClient`. На Render free-tier это сбрасывает idle-таймер,
-dyno не уходит в спячку, бот отвечает мгновенно (а не через 30-60 с
-после холодного старта). Параллельно scheduler (реминдеры/digest)
-получает постоянный uptime — пинги доезжают точно в назначенное время.
+Render Free спускает web-dyno в idle после ~15 минут без входящих
+запросов. Из-за этого: (а) первый запрос после простоя висит 30–60 сек,
+пока dyno стартует; (б) пока dyno спит, in-process scheduler
+(`app/workers/runner.py`) тоже спит — реминдеры и daily digest не
+тикают. У юзера это проявлялось как «бот просыпается ~10 минут».
 
-- `app/workers/keepalive.py` — `run_keepalive_loop`, `start_keepalive`,
-  `stop_keepalive`. Цикл свертирует ошибки (`logger.warning` и продолжает),
-  graceful-shutdown через `asyncio.Event`.
-- `app/shared/config.py` — `keepalive_enabled` (default `True`),
+Закрыли по образцу `voice-bot` (commit `b7d387a`, см.
+`Itosyro/voice-bot:src/main.py::_self_ping`): в lifespan FastAPI-приложения
+запускается фоновая asyncio-задача, которая каждые 10 минут делает
+`GET` на собственный публичный `WEBHOOK_BASE_URL + /healthz`. Запрос
+уходит наружу и возвращается как обычный внешний HTTP — Render
+считает это активностью и сбрасывает idle-таймер. Внешний пингер
+(GitHub Actions / cron-job.org) больше не нужен, но совместим.
+
+**Backend**
+- `app/workers/keepalive.py` (НОВЫЙ): `run_keepalive_loop`,
+  `start_keepalive`, `stop_keepalive`. Зеркало `runner.py` по форме —
+  `(task, stop_event)`-tuple / grace shutdown / лог-теги `keepalive.*`.
+  httpx (уже в зависимостях) вместо aiohttp из voice-bot.
+- `app/shared/config.py`: добавлены `keepalive_enabled`,
   `keepalive_interval_seconds=600`, `keepalive_initial_delay_seconds=60`,
-  `keepalive_timeout_seconds=10`. Property `keepalive_url` гейтит запуск
-  по наличию `webhook_base_url` (на локалке выключено по умолчанию).
-- `app/main.py` — start/stop в lifespan.
-- `render.yaml` — переменные `KEEPALIVE_*`.
-- `docs/RENDER.md` — переписана инструкция, in-process pinger назван
-  основным подходом.
-- `tests/test_keepalive.py` — 5 кейсов (mock через `respx`).
+  `keepalive_timeout_seconds=10` + property `keepalive_url`. Property
+  возвращает `None` если `webhook_base_url` пуст — в тестах и локалке
+  цикл стартует, но `keepalive_url` пуст → ветка в lifespan не
+  включается, всё тихо.
+- `app/main.py`: импорт `start_keepalive`/`stop_keepalive`, отдельный
+  `keepalive_handle` рядом с `scheduler_handle`. Запуск гейтится
+  `settings.keepalive_enabled and settings.keepalive_url`. Стоп в
+  `finally` идёт до scheduler/bot — таймауты симметричны runner'у.
+- `render.yaml`: новые env vars `KEEPALIVE_ENABLED=true`,
+  `KEEPALIVE_INTERVAL_SECONDS=600`. Комментарий шапки обновлён —
+  теперь упоминает keepalive и говорит выключать его на Starter+.
+- `docs/RENDER.md`: переписана секция топологии (in-process self-ping
+  вместо внешнего пингера как primary), добавлена таблица env vars,
+  внешний пингер оставлен как опциональный «belt-and-braces». Раздел
+  «Upgrading to Starter+» теперь также упоминает `KEEPALIVE_ENABLED=false`.
+
+**Tests** (+5)
+- `tests/test_keepalive.py`:
+  - `test_loop_pings_url_until_stopped` — respx mock на `/healthz`,
+    проверяем что роут вызван ≥1 раз и таск чисто завершается на
+    `stop.set()`.
+  - `test_loop_swallows_errors` — первая попытка кидает
+    `httpx.ConnectError`, вторая ОК → ожидаем `counter >= 2`
+    (одна ошибка не убивает цикл).
+  - `test_start_and_stop_round_trip` — `start_keepalive` → ждём пинг →
+    `stop_keepalive` с grace=1s; `task.done()` и роут вызван.
+  - `test_stop_keepalive_noop_for_finished_task` — стоп уже
+    завершённой таски не падает (зеркало `test_runner.py` контракта).
+  - `test_loop_returns_immediately_if_stopped_during_initial_delay` —
+    стоп в окне `initial_delay` корректно short-circuit'ит.
+
+**Baseline**
+- `uv run pytest -q` — 336 passed, 2 skipped (webapp/dist в CI не билдится)
+- `uv run ruff format --check . && uv run ruff check . && uv run mypy app` — clean
+- `cd webapp && npm run typecheck && npm run build` — clean (bundle 258 KB)
+
+**Note on PR #82.** В нём отдельно лежит ещё `.github/workflows/keepalive.yml`
+(GitHub Actions cron каждые 10 мин) + slash-команды для бота. Этот PR
+ортогонален: in-process self-ping надёжнее (нет дрейфа cron у GitHub
+Actions) и не зависит от того, активен ли репозиторий на GitHub. PR #82
+можно мерджить когда хочется — он только добавит запасной внешний
+пингер. Удалять keepalive.yml оттуда не нужно: оба работают вместе.
 
 ---
 
+||||||| b8f0652
 ## 2026-05-11 — feat: friendlier bot replies + recognised-card inline keyboard + make-it-concrete (PR-E)
 
 PR-E переписывает ответ бота после разбора входящего сообщения. Раньше

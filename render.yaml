@@ -9,11 +9,13 @@
 #
 # Why in-process? Render's free plan does NOT include standalone Cron
 # services — those require Starter+. Embedding the loop keeps the deploy on
-# the free tier. To prevent free-tier idle spin-down, hit `/healthz` every
-# 5–10 minutes from cron-job.org or GitHub Actions cron (see
-# `docs/RENDER.md` for the recipe). When upgrading to Starter+ later, set
-# `SCHEDULER_INPROC_ENABLED=false` here and re-add a `cron` service that
-# runs `uv run python -m app.workers.scheduler`.
+# the free tier. To stop the free dyno from going to sleep (~15 min idle)
+# — which would also pause the scheduler — a second in-process task
+# self-pings `/healthz` over the public URL every 10 min (see
+# `app/workers/keepalive.py` and `docs/RENDER.md`). When upgrading to
+# Starter+ later, set `SCHEDULER_INPROC_ENABLED=false` and
+# `KEEPALIVE_ENABLED=false` here and re-add a `cron` service that runs
+# `uv run python -m app.workers.scheduler`.
 #
 # Secrets (`sync: false`) live in the Render dashboard, never in this file.
 # `WEBHOOK_BASE_URL` is the public URL Render assigns to the web service —
@@ -61,6 +63,12 @@ services:
         value: "true"
       - key: SCHEDULER_TICK_INTERVAL_SECONDS
         value: "60"
+      # Keep-alive self-ping (prevents Render free-tier idle spin-down).
+      # Disable when moving to Starter+ with a real cron service.
+      - key: KEEPALIVE_ENABLED
+        value: "true"
+      - key: KEEPALIVE_INTERVAL_SECONDS
+        value: "600"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET

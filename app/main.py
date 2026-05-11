@@ -42,6 +42,7 @@ from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
+from app.workers.keepalive import start_keepalive, stop_keepalive
 from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
 
 # ``webapp/dist`` is produced by the Mini-App build (`npm run build`).
@@ -112,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import asyncio
 
         scheduler_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
+        keepalive_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
         if settings.database_url:
             init_engine(settings.database_url)
             logger.info("db.engine.init")
@@ -151,9 +153,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "scheduler.inproc.start",
                 interval=settings.scheduler_tick_interval_seconds,
             )
+        # Keep-alive self-ping prevents Render's free dyno from spinning
+        # down between user messages (and therefore prevents the
+        # in-process scheduler from going to sleep). Only enabled when a
+        # public base URL is configured — in tests / local dev there is
+        # no host to ping.
+        if settings.keepalive_enabled and settings.keepalive_url:
+            ka_task, ka_stop = start_keepalive(
+                settings.keepalive_url,
+                interval=settings.keepalive_interval_seconds,
+                initial_delay=settings.keepalive_initial_delay_seconds,
+                timeout=settings.keepalive_timeout_seconds,
+            )
+            keepalive_handle = (ka_task, ka_stop)
+            logger.info(
+                "keepalive.start",
+                url=settings.keepalive_url,
+                interval=settings.keepalive_interval_seconds,
+            )
         try:
             yield
         finally:
+            if keepalive_handle is not None:
+                ka_task, ka_stop = keepalive_handle
+                await stop_keepalive(ka_task, ka_stop)
             if scheduler_handle is not None:
                 task, stop = scheduler_handle
                 await stop_inproc_scheduler(task, stop)

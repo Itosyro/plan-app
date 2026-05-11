@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     scheduler_inproc_enabled: bool = True
     scheduler_tick_interval_seconds: float = 60.0
 
+    # Render free-tier keep-alive: in-process self-ping to ``/healthz``
+    # over the public network every ``keepalive_interval_seconds``. The
+    # default 10-minute cadence is well under Render's ~15-minute idle
+    # spin-down. Disabled automatically when ``webhook_base_url`` is
+    # unset (local dev, tests). Mirrors ``voice-bot``'s ``_self_ping``.
+    keepalive_enabled: bool = True
+    keepalive_interval_seconds: float = 600.0
+    keepalive_initial_delay_seconds: float = 60.0
+    keepalive_timeout_seconds: float = 10.0
+
     # Phase 5 — Mini-App URL override. By default we derive it from
     # ``webhook_base_url`` (same host, ``/app/`` path). Set explicitly
     # when the Mini-App is hosted on a separate domain (e.g. Cloudflare
@@ -64,6 +74,18 @@ class Settings(BaseSettings):
         if not self.webhook_base_url or not self.telegram_webhook_secret:
             return None
         return f"{self.webhook_base_url.rstrip('/')}/tg/{self.telegram_webhook_secret}"
+
+    @property
+    def keepalive_url(self) -> str | None:
+        """Public ``/healthz`` URL pinged by the keep-alive task, or ``None``.
+
+        Returns ``None`` when ``webhook_base_url`` is unset so the loop
+        stays dormant in local dev / tests where there is no public host
+        to hit.
+        """
+        if not self.webhook_base_url:
+            return None
+        return f"{self.webhook_base_url.rstrip('/')}/healthz"
 
     @property
     def miniapp_url(self) -> str | None:
