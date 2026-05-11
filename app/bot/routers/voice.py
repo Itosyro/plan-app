@@ -13,6 +13,7 @@ import asyncio
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.ai.courier import build_check_keyboard
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
@@ -87,11 +88,11 @@ def create_router() -> Router:
 
         groq_router = get_groq_router()
         if groq_router is None:
-            await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
+            await message.answer("Сейчас не могу разобрать — сохранил во входящие, вернусь позже.")
             return
 
         if message.voice.file_size and message.voice.file_size > MAX_VOICE_SIZE:
-            await message.answer("Голосовое слишком большое (макс. 20 МБ).")
+            await message.answer("Голосовое слишком длинное — попробуй разбить на несколько.")
             return
 
         # Mirror text.py: ack the user with a reaction before any work.
@@ -116,13 +117,15 @@ def create_router() -> Router:
             try:
                 audio_bytes = await _download_voice(message)
                 if audio_bytes is None:
-                    await placeholder.edit_text("Не удалось скачать голосовое.")
+                    await placeholder.edit_text(
+                        "Не получилось скачать голосовое — попробуй ещё раз."
+                    )
                     return
 
                 transcript = await transcribe_voice(groq_router, audio_bytes)
 
                 if not transcript or len(transcript.strip()) < 2:
-                    await placeholder.edit_text("Не удалось распознать речь — попробуй ещё раз.")
+                    await placeholder.edit_text("Не расслышал — попробуй записать ещё раз.")
                     return
 
                 # Store inbox entry with transcript
@@ -150,7 +153,7 @@ def create_router() -> Router:
                     transcript_len=len(transcript),
                 )
 
-                reply = await run_pipeline(
+                result = await run_pipeline(
                     groq_router,
                     transcript,
                     from_user_id,
@@ -165,7 +168,13 @@ def create_router() -> Router:
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
                 )
-                await stream_reply(placeholder, reply, bot=message.bot)
+                keyboard = build_check_keyboard(result.items)
+                await stream_reply(
+                    placeholder,
+                    result.text,
+                    bot=message.bot,
+                    reply_markup=keyboard,
+                )
                 if message.bot is not None:
                     await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.SUCCESS)
 
@@ -177,11 +186,9 @@ def create_router() -> Router:
                 if message.bot is not None:
                     await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.ERROR)
                 try:
-                    await placeholder.edit_text(
-                        "Ошибка при обработке голосового — попробуй ещё раз."
-                    )
+                    await placeholder.edit_text("Упс, что-то сломалось. Попробуй записать ещё раз.")
                 except Exception:
-                    await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
+                    await message.answer("Упс, что-то сломалось. Попробуй записать ещё раз.")
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)

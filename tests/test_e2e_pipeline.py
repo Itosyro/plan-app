@@ -159,8 +159,8 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "Утренняя пробежка" in reply
+    assert "☐ задача" in reply.text
+    assert "Утренняя пробежка" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -202,9 +202,9 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
         courier_mode="template_only",
     )
 
-    assert "2 элемента" in reply
-    assert "Купить хлеб и молоко" in reply
-    assert "Записаться к врачу" in reply
+    assert "2 элемента" in reply.text
+    assert "Купить хлеб и молоко" in reply.text
+    assert "Записаться к врачу" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -251,9 +251,9 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "📝 заметка" in reply
-    assert "2 элемента" in reply
+    assert "☐ задача" in reply.text
+    assert "☐ заметка" in reply.text
+    assert "2 элемента" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -303,9 +303,9 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "2 элемента" in reply
-    assert "Отчёт до пятницы" in reply
-    assert "Совещание в 11" in reply
+    assert "2 элемента" in reply.text
+    assert "Отчёт до пятницы" in reply.text
+    assert "Совещание в 11" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -344,7 +344,7 @@ async def test_e2e_filler_message_no_tasks(session: AsyncSession) -> None:
         inbox_id=None,
     )
 
-    assert "не нашёл" in reply.lower()
+    assert "не удалось выделить" in reply.text.lower()
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 0
@@ -402,7 +402,7 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "3 элемента" in reply
+    assert "3 элемента" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -452,8 +452,8 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📝 заметка" in reply
-    assert "Мысль про архитектуру" in reply
+    assert "☐ заметка" in reply.text
+    assert "Мысль про архитектуру" in reply.text
 
     notes = (await session.exec(select(Note).where(Note.user_id == user.id))).all()
     assert len(notes) == 1
@@ -531,8 +531,8 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
     )
 
     # Survivor is reported; failed unit is silently dropped.
-    assert "Купить хлеб" in reply
-    assert "Записаться к врачу" not in reply
+    assert "Купить хлеб" in reply.text
+    assert "Записаться к врачу" not in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -578,8 +578,8 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "Позвонить в банк" in reply
+    assert "☐ задача" in reply.text
+    assert "Позвонить в банк" in reply.text
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1

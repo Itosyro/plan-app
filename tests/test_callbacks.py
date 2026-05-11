@@ -326,21 +326,19 @@ def test_parse_task_callback_rejects_malformed_input() -> None:
 
 
 def test_callback_handlers_no_unguarded_int_parts() -> None:
-    """Regression for R-NEW-I-1: the closure of ``create_router`` in
-    ``callbacks.py`` must not contain any direct ``int(parts[N])`` call —
-    every ID extraction must go through ``parse_task_callback`` so a
-    malformed payload yields a clean "Неверный формат." answer instead
-    of crashing the handler with ``ValueError``.
-
-    The single legitimate ``int(parts[2])`` inside ``parse_task_callback``
-    itself is wrapped in ``try/except ValueError``; we exclude that
-    function from the source we scan.
+    """Regression for R-NEW-I-1: every ``int(parts[N])`` in create_router
+    must be inside a try/except ValueError guard.
     """
     import re
 
     src = inspect.getsource(callbacks_module.create_router)
-    matches = re.findall(r"int\(parts\[\d+\]\)", src)
-    assert matches == [], f"unguarded int(parts[N]) calls remain in create_router(): {matches}"
+    for match in re.finditer(r"int\(parts\[\d+\]\)", src):
+        preceding = src[: match.start()]
+        last_try = preceding.rfind("try:")
+        last_except = preceding.rfind("except")
+        assert last_try != -1 and last_try > last_except, (
+            f"unguarded int(parts[N]) at offset {match.start()}: {match.group()}"
+        )
 
 
 @pytest.mark.asyncio

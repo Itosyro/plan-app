@@ -2,10 +2,14 @@
 
 Phase 3b: ✅ done, 🔄 move (horizon picker), 🗑 delete.
 Phase 3 finish: 🏷 change category (category picker).
+PR-E: summary:toggle check-card (toggleable ☐/☑ buttons).
 Callback data format: ``task:<action>:<task_id>[:<extra>]``.
+Summary toggle: ``summary:toggle:<kind>:<item_id>``.
 """
 
 from __future__ import annotations
+
+import contextlib
 
 from aiogram import F, Router
 from aiogram.types import (
@@ -14,7 +18,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlmodel import select
 
+from app.ai.courier import SummaryItem, build_check_keyboard
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
@@ -26,7 +32,7 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.base import session_scope
-from app.db.models import Category
+from app.db.models import Category, Note, Task
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -234,9 +240,9 @@ def create_router() -> Router:
             title = task.title
             await delete_task(session, task, user.id)
 
-        await callback.answer("🗑 Удалено!")
+        await callback.answer("🗑 В корзину!")
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(f"🗑 Удалено: «{title}»")
+            await callback.message.edit_text(f"🗑 В корзину: «{title}»")
 
     @router.callback_query(F.data.startswith("task:pick_move:"))
     async def cb_task_pick_move(callback: CallbackQuery) -> None:
@@ -377,4 +383,112 @@ def create_router() -> Router:
                 reply_markup=task_action_keyboard(task_id),
             )
 
+    @router.callback_query(F.data.startswith("summary:toggle:"))
+    async def cb_summary_toggle(callback: CallbackQuery) -> None:
+        """Toggle a check-card item (task done/undone)."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parts = callback.data.split(":")
+        if len(parts) != 4:
+            await callback.answer("Неверный формат.")
+            return
+        kind = parts[2]
+        try:
+            item_id = int(parts[3])
+        except ValueError:
+            await callback.answer("Неверный формат.")
+            return
+
+        if kind not in ("task", "note"):
+            await callback.answer("Неверный тип.")
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+
+            if kind == "task":
+                task = await get_task_by_id(session, user.id, item_id)
+                if task is None:
+                    await callback.answer("Задача не найдена.")
+                    return
+                if task.status == "done":
+                    task.status = "new"
+                    session.add(task)
+                    await session.flush()
+                    await callback.answer("☐ Возвращено")
+                else:
+                    await mark_task_done(session, task, user.id)
+                    await callback.answer("☑ Выполнено!")
+            else:
+                await callback.answer("☑ Принято")
+                return
+
+        if not isinstance(callback.message, Message):
+            return
+        await _rebuild_check_card(callback.message, callback.from_user.id)
+
     return router
+
+
+async def _rebuild_check_card(message: Message, tg_user_id: int) -> None:
+    """Re-render the check-card inline keyboard from current DB state."""
+    markup = message.reply_markup
+    if markup is None:
+        return
+    items: list[SummaryItem] = []
+    async with session_scope() as session:
+        user, _ = await get_or_create_user(session, telegram_id=tg_user_id)
+        if user.id is None:
+            return
+        for row_buttons in markup.inline_keyboard:
+            for btn in row_buttons:
+                if btn.callback_data is None or not btn.callback_data.startswith("summary:toggle:"):
+                    continue
+                parts = btn.callback_data.split(":")
+                if len(parts) != 4:
+                    continue
+                kind = parts[2]
+                try:
+                    item_id = int(parts[3])
+                except ValueError:
+                    continue
+                if kind == "task":
+                    task_result = await session.exec(
+                        select(Task).where(Task.id == item_id, Task.user_id == user.id),
+                    )
+                    task_row = task_result.first()
+                    if task_row is not None:
+                        items.append(
+                            SummaryItem(
+                                item_id=task_row.id,  # type: ignore[arg-type]
+                                kind="task",
+                                title=task_row.title,
+                                category_name="",
+                                done=task_row.status == "done",
+                            )
+                        )
+                else:
+                    note_result = await session.exec(
+                        select(Note).where(Note.id == item_id, Note.user_id == user.id),
+                    )
+                    note_row = note_result.first()
+                    if note_row is not None:
+                        items.append(
+                            SummaryItem(
+                                item_id=note_row.id,  # type: ignore[arg-type]
+                                kind="note",
+                                title=note_row.title,
+                                category_name="",
+                                done=False,
+                            )
+                        )
+    new_keyboard = build_check_keyboard(items)
+    if new_keyboard is not None:
+        with contextlib.suppress(Exception):
+            await message.edit_reply_markup(reply_markup=new_keyboard)

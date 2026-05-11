@@ -25,7 +25,7 @@ from typing import Final
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from app.shared.logging import get_logger
 
@@ -47,6 +47,7 @@ async def stream_reply(
     *,
     chunk_delay: float = _DEFAULT_CHUNK_DELAY,
     bot: Bot | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> Message:
     """Edit ``placeholder`` progressively until it shows ``full_text``.
 
@@ -115,5 +116,13 @@ async def stream_reply(
             await asyncio.sleep(chunk_delay)
 
     # Always make sure the final state is the full text.
-    await _edit(full_text)
+    if reply_markup is not None:
+        try:
+            await placeholder.edit_text(full_text, reply_markup=reply_markup)
+        except TelegramBadRequest:
+            logger.debug("stream.edit.no_change")
+        except Exception:
+            logger.exception("stream.edit.failed_final")
+    else:
+        await _edit(full_text)
     return placeholder

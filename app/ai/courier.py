@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import instructor
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from groq import AsyncGroq
 
 from app.ai.router import GroqKeyRouter, call_with_rotation
-from app.ai.schemas import ClassifierResult
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -168,15 +169,58 @@ async def generate_courier_reply(
     return reply.text
 
 
-def build_summary(classifier_results: list[ClassifierResult]) -> str:
+@dataclass
+class SummaryItem:
+    """One persisted record shown in the check-card."""
+
+    item_id: int
+    kind: str  # "task" or "note"
+    title: str
+    category_name: str
+    done: bool = False
+
+
+@dataclass
+class CourierReplyResult:
+    """Structured courier reply: text + optional check-card items."""
+
+    text: str
+    items: list[SummaryItem] = field(default_factory=list)
+
+
+def build_check_keyboard(items: list[SummaryItem]) -> InlineKeyboardMarkup | None:
+    """Build an inline keyboard with toggleable check buttons."""
+    if not items:
+        return None
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in items:
+        check = "\u2611" if it.done else "\u2610"
+        label = f"{check} {it.title}"
+        if len(label) > 60:
+            label = label[:57] + "\u2026"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"summary:toggle:{it.kind}:{it.item_id}",
+                ),
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_summary(
+    items: list[SummaryItem],
+) -> str:
     """Build a deterministic summary of processed items (no LLM)."""
-    if not classifier_results:
+    if not items:
         return ""
 
     lines: list[str] = []
-    for cr in classifier_results:
-        kind = "\U0001f4cc задача" if cr.is_task else "\U0001f4dd заметка"
-        lines.append(f"{kind}: {cr.title} [{cr.category_name}]")
+    for it in items:
+        icon = "\u2610" if not it.done else "\u2611"
+        kind_label = "задача" if it.kind == "task" else "заметка"
+        lines.append(f"{icon} {kind_label}: {it.title} [{it.category_name}]")
 
     n = len(lines)
     header = f"Разобрал на {_pluralize(n)}:\n"
@@ -197,15 +241,14 @@ def _pluralize(n: int) -> str:
 
 async def courier_respond(
     router: GroqKeyRouter,
-    classifier_results: list[ClassifierResult],
+    items: list[SummaryItem],
     *,
     mode: str = "mix",
     style: str = "neutral",
-) -> str:
-    """Build the full reply: confirmation + summary."""
+) -> CourierReplyResult:
+    """Build the full reply: confirmation + check-card summary."""
     confirmation = await generate_courier_reply(router, style, mode=mode)
-    summary = build_summary(classifier_results)
+    summary = build_summary(items)
 
-    if summary:
-        return f"{confirmation}\n\n{summary}"
-    return confirmation
+    text = f"{confirmation}\n\n{summary}" if summary else confirmation
+    return CourierReplyResult(text=text, items=items)

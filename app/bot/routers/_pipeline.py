@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 
 from app.ai.classifier import classify_intent
-from app.ai.courier import courier_respond
+from app.ai.courier import CourierReplyResult, SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
@@ -40,6 +40,7 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.base import session_scope
+from app.db.models import Task
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
@@ -185,7 +186,7 @@ async def run_pipeline(
     default_reminder_offsets: dict[str, list[int]] | None = None,
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
-) -> str:
+) -> CourierReplyResult:
     """Detect reorder or run split → time → classify → critic → persist → reply.
 
     The full Groq pipeline. Used by both the text router and the voice
@@ -239,11 +240,11 @@ async def _run_pipeline_inner(
     default_reminder_offsets: dict[str, list[int]] | None = None,
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
-) -> str:
+) -> CourierReplyResult:
     """Inner pipeline body, called only while both semaphores are held."""
     reorder_reply = await _try_reorder(groq_router, text, user_id)
     if reorder_reply is not None:
-        return reorder_reply
+        return CourierReplyResult(text=reorder_reply)
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
@@ -252,7 +253,9 @@ async def _run_pipeline_inner(
     )
 
     if not split_result.units:
-        return "Принял, но не нашёл конкретных задач или заметок."
+        return CourierReplyResult(
+            text="Сохранил во входящие — не удалось выделить конкретные задачи или заметки."
+        )
 
     # Resolve time for each unit (pure Python, fast)
     resolved_list: list[ResolvedTime | None] = [
@@ -294,7 +297,9 @@ async def _run_pipeline_inner(
         survivors.append((item, resolved, unit.text))
 
     if not survivors:
-        return "Не удалось разобрать ни одну часть сообщения — сохранил во входящие."
+        return CourierReplyResult(
+            text="Что-то пошло не так, но сообщение сохранено. Попробуй ещё раз."
+        )
 
     # Critic: review classifications that need it (only survivors).
     reviewed: list[tuple[ClassifierResult, ResolvedTime | None]] = []
@@ -311,7 +316,8 @@ async def _run_pipeline_inner(
                 logger.exception("pipeline.critic_failed", user_id=user_id)
         reviewed.append((cr, resolved))
 
-    # Persist surviving units.
+    # Persist surviving units and collect item metadata for the check-card.
+    summary_items: list[SummaryItem] = []
     async with session_scope() as session:
         await log_ai_run(
             session,
@@ -325,14 +331,6 @@ async def _run_pipeline_inner(
         for cr, resolved in reviewed:
             due_at = resolved.resolved_dt if resolved else None
 
-            # When the user said «напомни …» (or «напоминание»), the
-            # canonical behaviour is to fire ONE reminder at the
-            # ``due_at`` itself — not the user's default advance offsets.
-            # If the classifier already supplied explicit offsets we
-            # respect them; otherwise we synthesise ``[0]`` so the
-            # reminder is scheduled. Without this branch, ``is_reminder``
-            # was set on ``ResolvedTime`` but never actually translated
-            # into a row in the ``reminders`` table.
             if (
                 resolved is not None
                 and resolved.is_reminder
@@ -342,13 +340,23 @@ async def _run_pipeline_inner(
             ):
                 cr = cr.model_copy(update={"reminder_offsets": [0]})
 
-            await persist_classification(
+            row = await persist_classification(
                 session,
                 user_id=user_id,
                 cr=cr,
                 due_at=due_at,
                 inbox_id=inbox_id,
                 default_reminder_offsets=default_reminder_offsets,
+            )
+
+            assert row.id is not None
+            summary_items.append(
+                SummaryItem(
+                    item_id=row.id,
+                    kind="task" if isinstance(row, Task) else "note",
+                    title=cr.title,
+                    category_name=cr.category_name,
+                ),
             )
 
             await log_ai_run(
@@ -362,7 +370,7 @@ async def _run_pipeline_inner(
 
     return await courier_respond(
         groq_router,
-        [cr for cr, _ in reviewed],
+        summary_items,
         mode=courier_mode,
         style=courier_style,
     )
