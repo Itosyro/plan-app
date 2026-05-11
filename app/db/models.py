@@ -104,6 +104,13 @@ class UserSettings(SQLModel, table=True):
         sa_column=Column(BigInteger, nullable=True),
     )
     pinned_morning_date: date | None = Field(default=None)
+    # PR-E "make it concrete": when ``True`` and the classifier returned a
+    # ``first_step`` for an abstract task, the bot prepends "Шаг 1: …" to
+    # ``Task.description``. Off by default — the feature relies on the
+    # classifier's heuristic and the user should opt in explicitly so the
+    # first message after a model swap doesn't surprise them with a
+    # synthetic step. Toggle from /settings (bot) or the Mini-App.
+    concretize_tasks: bool = Field(default=False, nullable=False)
 
 
 class InboxEntry(SQLModel, table=True):

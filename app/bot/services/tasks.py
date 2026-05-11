@@ -245,6 +245,27 @@ async def schedule_reminders(
 # ── Classification persistence ────────────────────────────────────────
 
 
+FIRST_STEP_PREFIX = "Шаг 1: "
+
+
+def _build_task_description(cr: ClassifierResult, *, concretize: bool) -> str | None:
+    """Compose ``Task.description`` from the classifier output.
+
+    PR-E "make it concrete": when ``concretize`` is true and the
+    classifier returned a non-empty ``first_step`` for an abstract task,
+    we prepend "Шаг 1: <first_step>" so the user has an obvious starting
+    point in the Mini-App task detail. When the feature is off, or the
+    classifier didn't emit a first step, the column stays ``None`` (we
+    have no other source for ``description`` yet).
+    """
+    if not concretize:
+        return None
+    step = (cr.first_step or "").strip()
+    if not step:
+        return None
+    return f"{FIRST_STEP_PREFIX}{step}"
+
+
 async def persist_classification(
     session: AsyncSession,
     *,
@@ -253,12 +274,19 @@ async def persist_classification(
     due_at: datetime | None,
     inbox_id: int | None,
     default_reminder_offsets: dict[str, list[int]] | None = None,
+    concretize_tasks: bool = False,
 ) -> Task | Note:
     """Persist a ClassifierResult as a Task or Note row.
 
     For tasks with a concrete ``due_at``, also schedules ``Reminder`` rows
     according to either ``cr.reminder_offsets`` (explicit user request) or
     the user's ``default_reminder_offsets`` (Phase 4a).
+
+    ``concretize_tasks`` (PR-E) controls whether the classifier's
+    optional ``first_step`` lands in ``Task.description`` — see
+    :func:`_build_task_description`. Defaults to ``False`` so legacy
+    callers (and tests) keep current behaviour without explicitly
+    threading the flag through.
     """
     cat = await get_or_create_category(session, user_id, cr.category_name)
     hor = await get_or_create_horizon(session, user_id, cr.horizon)
@@ -269,11 +297,13 @@ async def persist_classification(
         # Without this we'd silently store user-local time in a column the rest
         # of the schema treats as UTC. See ``docs/REVIEW-2026-05-09.md::C-2``.
         due_at_utc = to_naive_utc(due_at) if due_at is not None else None
+        description = _build_task_description(cr, concretize=concretize_tasks)
         row: Task | Note = Task(
             user_id=user_id,
             category_id=cat.id,
             horizon_id=hor.id,
             title=cr.title,
+            description=description,
             priority=cr.priority,
             due_at=due_at_utc,
             confidence=cr.confidence,
@@ -516,6 +546,37 @@ async def mark_task_done(
         await session.flush()
 
     logger.info("task.completed", task_id=task.id, user_id=user_id)
+    return task
+
+
+async def mark_task_undone(
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> Task:
+    """Re-open a previously-completed task.
+
+    PR-E recognised-card lets the user *toggle* a task between done and
+    pending — tapping ✅ should not be one-way. We reset ``status`` back
+    to ``"new"`` (the column's vocabulary; "in_progress" is also valid
+    in the schema but unused on this path) and log a ``"reopened"``
+    event so the audit trail mirrors :func:`mark_task_done`.
+    """
+    task.status = "new"
+    session.add(task)
+    await session.flush()
+
+    if task.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                kind="reopened",
+                payload_json={"source": "summary_toggle"},
+            ),
+        )
+        await session.flush()
+
+    logger.info("task.reopened", task_id=task.id, user_id=user_id)
     return task
 
 

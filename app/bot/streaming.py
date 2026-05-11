@@ -25,7 +25,7 @@ from typing import Final
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from app.shared.logging import get_logger
 
@@ -47,12 +47,17 @@ async def stream_reply(
     *,
     chunk_delay: float = _DEFAULT_CHUNK_DELAY,
     bot: Bot | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> Message:
     """Edit ``placeholder`` progressively until it shows ``full_text``.
 
     Returns the (final) message reference. ``bot`` is optional: when
     provided we'll periodically send a typing action so the user sees
     "печатает…" between edits.
+
+    ``reply_markup`` (PR-E recognised-card): when provided, attached on
+    the *final* edit only. Intermediate edits stay text-only so the
+    user doesn't see a partial keyboard pop in mid-stream.
     """
     full_text = (full_text or "").rstrip()
     if not full_text:
@@ -68,18 +73,18 @@ async def stream_reply(
 
     chat_id = placeholder.chat.id
 
-    async def _edit(text: str) -> None:
+    async def _edit(text: str, *, markup: InlineKeyboardMarkup | None = None) -> None:
         nonlocal last_displayed, last_edit_at
-        if text == last_displayed:
+        if text == last_displayed and markup is None:
             return
         try:
-            await placeholder.edit_text(text)
+            await placeholder.edit_text(text, reply_markup=markup)
             last_displayed = text
             last_edit_at = asyncio.get_event_loop().time()
         except TelegramRetryAfter as exc:
             await asyncio.sleep(min(exc.retry_after, 5))
             try:
-                await placeholder.edit_text(text)
+                await placeholder.edit_text(text, reply_markup=markup)
                 last_displayed = text
             except TelegramBadRequest:
                 logger.debug("stream.edit.no_change")
@@ -114,6 +119,7 @@ async def stream_reply(
             await _typing()
             await asyncio.sleep(chunk_delay)
 
-    # Always make sure the final state is the full text.
-    await _edit(full_text)
+    # Always make sure the final state is the full text, and attach
+    # the recognised-card keyboard on this last edit only.
+    await _edit(full_text, markup=reply_markup)
     return placeholder

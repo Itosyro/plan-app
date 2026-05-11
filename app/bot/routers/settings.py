@@ -34,6 +34,7 @@ SETTING_LABELS: dict[str, str] = {
     "response_style_source": "Источник ответа",
     "courier_template_style": "Тон сообщений",
     "week_due_semantic": "Семантика «на неделе»",
+    "concretize_tasks": "Первый шаг в задачах",
 }
 
 SETTING_OPTIONS: dict[str, list[tuple[str, str]]] = {
@@ -87,6 +88,10 @@ SETTING_OPTIONS: dict[str, list[tuple[str, str]]] = {
         ("deadline_saturday", "Дедлайн суббота"),
         ("spread_evenly", "Равномерно"),
     ],
+    "concretize_tasks": [
+        ("on", "Добавлять"),
+        ("off", "Не трогать"),
+    ],
 }
 
 SETTING_DISPLAY: dict[str, dict[str, str]] = {
@@ -118,6 +123,8 @@ def _setting_value(field: str, settings: UserSettings, user: User | None) -> str
         return settings.courier_template_style
     if field == "week_due_semantic":
         return settings.week_due_semantic
+    if field == "concretize_tasks":
+        return "on" if settings.concretize_tasks else "off"
     return "—"
 
 

@@ -59,6 +59,10 @@ export interface UserSettings {
   response_style_source: string;
   courier_template_style: string;
   week_due_semantic: string;
+  // PR-E "make it concrete": when true, the classifier's optional
+  // ``first_step`` text is prepended to ``Task.description`` as
+  // "Шаг 1: …". Defaults to false server-side.
+  concretize_tasks: boolean;
 }
 
 // Mirrors app/api/schemas.py::UserSettingsUpdateIn — every field
@@ -71,6 +75,7 @@ export interface UserSettingsUpdate {
   response_style_source?: string;
   courier_template_style?: string;
   week_due_semantic?: string;
+  concretize_tasks?: boolean;
 }
 
 // Mirrors app/api/schemas.py::MeUpdateIn.

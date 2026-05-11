@@ -50,6 +50,11 @@ ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
         {"neutral", "formal_master", "friendly", "playful", "terse", "respectful"},
     ),
     "week_due_semantic": frozenset({"deadline_sunday", "deadline_saturday", "spread_evenly"}),
+    # PR-E: bool exposed as string "on"/"off" so the bot's
+    # inline-keyboard flow can stay a single ``select`` of two
+    # options; the service-layer write translates back to bool
+    # before persisting (see :func:`update_user_settings`).
+    "concretize_tasks": frozenset({"on", "off"}),
 }
 
 
@@ -122,6 +127,9 @@ async def update_user_settings(
         settings.courier_template_style = value
     elif field == "week_due_semantic":
         settings.week_due_semantic = value
+    elif field == "concretize_tasks":
+        # The allow-list above guarantees ``value`` is "on" or "off".
+        settings.concretize_tasks = value == "on"
     else:  # pragma: no cover - exhaustive above
         return None
     session.add(settings)

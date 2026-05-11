@@ -32,6 +32,7 @@ def _settings_to_out(settings: UserSettings | None) -> UserSettingsOut | None:
         response_style_source=settings.response_style_source,
         courier_template_style=settings.courier_template_style,
         week_due_semantic=settings.week_due_semantic,
+        concretize_tasks=settings.concretize_tasks,
     )
 
 
@@ -110,9 +111,17 @@ async def patch_me(body: MeUpdateIn, user: User = Depends(current_user)) -> MeOu
 
         if body.settings is not None:
             patches = body.settings.model_dump(exclude_unset=True)
-            for field, value in patches.items():
-                if value is None:
+            for field, raw_value in patches.items():
+                if raw_value is None:
                     continue
+                # PR-E: ``concretize_tasks`` is exposed as a bool over the
+                # wire (cleaner Mini-App ergonomics) but the service
+                # layer's allow-list uses the bot's "on"/"off" strings.
+                # Translate here so both shapes converge before validation.
+                if field == "concretize_tasks" and isinstance(raw_value, bool):
+                    value: str = "on" if raw_value else "off"
+                else:
+                    value = str(raw_value)
                 allowed = ALLOWED_SETTING_VALUES.get(field)
                 if allowed is None or value not in allowed:
                     raise HTTPException(

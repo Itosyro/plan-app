@@ -83,6 +83,7 @@ def create_router() -> Router:
                 else None
             )
             morning_anchor = settings.morning_anchor if settings else "09:00"
+            concretize_tasks = settings.concretize_tasks if settings else False
             evening_anchor = settings.evening_anchor if settings else "19:00"
 
         groq_router = get_groq_router()
@@ -150,7 +151,7 @@ def create_router() -> Router:
                     transcript_len=len(transcript),
                 )
 
-                reply = await run_pipeline(
+                reply, keyboard = await run_pipeline(
                     groq_router,
                     transcript,
                     from_user_id,
@@ -164,8 +165,14 @@ def create_router() -> Router:
                     default_reminder_offsets=default_offsets,
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
+                    concretize_tasks=concretize_tasks,
                 )
-                await stream_reply(placeholder, reply, bot=message.bot)
+                await stream_reply(
+                    placeholder,
+                    reply,
+                    bot=message.bot,
+                    reply_markup=keyboard,
+                )
                 if message.bot is not None:
                     await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.SUCCESS)
 

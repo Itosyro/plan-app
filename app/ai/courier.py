@@ -4,6 +4,13 @@
 1. Подтверждение (рандомно): ~50% из шаблонов, ~50% через LLM (llama-3.1-8b-instant)
 2. Резюме сделанного — детерминированно из персистнутых записей (без LLM)
 
+PR-E (бот-карточка): резюме теперь не вшито в текст, а живёт в
+:class:`SummaryItem` списком, который пайплайн отдаёт роутерам. Текст
+остаётся однострочным confirmation phrase, а строки `\u2610 Title` /
+`\u2705 Title` уезжают в inline-keyboard (см.
+:func:`build_summary_keyboard`). Старый :func:`build_summary` оставлен
+для внутренних вызовов и интроспекции (юнит-тесты, легаси-логирование).
+
 Две независимые настройки на ``UserSettings``:
 - ``response_style_source`` — *источник* подтверждения. Принимает
   строго ``template_only`` / ``llm_only`` / ``mix`` (дефолт ``mix``).
@@ -22,9 +29,12 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import instructor
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from groq import AsyncGroq
 
 from app.ai.router import GroqKeyRouter, call_with_rotation
@@ -48,55 +58,65 @@ def _load_prompt() -> str:
 
 
 # ── Шаблоны подтверждений по стилям (>=5 на каждый) ──────────────────
+#
+# PR-E: переписаны дружелюбнее. Стало два требования:
+# 1. Никаких сухих «Принял.» / «Записал.» — фразы должны звучать как
+#    живой ассистент, а не "backend acknowledged".
+# 2. Не более одной emoji-вставки на фразу (раньше playful был
+#    парадом из 🤖 / 🥷 / 🧠 — юзер прямо просил так не делать).
+#
+# Сам список задач уехал в inline-keyboard (см. ``build_summary_keyboard``),
+# поэтому шаблон может быть совсем короткий — на 1 строку, без
+# перечисления.
 
 TEMPLATES: dict[str, list[str]] = {
     "neutral": [
-        "Записал.",
-        "Принял, всё сохранил.",
-        "Готово, обработал.",
-        "Сохранил, всё на месте.",
-        "Принято и разложено.",
-        "Обработал твоё сообщение.",
+        "Окей, разобрал.",
+        "Готово — посмотри ниже.",
+        "Разложил по полкам.",
+        "Всё на месте, можно сверить.",
+        "Разобрал твоё сообщение.",
+        "Готово, проверь список.",
     ],
     "formal_master": [
-        "Слушаюсь, мой господин.",
-        "Всё исполнено, мой господин.",
-        "Как прикажете, мой господин. Записано.",
-        "Будет сделано, мой господин.",
-        "Принято к исполнению, мой господин.",
-        "Ваше поручение записано, мой господин.",
+        "Готово, мой господин.",
+        "Всё разобрано, мой господин.",
+        "Поручение исполнено, мой господин.",
+        "Разложил по полкам, мой господин.",
+        "Список готов, мой господин.",
+        "К услугам, мой господин — посмотри ниже.",
     ],
     "friendly": [
-        "Ловлю на лету! Всё записал.",
-        "Без проблем, братан! Сохранил.",
-        "Сделано, дружище!",
-        "Всё чётко, записал!",
-        "Держи пять! Разложил всё по полочкам.",
-        "Легко! Всё на месте.",
+        "Лови — разобрал твоё сообщение.",
+        "Готово, дружище, всё на месте.",
+        "Окей, разложил по полкам.",
+        "Поймал, проверь список снизу.",
+        "Готово — глянь, ничего не упустил?",
+        "Всё разобрал, отметь, что готово.",
     ],
     "playful": [
-        "Опа! Разобрал твой поток мыслей \U0001f9e0",
-        "Бип-буп, всё записано! \U0001f916",
-        "Мозги поскрипели — всё разложил!",
-        "Поймал всё на лету, как ниндзя! \U0001f977",
-        "Та-дам! Всё разложено по полочкам.",
-        "Раз-два — и готово! Магия \u2728",
+        "Опа, разобрал твой поток мыслей.",
+        "Та-дам — список готов.",
+        "Готово, проверь, всё ли поймал.",
+        "Раз-два — и разложил по полкам.",
+        "Лови карточку — что отметим сделанным?",
+        "Поймал на лету, посмотри ниже.",
     ],
     "terse": [
-        "Записал.",
-        "Ок.",
         "Готово.",
-        "Принял.",
-        "\u2705",
-        "Сделано.",
+        "Окей.",
+        "Разобрал.",
+        "Разложил.",
+        "Принято.",
+        "На месте.",
     ],
     "respectful": [
-        "Благодарю, всё записал для вас.",
-        "Принято, ваши задачи сохранены.",
-        "С удовольствием — всё обработал для вас.",
-        "Готово. Ваши задачи разложены.",
-        "Всё сохранено, будьте спокойны.",
-        "Обработал ваше сообщение. Всё в порядке.",
+        "Готово, всё разобрано.",
+        "Принято — посмотрите список ниже.",
+        "Разложил по полкам, можно сверить.",
+        "Готово, проверьте, пожалуйста, список.",
+        "Список готов — поправите, если что не так.",
+        "Всё на месте, спасибо за сообщение.",
     ],
 }
 
@@ -168,15 +188,121 @@ async def generate_courier_reply(
     return reply.text
 
 
+@dataclass
+class SummaryItem:
+    """One row in the recognised-card inline keyboard.
+
+    ``kind`` decides the row's interactive semantics:
+
+    * ``"task"`` — the row toggles between ``\u2610`` and ``\u2705``;
+      tapping it flips the underlying ``Task.status`` between ``new``
+      and ``done`` via ``cb_summary_toggle`` (see
+      ``app/bot/routers/callbacks.py``).
+    * ``"note"`` — the row is a non-interactive label prefixed with
+      ``\U0001f4c4`` ("document"); the callback just answers with a
+      short toast ("Заметка.") and never mutates DB state. Notes don't
+      have a ``done`` concept, so we surface them visually but skip the
+      toggle. The semantics may change once the user picks one of the
+      alternatives in HANDOFF v15 §Open questions.
+    """
+
+    kind: Literal["task", "note"]
+    title: str
+    category_name: str
+    persisted_id: int
+    status: Literal["pending", "done"] = "pending"
+
+
+TASK_PENDING_PREFIX = "\u2610 "  # ☐
+TASK_DONE_PREFIX = "\u2705 "  # ✅
+NOTE_PREFIX = "\U0001f4c4 "  # 📄
+
+# Telegram caps inline button labels at ~64 chars in practice; titles
+# above this look cut on narrow Android screens. We trim *before*
+# appending the category suffix to keep the keyboard tidy.
+_BUTTON_TITLE_MAX = 40
+
+
+def _trim_for_button(text: str, *, limit: int = _BUTTON_TITLE_MAX) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "\u2026"
+
+
+def _row_label(item: SummaryItem) -> str:
+    """Render one inline-keyboard row label for ``item``.
+
+    Tasks: ``\u2610 Title \u00b7 Category`` / ``\u2705 Title \u00b7 Category``
+    Notes: ``\U0001f4c4 Title \u00b7 Category``
+    """
+    if item.kind == "task":
+        prefix = TASK_DONE_PREFIX if item.status == "done" else TASK_PENDING_PREFIX
+    else:
+        prefix = NOTE_PREFIX
+    trimmed = _trim_for_button(item.title)
+    if item.category_name:
+        return f"{prefix}{trimmed} \u00b7 {item.category_name}"
+    return f"{prefix}{trimmed}"
+
+
+def build_summary_keyboard(items: list[SummaryItem]) -> InlineKeyboardMarkup:
+    """Build the recognised-card inline keyboard (one row per item).
+
+    Empty input → empty keyboard (callers should send no markup at all
+    in that case, but constructing an empty :class:`InlineKeyboardMarkup`
+    is still valid aiogram and useful for tests).
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for item in items:
+        callback_data = f"summary:toggle:{item.kind}:{item.persisted_id}"
+        rows.append([InlineKeyboardButton(text=_row_label(item), callback_data=callback_data)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def flip_item(items: list[SummaryItem], target_id: int, *, kind: str) -> list[SummaryItem]:
+    """Return a new list with the matching item's status flipped.
+
+    Used by the callback handler when it doesn't have the full
+    :class:`SummaryItem` list to mutate — we reconstruct from the
+    current keyboard, flip, rebuild. Items that don't match are
+    returned unchanged.
+    """
+    out: list[SummaryItem] = []
+    for item in items:
+        if item.kind == kind == "task" and item.persisted_id == target_id:
+            new_status: Literal["pending", "done"] = (
+                "done" if item.status == "pending" else "pending"
+            )
+            out.append(
+                SummaryItem(
+                    kind=item.kind,
+                    title=item.title,
+                    category_name=item.category_name,
+                    persisted_id=item.persisted_id,
+                    status=new_status,
+                )
+            )
+        else:
+            out.append(item)
+    return out
+
+
 def build_summary(classifier_results: list[ClassifierResult]) -> str:
-    """Build a deterministic summary of processed items (no LLM)."""
+    """Build a deterministic text summary of processed items (no LLM).
+
+    Legacy / introspection helper: PR-E moved the summary into an
+    inline keyboard (see :func:`build_summary_keyboard`), so the bot
+    pipeline does **not** call this function anymore. Kept so unit
+    tests and ad-hoc diagnostics can still describe a classification
+    batch in one string.
+    """
     if not classifier_results:
         return ""
 
     lines: list[str] = []
     for cr in classifier_results:
-        kind = "\U0001f4cc задача" if cr.is_task else "\U0001f4dd заметка"
-        lines.append(f"{kind}: {cr.title} [{cr.category_name}]")
+        prefix = "Задача" if cr.is_task else "Заметка"
+        lines.append(f"{prefix}: {cr.title} \u00b7 {cr.category_name}")
 
     n = len(lines)
     header = f"Разобрал на {_pluralize(n)}:\n"
@@ -197,15 +323,20 @@ def _pluralize(n: int) -> str:
 
 async def courier_respond(
     router: GroqKeyRouter,
-    classifier_results: list[ClassifierResult],
+    items: list[SummaryItem],
     *,
     mode: str = "mix",
     style: str = "neutral",
-) -> str:
-    """Build the full reply: confirmation + summary."""
-    confirmation = await generate_courier_reply(router, style, mode=mode)
-    summary = build_summary(classifier_results)
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Build a confirmation phrase + (optional) recognised-card keyboard.
 
-    if summary:
-        return f"{confirmation}\n\n{summary}"
-    return confirmation
+    PR-E: returns ``(text, keyboard)``. ``text`` is the confirmation
+    phrase only — the list of recognised items lives in ``keyboard``
+    as togglable rows. When ``items`` is empty (e.g. the splitter
+    returned zero units), ``keyboard`` is ``None`` and only the
+    confirmation goes back to the user.
+    """
+    confirmation = await generate_courier_reply(router, style, mode=mode)
+    if not items:
+        return confirmation, None
+    return confirmation, build_summary_keyboard(items)

@@ -164,6 +164,7 @@ class UserSettingsOut(_ConfiguredModel):
     response_style_source: str
     courier_template_style: str
     week_due_semantic: str
+    concretize_tasks: bool
 
 
 class UserSettingsUpdateIn(BaseModel):
@@ -184,6 +185,7 @@ class UserSettingsUpdateIn(BaseModel):
     response_style_source: str | None = None
     courier_template_style: str | None = None
     week_due_semantic: str | None = None
+    concretize_tasks: bool | None = None
 
 
 class MeUpdateIn(BaseModel):

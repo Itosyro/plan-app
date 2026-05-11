@@ -79,6 +79,7 @@ def create_router() -> Router:
             )
             morning_anchor = settings.morning_anchor if settings else "09:00"
             evening_anchor = settings.evening_anchor if settings else "19:00"
+            concretize_tasks = settings.concretize_tasks if settings else False
 
         logger.info(
             "inbox.text_stored",
@@ -117,7 +118,7 @@ def create_router() -> Router:
 
         async def _background() -> None:
             try:
-                reply = await run_pipeline(
+                reply, keyboard = await run_pipeline(
                     groq_router,
                     msg_text,
                     from_user_id,
@@ -131,8 +132,14 @@ def create_router() -> Router:
                     default_reminder_offsets=default_offsets,
                     morning_anchor=morning_anchor,
                     evening_anchor=evening_anchor,
+                    concretize_tasks=concretize_tasks,
                 )
-                await stream_reply(placeholder, reply, bot=message.bot)
+                await stream_reply(
+                    placeholder,
+                    reply,
+                    bot=message.bot,
+                    reply_markup=keyboard,
+                )
                 if message.bot is not None:
                     await reactions.set_reaction(
                         message.bot, chat_id, user_message_id, reactions.SUCCESS
