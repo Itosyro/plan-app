@@ -6,6 +6,102 @@
 
 ---
 
+## 2026-05-11 — feat: friendlier bot replies + recognised-card inline keyboard + make-it-concrete (PR-E)
+
+PR-E переписывает ответ бота после разбора входящего сообщения. Раньше
+бот возвращал сухой текст вида «Принял.\n📌 задача: Купить хлеб · Покупки\n…».
+Теперь:
+
+1. Подтверждение стало живой фразой («Окей, разобрал.», «Лови карточку»,
+   «Готово, мой господин» — зависит от стиля). Без сухих «Принял»/«Записал»,
+   с ограничением «не больше одной эмодзи на фразу» (юзер прямо просил).
+2. Список распознанного уехал из текста в *inline-keyboard* —
+   «карточку распознанного». Каждая распознанная единица = одна кнопка-строка:
+   - ☐ задача → тап переводит её в ✅ (статус `done` в БД), повторный тап
+     возвращает в работу (статус `new`, событие `reopened` в `task_events`).
+   - 📄 заметка → тап даёт toast «Заметка», но БД не трогает. Удаление/архив
+     заметок остаются на mini-app и голосовые команды.
+3. Опциональный «make-it-concrete» режим: классификатор может предложить
+   первый 5–15-минутный шаг (`first_step`) для абстрактных задач («научиться
+   играть на гитаре»). По умолчанию off — включается в настройках бота
+   и mini-app переключателем «Первый шаг» (`concretize_tasks`). При включении
+   `first_step` записывается в `Task.description` префиксом `Шаг 1: …`.
+
+**Backend**
+- `app/ai/courier.py` — `SummaryItem` dataclass (kind/title/category_name/
+  persisted_id/status), `build_summary_keyboard(items)`, `flip_item()`,
+  обновлён `courier_respond()` → `tuple[str, InlineKeyboardMarkup | None]`.
+  Шаблоны подтверждений переписаны: drop dry-acks, max 1 эмодзи/фраза.
+- `app/ai/schemas.py::ClassifierResult` — добавлено опциональное поле
+  `first_step: str | None`.
+- `app/ai/prompts/classifier.md` — раздел «First step (optional, only for
+  tasks)» с примерами и правилами (≤80 символов, императив, конкретное
+  физическое действие на сегодня).
+- `app/bot/courier_templates.py` — переписан `WELCOME_*`, `WAITING_FOR_NAME`,
+  `NAME_PERSONALIZED` под живой тон + 1 эмодзи на ключевой шаг.
+- `app/bot/routers/_pipeline.py` — `run_pipeline()` теперь возвращает
+  `tuple[str, InlineKeyboardMarkup | None]` (`PipelineReply`). Принимает
+  `concretize_tasks: bool`. Во время persist-цикла собирает `list[SummaryItem]`
+  из персистнутых строк и передаёт его в `courier_respond`.
+- `app/bot/routers/text.py`, `app/bot/routers/voice.py` — анпак tuple-ответа,
+  чтение `concretize_tasks` из `UserSettings`, передача `reply_markup=keyboard`
+  в `stream_reply`.
+- `app/bot/routers/callbacks.py` — новый хендлер
+  `cb_summary_toggle` на `summary:toggle:<kind>:<id>`:
+  - kind=task → `mark_task_done` / `mark_task_undone`, флипает префикс ☐↔✅,
+    рефрешит pinned-morning digest.
+  - kind=note → toast «Заметка — не требует действий», БД не трогает.
+  Парсинг payload вынесен в чистую функцию `parse_summary_toggle_callback`
+  (зеркалит R-NEW-I-1 дисциплину — никаких unguarded `int(parts[N])` в
+  хендлерах).
+- `app/bot/routers/settings.py` — добавлен `concretize_tasks` в SETTING_LABELS
+  + CONCRETIZE_OPTIONS (on/off), интегрирован в `_setting_value`.
+- `app/bot/services/settings.py::ALLOWED_SETTING_VALUES` — добавлен
+  `concretize_tasks: frozenset({"on", "off"})`, конвертация on/off → bool
+  в `update_user_settings`.
+- `app/bot/services/tasks.py` — `mark_task_undone()` (event `reopened`),
+  `_build_task_description()` (склейка first_step при concretize=True),
+  `persist_classification()` принимает `concretize_tasks: bool`.
+- `app/bot/streaming.py::stream_reply` — параметр `reply_markup`; markup
+  крепится только на финальном edit (чтобы клавиатура не моргала во время
+  streaming-эффекта).
+- `app/db/models.py::UserSettings` — поле `concretize_tasks: bool` (default
+  False, nullable=False).
+- `alembic/versions/2026_05_11_1100-0010_concretize_tasks.py` — миграция
+  (SQLite-aware: `"0"` для sqlite, `false()` для остальных диалектов;
+  server_default снимается сразу после backfill).
+
+**API + Mini-App**
+- `app/api/schemas.py::UserSettingsOut`/`UserSettingsUpdateIn` — добавлено
+  `concretize_tasks: bool`.
+- `app/api/routers/me.py::patch_me` — конвертация bool↔string на wire-границе
+  (mini-app шлёт `true`/`false`, бот хранит как bool).
+- `webapp/src/types.ts` — `concretize_tasks: boolean` в `UserSettings` и
+  `concretize_tasks?: boolean` в `UserSettingsUpdate`.
+- `webapp/src/components/SettingsPage.tsx` — `SettingsSelectRow` с
+  иконкой `ListChecks`, лейблом «Первый шаг», конверсия bool↔«on»/«off»
+  на onChange.
+
+**Тесты**
+- `tests/test_courier.py` — переписан под новый contract `courier_respond`,
+  добавлены:
+  - `test_templates_no_emoji_parade` — ≤1 эмодзи на фразу.
+  - `test_templates_no_dry_acks` — `Принял.`/`Записал.` запрещены.
+  - `test_build_summary_keyboard_*` — структура клавиатуры, callback_data
+    `summary:toggle:<kind>:<id>`, префиксы ☐/✅/📄, обрезка длинных
+    тайтлов.
+  - `test_flip_item_*` — для tasks toggle меняет статус, для notes нет.
+- `tests/test_e2e_pipeline.py` — все e2e-тесты обновлены под tuple-возврат:
+  утверждения теперь смотрят в `keyboard.inline_keyboard[i][0].text`, а
+  не в текст. Добавлен helper `_kb_labels(kb)`.
+
+**Что осталось пользователю**
+- Семантика тапа на 📄-заметку в карточке распознанного — пока no-op +
+  toast «Заметка». Полное удаление/архив остаются на mini-app и голосовые
+  команды («удали заметку про X»). Юзер подтвердил такое поведение в чате.
+
+---
+
 ## 2026-05-11 — feat: soft-delete trash bin with 24h retention (PR-D)
 
 Мягкое удаление задач и заметок вместо физического. Удалённые записи

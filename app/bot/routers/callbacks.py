@@ -15,6 +15,11 @@ from aiogram.types import (
     Message,
 )
 
+from app.ai.courier import (
+    NOTE_PREFIX,
+    TASK_DONE_PREFIX,
+    TASK_PENDING_PREFIX,
+)
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
@@ -22,6 +27,7 @@ from app.bot.services import (
     get_task_by_id,
     get_user_categories_full,
     mark_task_done,
+    mark_task_undone,
     update_task_category,
     update_task_horizon,
 )
@@ -59,6 +65,33 @@ def parse_task_callback(data: str, action: str, *, arity: int = 3) -> tuple[int,
     except ValueError:
         return None
     return task_id, parts[3:]
+
+
+def parse_summary_toggle_callback(data: str) -> tuple[str, int] | None:
+    """Parse a ``summary:toggle:<kind>:<id>`` callback string.
+
+    PR-E recognised-card payload — separate from
+    :func:`parse_task_callback` because the shape is different
+    (``summary`` prefix, ``kind`` is a string discriminant, not a row
+    number). Returns ``(kind, entity_id)`` on success or ``None`` for
+    malformed / unknown-kind payloads. ``kind`` is one of
+    ``{"task", "note"}`` — anything else is rejected.
+
+    Mirrors the R-NEW-I-1 discipline: all ``int(...)`` calls on
+    user-controlled payload components live here, behind a guarded
+    ``try/except``, so handlers can stay free of unguarded parses.
+    """
+    parts = data.split(":")
+    if len(parts) != 4 or parts[0] != "summary" or parts[1] != "toggle":
+        return None
+    kind = parts[2]
+    if kind not in {"task", "note"}:
+        return None
+    try:
+        entity_id = int(parts[3])
+    except ValueError:
+        return None
+    return kind, entity_id
 
 
 def task_action_keyboard(task_id: int) -> InlineKeyboardMarkup:
@@ -377,4 +410,133 @@ def create_router() -> Router:
                 reply_markup=task_action_keyboard(task_id),
             )
 
+    @router.callback_query(F.data.startswith("summary:toggle:"))
+    async def cb_summary_toggle(callback: CallbackQuery) -> None:
+        """Toggle a task's done/pending status from the recognised-card.
+
+        Callback payload: ``summary:toggle:<kind>:<id>`` where ``kind``
+        is ``task`` or ``note`` and ``<id>`` is the row's primary key.
+
+        - **task** → flip the row prefix between ☐ and ✅ in the
+          keyboard, and mirror the change in the DB via
+          :func:`mark_task_done` / :func:`mark_task_undone`.
+        - **note** → no DB mutation (notes don't have a ``done``
+          state). Just answer the callback with a short toast so the
+          spinner clears. Final semantics TBD per HANDOFF v15
+          §Open-questions.
+        """
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_summary_toggle_callback(callback.data)
+        if parsed is None:
+            await callback.answer("Неверный формат.")
+            return
+        kind, entity_id = parsed
+
+        if kind == "note":
+            # Pending the open-question resolution (archive vs delete
+            # vs ignore), tapping a note row is intentionally inert:
+            # the keyboard stays as-is and the user just gets a toast.
+            # This keeps the surface honest — we don't yet promise any
+            # destructive semantic.
+            await callback.answer("Заметка — не требует действий.")
+            return
+
+        # ── kind == "task" ────────────────────────────────────────
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            task = await get_task_by_id(session, user.id, entity_id)
+            if task is None:
+                await callback.answer("Задача не найдена.")
+                return
+            currently_done = task.status == "done"
+            if currently_done:
+                await mark_task_undone(session, task, user.id)
+                toast = "Снова в работе."
+            else:
+                await mark_task_done(session, task, user.id)
+                toast = "Готово!"
+            user_id_for_pin = user.id
+
+        await callback.answer(toast)
+
+        # Rebuild the keyboard with the flipped prefix on this row.
+        if isinstance(callback.message, Message) and callback.message.reply_markup is not None:
+            new_markup = _flip_summary_row(
+                callback.message.reply_markup,
+                kind="task",
+                entity_id=entity_id,
+                now_done=not currently_done,
+            )
+            try:
+                await callback.message.edit_reply_markup(reply_markup=new_markup)
+            except Exception:
+                logger.warning(
+                    "callbacks.summary_toggle.edit_failed",
+                    user_id=user_id_for_pin,
+                    task_id=entity_id,
+                    exc_info=True,
+                )
+
+        # Mirror :func:`cb_task_done` — keep the pinned morning digest
+        # in sync with the task's new status.
+        if callback.bot is not None:
+            async with session_scope() as session:
+                try:
+                    await refresh_pinned_morning(callback.bot, session, user_id_for_pin)
+                except Exception:
+                    logger.warning(
+                        "callbacks.summary_toggle.refresh_pinned_failed",
+                        user_id=user_id_for_pin,
+                        exc_info=True,
+                    )
+
     return router
+
+
+def _flip_summary_row(
+    markup: InlineKeyboardMarkup,
+    *,
+    kind: str,
+    entity_id: int,
+    now_done: bool,
+) -> InlineKeyboardMarkup:
+    """Return a copy of ``markup`` with the target row's prefix flipped.
+
+    Used by :func:`cb_summary_toggle` to mutate just one row of the
+    recognised-card keyboard without rebuilding the whole
+    :class:`SummaryItem` list from scratch. Buttons we don't own (other
+    rows, non-summary callbacks) are passed through untouched.
+
+    The label format is exactly what ``app.ai.courier._row_label`` emits
+    — a prefix from ``{☐, ✅, 📄}`` followed by the title. We flip
+    *only* the prefix and only on the matching row, so e.g. titles with
+    a leading "📄" can't accidentally be misread as a note label.
+    """
+    target_callback = f"summary:toggle:{kind}:{entity_id}"
+    new_prefix = TASK_DONE_PREFIX if now_done else TASK_PENDING_PREFIX
+    old_prefixes = (TASK_PENDING_PREFIX, TASK_DONE_PREFIX, NOTE_PREFIX)
+
+    rows_out: list[list[InlineKeyboardButton]] = []
+    for row in markup.inline_keyboard:
+        new_row: list[InlineKeyboardButton] = []
+        for button in row:
+            if button.callback_data != target_callback:
+                new_row.append(button)
+                continue
+            label = button.text
+            for prefix in old_prefixes:
+                if label.startswith(prefix):
+                    label = new_prefix + label[len(prefix) :]
+                    break
+            new_row.append(
+                InlineKeyboardButton(text=label, callback_data=button.callback_data),
+            )
+        rows_out.append(new_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows_out)

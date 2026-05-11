@@ -49,6 +49,20 @@ class ClassifierResult(BaseModel):
         default=None,
         description="Minutes before due_at to remind (only if user explicitly asked)",
     )
+    # PR-E "make it concrete" (опционально): когда классификатор видит,
+    # что задача абстрактная / большая ("научиться играть на гитаре",
+    # "разобраться с английским"), он может предложить конкретный
+    # первый шаг — короткое действие на 5–15 минут, с которого реально
+    # можно начать сегодня. Если задача и так конкретная — ``null``.
+    # Применяется только если у юзера ``UserSettings.concretize_tasks``
+    # включён (см. :class:`app.db.models.UserSettings`).
+    first_step: str | None = Field(
+        default=None,
+        description=(
+            "Optional concrete first action (5–15 min) for abstract goals. "
+            "Null when the task is already concrete."
+        ),
+    )
 
 
 class ResolvedTime(BaseModel):

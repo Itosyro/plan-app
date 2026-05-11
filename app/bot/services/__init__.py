@@ -89,6 +89,9 @@ from .tasks import (
     mark_task_done as mark_task_done,
 )
 from .tasks import (
+    mark_task_undone as mark_task_undone,
+)
+from .tasks import (
     persist_classification as persist_classification,
 )
 from .tasks import (

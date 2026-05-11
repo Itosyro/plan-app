@@ -18,68 +18,70 @@ from __future__ import annotations
 
 from typing import Final
 
-# Greeting shown alongside the timezone inline-keyboard.
+# Greeting shown alongside the timezone inline-keyboard. PR-E: keep one
+# emoji, drop the marketing-y bullet — it reads as a real person, not a
+# kiosk.
 ONBOARDING_GREETING: Final[str] = (
     "Привет 👋\n"
-    "Я разбираю твои голосовые и текстовые мысли в задачи, "
-    "заметки и напоминания.\n\n"
-    "Сначала — часовой пояс. Выбери свой:"
+    "Я помогаю разбирать поток мыслей в задачи, заметки и напоминания — "
+    "принимаю голосом или текстом.\n\n"
+    "Для начала — выбери часовой пояс:"
 )
 
 # After timezone is set via the keyboard, ask for a name. We don't
 # include the tz_label in this string (it lives in the keyboard's
 # acknowledgement edit, see ``onb_tz_callback``).
-ONBOARDING_ASK_NAME: Final[str] = "Готово.\n\nКак к тебе обращаться? Напиши имя или ник."
+ONBOARDING_ASK_NAME: Final[str] = (
+    "Часовой пояс запомнил.\n\nКак к тебе обращаться? Напиши имя или ник."
+)
 
 # Fallback when user typed name longer than allowed.
-ONBOARDING_BAD_NAME: Final[str] = "Слишком длинное. До 64 символов, пожалуйста."
+ONBOARDING_BAD_NAME: Final[str] = "Чуть короче, пожалуйста — до 64 символов."
 
 # After tz selection, if user pressed "Указать другой ✏️".
 ONBOARDING_ASK_CUSTOM_TZ: Final[str] = (
     "Окей. Напиши свой часовой пояс в IANA-формате —\n"
     "например, ``Europe/Berlin`` или ``America/New_York``.\n\n"
-    "Список всех — https://nodatime.org/TimeZones."
+    "Искать проще всего здесь: https://nodatime.org/TimeZones."
 )
 
 # Custom-tz validation failure (legacy ``ONBOARDING_BAD_TZ`` is kept as
 # alias for back-compat with anything that imports it).
 ONBOARDING_BAD_TZ: Final[str] = (
-    "Не узнал такой часовой пояс. Попробуй ещё раз в IANA-формате —\n"
+    "Не узнаю такой часовой пояс. Попробуй в IANA-формате —\n"
     "например, ``Europe/Moscow`` или ``Asia/Tashkent``."
 )
 
 # Final confirmation. Short — full settings live behind /settings.
 ONBOARDING_DONE: Final[str] = (
-    "Готово, {name}. Часовой пояс — {tz}.\n\n"
-    "Дайджесты: утром в 08:00, вечером в 21:00.\n"
-    "Поменять — /settings.\n\n"
-    "Скидывай мысли — голосом или текстом."
+    "Рад, что познакомились, {name}. Часовой пояс: {tz}.\n\n"
+    "Итоги дня пришлю утром в 08:00 и вечером в 21:00 — это легко поменять в /settings.\n\n"
+    "Скидывай мысли голосом или текстом — разложу по полкам."
 )
 
 # Re-onboarding (already onboarded, runs /start again).
 ONBOARDING_ALREADY_DONE: Final[str] = (
-    "Уже знакомы, {name}.\n"
-    "Часовой пояс: {tz}.\n\n"
-    "Поменять часовой пояс — нажми кнопку. "
-    "Или просто пиши задачи как обычно."
+    "Снова здорово, {name}.\n"
+    "Сейчас у тебя часовой пояс {tz}.\n\n"
+    "Для смены пояса нажми кнопку ниже, или просто пиши задачи как обычно."
 )
 
-TEXT_ACK_PHASE1: Final[str] = "Принял. AI-разбор подключу в Phase 2 — пока сохраняю во входящие."
+TEXT_ACK_PHASE1: Final[str] = "Окей, сохранил во входящие — бот ещё учится разбирать фразы."
 
 HELP: Final[str] = (
-    "Я — бот-планировщик. Принимаю текст и голос, раскладываю на задачи и заметки.\n\n"
-    "Команды:\n"
-    "/start — настройка (часовой пояс + имя)\n"
+    "Я помогаю планировать — слушаю голосовые и текст, раскладываю на задачи и заметки.\n\n"
+    "Что умею:\n"
+    "/start — вернуться к настройке (часовой пояс + имя)\n"
     "/help — это сообщение\n"
-    "/today — задачи на сегодня\n"
-    "/tomorrow — задачи на завтра\n"
-    "/week — задачи на эту неделю\n"
-    "/month — задачи на этот месяц\n"
-    "/year — задачи на этот год\n"
-    "/someday — задачи без срока\n"
+    "/today — что на сегодня\n"
+    "/tomorrow — что на завтра\n"
+    "/week — эта неделя\n"
+    "/month — этот месяц\n"
+    "/year — этот год\n"
+    "/someday — без срока\n"
     "/notes — последние заметки\n"
     "/categories — список категорий\n"
-    "/settings — настройки бота"
+    "/settings — настройки"
 )
 
-NOT_ONBOARDED: Final[str] = "Похоже, мы ещё не знакомы. Напиши /start — настроим всё за минуту."
+NOT_ONBOARDED: Final[str] = "Мы ещё не знакомы. Нажми /start — заодно выберем часовой пояс и имя."

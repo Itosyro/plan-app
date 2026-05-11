@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+from aiogram.types import InlineKeyboardMarkup
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -26,6 +27,19 @@ from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import Note, Task
 
 _FAKE_KEYS = ["gsk_test_key_1"]
+
+
+def _kb_labels(kb: InlineKeyboardMarkup | None) -> list[str]:
+    """Flatten the recognised-card keyboard to a list of button labels.
+
+    PR-E moved the summary text into an inline keyboard, so the e2e
+    assertions that used to look for ``"Купить хлеб" in reply`` now
+    have to inspect the keyboard rows. The helper returns one label
+    per row, in order; an empty list for ``None`` (no keyboard).
+    """
+    if kb is None:
+        return []
+    return [row[0].text for row in kb.inline_keyboard]
 
 
 def _splitter_response(units: list[dict[str, str]]) -> dict[str, Any]:
@@ -149,7 +163,7 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "утром пробежка",
         tg_user_id=300,
@@ -159,8 +173,10 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "Утренняя пробежка" in reply
+    labels = _kb_labels(keyboard)
+    assert text  # non-empty confirmation phrase
+    assert any("Утренняя пробежка" in label for label in labels)
+    assert any(label.startswith("\u2610 ") for label in labels)  # task prefix
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -192,7 +208,7 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "купить хлеб и молоко, записаться к врачу",
         tg_user_id=301,
@@ -202,9 +218,11 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
         courier_mode="template_only",
     )
 
-    assert "2 элемента" in reply
-    assert "Купить хлеб и молоко" in reply
-    assert "Записаться к врачу" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert len(labels) == 2
+    assert any("Купить хлеб и молоко" in label for label in labels)
+    assert any("Записаться к врачу" in label for label in labels)
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -241,7 +259,7 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "позвонить Олегу, а ещё — книга про AI интересная",
         tg_user_id=302,
@@ -251,9 +269,12 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "📝 заметка" in reply
-    assert "2 элемента" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert len(labels) == 2
+    # one row is a task (☐), the other is a note (📄)
+    assert any(label.startswith("\u2610 ") for label in labels)
+    assert any(label.startswith("\U0001f4c4 ") for label in labels)
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -293,7 +314,7 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "до пятницы отчёт, в 11 совещание",
         tg_user_id=303,
@@ -303,9 +324,11 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "2 элемента" in reply
-    assert "Отчёт до пятницы" in reply
-    assert "Совещание в 11" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert len(labels) == 2
+    assert any("Отчёт до пятницы" in label for label in labels)
+    assert any("Совещание в 11" in label for label in labels)
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -335,7 +358,7 @@ async def test_e2e_filler_message_no_tasks(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "ну так, окей",
         tg_user_id=304,
@@ -344,7 +367,8 @@ async def test_e2e_filler_message_no_tasks(session: AsyncSession) -> None:
         inbox_id=None,
     )
 
-    assert "не нашёл" in reply.lower()
+    assert "не нашёл" in text.lower()
+    assert keyboard is None  # empty units → no recognised-card
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 0
@@ -392,7 +416,7 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "утром йога, вечером ужин с друзьями, записать идею про стартап",
         tg_user_id=305,
@@ -402,7 +426,9 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "3 элемента" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert len(labels) == 3
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
@@ -442,7 +468,7 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "интересная мысль про архитектуру проекта",
         tg_user_id=306,
@@ -452,8 +478,10 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📝 заметка" in reply
-    assert "Мысль про архитектуру" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert any(label.startswith("\U0001f4c4 ") for label in labels)  # note prefix
+    assert any("Мысль про архитектуру" in label for label in labels)
 
     notes = (await session.exec(select(Note).where(Note.user_id == user.id))).all()
     assert len(notes) == 1
@@ -520,7 +548,7 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
 
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=staged)
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "купить хлеб, записаться к врачу",
         tg_user_id=350,
@@ -531,8 +559,10 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
     )
 
     # Survivor is reported; failed unit is silently dropped.
-    assert "Купить хлеб" in reply
-    assert "Записаться к врачу" not in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert any("Купить хлеб" in label for label in labels)
+    assert not any("Записаться к врачу" in label for label in labels)
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1
@@ -568,7 +598,7 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
         side_effect=tracker.side_effect
     )
 
-    reply = await run_pipeline(
+    text, keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "срочно! позвонить в банк до 15:00",
         tg_user_id=307,
@@ -578,8 +608,10 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
         courier_mode="template_only",
     )
 
-    assert "📌 задача" in reply
-    assert "Позвонить в банк" in reply
+    labels = _kb_labels(keyboard)
+    assert text
+    assert any(label.startswith("\u2610 ") for label in labels)
+    assert any("Позвонить в банк" in label for label in labels)
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 1

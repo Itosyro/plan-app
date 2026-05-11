@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Globe,
   Languages,
+  ListChecks,
   MessageSquare,
   Moon,
   Pencil,
@@ -75,6 +76,15 @@ const WEEK_DUE_SEMANTIC_OPTIONS: { value: string; label: string }[] = [
   { value: "deadline_sunday", label: "Дедлайн воскресенье" },
   { value: "deadline_saturday", label: "Дедлайн суббота" },
   { value: "spread_evenly", label: "Равномерно" },
+];
+
+// PR-E "make it concrete": opt-in toggle for the classifier's optional
+// ``first_step`` hint. Values are stringified booleans because
+// ``BottomSheetSelect`` works on strings; the patch handler converts
+// the picked option to a real bool before sending over the wire.
+const CONCRETIZE_OPTIONS: { value: string; label: string }[] = [
+  { value: "on", label: "Добавлять" },
+  { value: "off", label: "Не трогать" },
 ];
 
 interface Props {
@@ -266,6 +276,17 @@ export function SettingsPage({ me, onUpdated }: Props) {
           disabled={pending === "week_due_semantic"}
           onChange={(value) =>
             patch("week_due_semantic", { settings: { week_due_semantic: value } })
+          }
+        />
+        <SettingsSelectRow
+          icon={ListChecks}
+          tone="sky"
+          label="Первый шаг"
+          value={settings?.concretize_tasks ? "on" : "off"}
+          options={CONCRETIZE_OPTIONS}
+          disabled={pending === "concretize_tasks"}
+          onChange={(value) =>
+            patch("concretize_tasks", { settings: { concretize_tasks: value === "on" } })
           }
         />
       </SettingsSection>

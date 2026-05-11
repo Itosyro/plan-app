@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import asyncio
 
+from aiogram.types import InlineKeyboardMarkup
+
 from app.ai.classifier import classify_intent
-from app.ai.courier import courier_respond
+from app.ai.courier import SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
@@ -40,6 +42,7 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.base import session_scope
+from app.db.models import Task
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
@@ -142,6 +145,9 @@ def log_task_exception(task: asyncio.Task[object]) -> None:
         )
 
 
+PipelineReply = tuple[str, InlineKeyboardMarkup | None]
+
+
 async def _try_reorder(
     groq_router: GroqKeyRouter,
     text: str,
@@ -167,7 +173,7 @@ async def _try_reorder(
             "someday": "когда-нибудь",
         }
         label = horizon_labels.get(reorder_req.target_horizon, reorder_req.target_horizon)
-        return f"✅ Перенёс «{task.title}» → {label}."
+        return f"Перенёс «{task.title}» → {label}."
 
 
 async def run_pipeline(
@@ -185,11 +191,15 @@ async def run_pipeline(
     default_reminder_offsets: dict[str, list[int]] | None = None,
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
-) -> str:
+    concretize_tasks: bool = False,
+) -> PipelineReply:
     """Detect reorder or run split → time → classify → critic → persist → reply.
 
     The full Groq pipeline. Used by both the text router and the voice
-    router (post-Whisper). Returns a user-facing reply string.
+    router (post-Whisper). Returns ``(reply_text, summary_keyboard)``
+    where ``summary_keyboard`` is ``None`` for short / error replies
+    (no classified items to show) and a populated
+    :class:`InlineKeyboardMarkup` otherwise (PR-E recognised-card).
 
     Backpressure: a per-user semaphore + a global semaphore gate the
     actual work (see R-NEW-I-8). Acquisitions are nested (per-user
@@ -221,6 +231,7 @@ async def run_pipeline(
             default_reminder_offsets=default_reminder_offsets,
             morning_anchor=morning_anchor,
             evening_anchor=evening_anchor,
+            concretize_tasks=concretize_tasks,
         )
 
 
@@ -239,11 +250,12 @@ async def _run_pipeline_inner(
     default_reminder_offsets: dict[str, list[int]] | None = None,
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
-) -> str:
+    concretize_tasks: bool = False,
+) -> PipelineReply:
     """Inner pipeline body, called only while both semaphores are held."""
     reorder_reply = await _try_reorder(groq_router, text, user_id)
     if reorder_reply is not None:
-        return reorder_reply
+        return reorder_reply, None
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
@@ -252,7 +264,10 @@ async def _run_pipeline_inner(
     )
 
     if not split_result.units:
-        return "Принял, но не нашёл конкретных задач или заметок."
+        return (
+            "Слышу тебя, но не нашёл в сообщении конкретных задач или заметок — "
+            "попробуй переформулировать."
+        ), None
 
     # Resolve time for each unit (pure Python, fast)
     resolved_list: list[ResolvedTime | None] = [
@@ -294,7 +309,9 @@ async def _run_pipeline_inner(
         survivors.append((item, resolved, unit.text))
 
     if not survivors:
-        return "Не удалось разобрать ни одну часть сообщения — сохранил во входящие."
+        return (
+            "Не удалось разобрать сообщение — сохранил его целиком во входящие, позже разберясь."
+        ), None
 
     # Critic: review classifications that need it (only survivors).
     reviewed: list[tuple[ClassifierResult, ResolvedTime | None]] = []
@@ -312,6 +329,7 @@ async def _run_pipeline_inner(
         reviewed.append((cr, resolved))
 
     # Persist surviving units.
+    items: list[SummaryItem] = []
     async with session_scope() as session:
         await log_ai_run(
             session,
@@ -342,15 +360,33 @@ async def _run_pipeline_inner(
             ):
                 cr = cr.model_copy(update={"reminder_offsets": [0]})
 
-            await persist_classification(
+            row = await persist_classification(
                 session,
                 user_id=user_id,
                 cr=cr,
                 due_at=due_at,
                 inbox_id=inbox_id,
                 default_reminder_offsets=default_reminder_offsets,
+                concretize_tasks=concretize_tasks,
             )
-
+            if row.id is not None:
+                items.append(
+                    SummaryItem(
+                        kind="task" if isinstance(row, Task) else "note",
+                        title=cr.title,
+                        category_name=cr.category_name,
+                        persisted_id=row.id,
+                    )
+                )
+            else:
+                # Defensive: ``persist_classification`` flushes the row, so
+                # ``id`` is always populated. If somehow it's not, skip
+                # adding to the keyboard rather than crashing the reply.
+                logger.warning(
+                    "pipeline.persisted_row_missing_id",
+                    user_id=user_id,
+                    kind="task" if isinstance(row, Task) else "note",
+                )
             await log_ai_run(
                 session,
                 user_id=user_id,
@@ -360,9 +396,23 @@ async def _run_pipeline_inner(
                 key_index=groq_router.current_key_id,
             )
 
-    return await courier_respond(
+    text_reply, keyboard = await courier_respond(
         groq_router,
-        [cr for cr, _ in reviewed],
+        items,
         mode=courier_mode,
         style=courier_style,
     )
+    return text_reply, keyboard
+
+
+# Re-export ``Note``/``Task`` only so static type-checkers don't strip the
+# import as unused (they're referenced in ``isinstance`` checks above).
+__all__ = [
+    "GLOBAL_PIPELINE_LIMIT",
+    "PER_USER_PIPELINE_LIMIT",
+    "PipelineReply",
+    "get_groq_router",
+    "log_task_exception",
+    "reset_pipeline_semaphores_for_tests",
+    "run_pipeline",
+]
