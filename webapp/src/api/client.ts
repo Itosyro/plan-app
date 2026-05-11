@@ -85,6 +85,8 @@ import type {
   Me,
   MeUpdate,
   Note,
+  NoteCreate,
+  NoteUpdate,
   Task,
   TaskCounts,
   TaskUpdate,
@@ -106,5 +108,11 @@ export const apiClient = {
   patchTask: (id: number, body: TaskUpdate) =>
     api<Task>(`/tasks/${id}`, { method: "PATCH", body }),
   deleteTask: (id: number) => api<void>(`/tasks/${id}`, { method: "DELETE" }),
-  notes: () => api<Note[]>("/notes"),
+  notes: (q?: { category_id?: number }) =>
+    api<Note[]>("/notes", { query: q }),
+  note: (id: number) => api<Note>(`/notes/${id}`),
+  createNote: (body: NoteCreate) => api<Note>("/notes", { method: "POST", body }),
+  patchNote: (id: number, body: NoteUpdate) =>
+    api<Note>(`/notes/${id}`, { method: "PATCH", body }),
+  deleteNote: (id: number) => api<void>(`/notes/${id}`, { method: "DELETE" }),
 };

@@ -1,4 +1,4 @@
-import { SlidersHorizontal } from "lucide-react";
+import { Plus, SlidersHorizontal } from "lucide-react";
 import type { Horizon, TaskCounts } from "../types";
 
 interface Props {
@@ -18,6 +18,15 @@ interface Props {
   onOpenFilter?: () => void;
   /** Optional filter button label override. */
   filterLabel?: string;
+  /**
+   * Primary creation action (e.g. «new note», «new task» FAB inline in
+   * the header). Renders as a tone-blue pill on the right. Independent
+   * from the filter — both can be shown together, with the create
+   * action taking the rightmost slot.
+   */
+  onCreate?: () => void;
+  /** Accessible label for the create button (default: «Создать»). */
+  createLabel?: string;
 }
 
 // Bento-page header. One display title, optional subtitle, and a
@@ -32,6 +41,8 @@ export function Header({
   selectedCategoryId = null,
   onOpenFilter,
   filterLabel,
+  onCreate,
+  createLabel,
 }: Props) {
   const hasActiveFilter = selectedCategoryId !== null;
   return (
@@ -44,26 +55,38 @@ export function Header({
           <p className="mt-0.5 truncate text-[13px] text-tg-hint">{subtitle}</p>
         )}
       </div>
-      {showFilter && onOpenFilter && (
-        <button
-          type="button"
-          onClick={onOpenFilter}
-          aria-label={filterLabel ?? "Категории"}
-          className={
-            "ease-apple inline-flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3 text-[13px] font-medium transition-all duration-200 active:scale-[0.96] " +
-            (hasActiveFilter
-              ? "bg-tg-button/10 text-tg-button ring-1 ring-tg-button/20"
-              : "bg-bento-card text-tg-text/70 ring-1 ring-black/5 hover:text-tg-text")
-          }
-        >
-          <SlidersHorizontal size={16} strokeWidth={2.25} aria-hidden />
-          {hasActiveFilter && filterLabel && (
-            <span className="font-display max-w-[120px] truncate tracking-tight">
-              {filterLabel}
-            </span>
-          )}
-        </button>
-      )}
+      <div className="flex shrink-0 items-center gap-2">
+        {showFilter && onOpenFilter && (
+          <button
+            type="button"
+            onClick={onOpenFilter}
+            aria-label={filterLabel ?? "Категории"}
+            className={
+              "ease-apple inline-flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3 text-[13px] font-medium transition-all duration-200 active:scale-[0.96] " +
+              (hasActiveFilter
+                ? "bg-tg-button/10 text-tg-button ring-1 ring-tg-button/20"
+                : "bg-bento-card text-tg-text/70 ring-1 ring-black/5 hover:text-tg-text")
+            }
+          >
+            <SlidersHorizontal size={16} strokeWidth={2.25} aria-hidden />
+            {hasActiveFilter && filterLabel && (
+              <span className="font-display max-w-[120px] truncate tracking-tight">
+                {filterLabel}
+              </span>
+            )}
+          </button>
+        )}
+        {onCreate && (
+          <button
+            type="button"
+            onClick={onCreate}
+            aria-label={createLabel ?? "Создать"}
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-tg-button px-3 text-tg-button-text shadow-bento transition-all duration-200 active:scale-[0.96]"
+          >
+            <Plus size={18} strokeWidth={2.5} aria-hidden />
+          </button>
+        )}
+      </div>
     </header>
   );
 }

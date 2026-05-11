@@ -1,14 +1,20 @@
-import { CalendarDays, ListTodo, Settings, type LucideIcon } from "lucide-react";
+import {
+  CalendarDays,
+  ListTodo,
+  Settings,
+  StickyNote,
+  type LucideIcon,
+} from "lucide-react";
 import { haptic } from "../lib/telegram";
 
-// Three top-level Mini-App tabs. Floating "island" nav matched to the
+// Four top-level Mini-App tabs. Floating "island" nav matched to the
 // Mira / Apple Bento reference: white pill, soft shadow, fixed-width
 // cells so the bar doesn't reshape when switching tabs.
 //
-// Layout per tab: 24 px icon over an 11 px label, stacked vertically.
+// Layout per tab: 22 px icon over an 11 px label, stacked vertically.
 // Active state changes color only — width stays constant so adjacent
 // tabs don't jump.
-export type NavTab = "tasks" | "calendar" | "settings";
+export type NavTab = "tasks" | "notes" | "calendar" | "settings";
 
 interface Props {
   active: NavTab;
@@ -23,6 +29,7 @@ interface Item {
 
 const ITEMS: Item[] = [
   { id: "tasks", label: "Задачи", icon: ListTodo },
+  { id: "notes", label: "Заметки", icon: StickyNote },
   { id: "calendar", label: "Календарь", icon: CalendarDays },
   { id: "settings", label: "Настройки", icon: Settings },
 ];
