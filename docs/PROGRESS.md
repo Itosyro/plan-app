@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-05-11 — feat: voice/text task editing — complete/delete/reopen (PR-I1)
+
+PR-I1 добавляет первый набор intent-based редактирования задач через
+голос и текст:
+
+- **EditIntent schema** (`app/ai/schemas.py`): Pydantic модель с 12
+  типами intent (create, complete, delete, reopen, rename, set_due,
+  set_priority, set_category, reorder_horizon, reorder_time, list_done, none).
+- **detect_intent()** (`app/ai/intent.py`): LLM-вызов через
+  `llama-3.1-8b-instant` + instructor для определения intent пользователя.
+  Короткие сообщения (<2 символов) сразу возвращают `none` без вызова LLM.
+- **Промпт** (`app/ai/prompts/intent.md`): системный промпт с 13
+  few-shot примерами на русском.
+- **Executors** (`app/bot/edit_executor.py`): `_execute_complete`,
+  `_execute_delete`, `_execute_reopen`, `_execute_reorder_horizon`.
+  Каждый работает в собственной `session_scope`.
+- **find_tasks_by_query()** (`app/bot/services/tasks.py`): поиск задач
+  по ILIKE-паттерну. Возвращает `list[Task]` (до 5 совпадений).
+  Поддержка `include_done` для поиска завершённых задач.
+- **Multi-match**: если >1 совпадение — inline-клавиатура с кнопками
+  `edit:resolve:<intent>:<task_id>`. Callback-обработчик в
+  `callbacks.py` через `parse_edit_resolve_callback()`.
+- **Pipeline integration** (`app/bot/routers/_pipeline.py`):
+  `detect_intent` вызывается ДО `_try_reorder`. Для create/none
+  intent — fallback на прежний pipeline.
+- **Тесты**: 17 новых тестов (schema, detect_intent с respx-моками,
+  find_tasks_by_query, executors, execute_edit dispatch). Обновлены
+  e2e pipeline тесты для нового intent-detection шага.
+
+Файлы: `app/ai/intent.py`, `app/ai/schemas.py`, `app/ai/prompts/intent.md`,
+`app/bot/edit_executor.py`, `app/bot/services/tasks.py`,
+`app/bot/services/__init__.py`, `app/bot/routers/_pipeline.py`,
+`app/bot/routers/callbacks.py`, `tests/test_edit_intent.py`,
+`tests/test_e2e_pipeline.py`.
+
+---
+
 ## 2026-05-11 — feat(bot): richer morning/evening digest sections (PR-G)
 
 PR-G доводит утренний и вечерний дайджесты до спеки `docs/PLAN.md §2.5`.

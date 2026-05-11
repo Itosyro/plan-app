@@ -29,11 +29,13 @@ from aiogram.types import InlineKeyboardMarkup
 from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
+from app.ai.intent import detect_intent
 from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
+from app.bot.edit_executor import EDIT_INTENTS_I1, execute_edit
 from app.bot.services import (
     find_task_by_query,
     get_user_categories,
@@ -253,9 +255,18 @@ async def _run_pipeline_inner(
     concretize_tasks: bool = False,
 ) -> PipelineReply:
     """Inner pipeline body, called only while both semaphores are held."""
-    reorder_reply = await _try_reorder(groq_router, text, user_id)
-    if reorder_reply is not None:
-        return reorder_reply, None
+    # PR-I1: detect edit intent before falling through to create-path.
+    edit_intent = await detect_intent(groq_router, text)
+    if edit_intent.intent in EDIT_INTENTS_I1:
+        return await execute_edit(edit_intent, user_id)
+
+    # Legacy reorder path — kept as fallback for intents not yet in
+    # the intent router (or when detect_intent returns create/none).
+    if edit_intent.intent in ("create", "none"):
+        reorder_reply = await _try_reorder(groq_router, text, user_id)
+        if reorder_reply is not None:
+            return reorder_reply, None
+
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",

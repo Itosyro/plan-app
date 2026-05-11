@@ -20,6 +20,11 @@ from app.ai.courier import (
     TASK_DONE_PREFIX,
     TASK_PENDING_PREFIX,
 )
+from app.bot.edit_executor import (
+    _execute_complete,
+    _execute_delete,
+    _execute_reopen,
+)
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
     delete_task,
@@ -190,6 +195,23 @@ def horizon_picker_keyboard(task_id: int) -> InlineKeyboardMarkup:
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def parse_edit_resolve_callback(data: str) -> tuple[str, int] | None:
+    """Parse an ``edit:resolve:<intent>:<task_id>`` callback string.
+
+    PR-I1 disambiguation pick. Returns ``(intent_name, task_id)`` on
+    success, ``None`` on malformed input — same discipline as
+    :func:`parse_task_callback`.
+    """
+    parts = data.split(":")
+    if len(parts) != 4 or parts[0] != "edit" or parts[1] != "resolve":
+        return None
+    try:
+        task_id = int(parts[3])
+    except ValueError:
+        return None
+    return parts[2], task_id
 
 
 def create_router() -> Router:
@@ -494,6 +516,51 @@ def create_router() -> Router:
                     logger.warning(
                         "callbacks.summary_toggle.refresh_pinned_failed",
                         user_id=user_id_for_pin,
+                        exc_info=True,
+                    )
+
+    @router.callback_query(F.data.startswith("edit:resolve:"))
+    async def cb_edit_resolve(callback: CallbackQuery) -> None:
+        """Handle disambiguation pick from edit-intent multi-match (PR-I1)."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_edit_resolve_callback(callback.data)
+        if parsed is None:
+            await callback.answer("Неверный формат.")
+            return
+        intent_name, task_id = parsed
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            user_id = user.id
+
+        if intent_name == "complete":
+            reply = await _execute_complete(task_id, user_id)
+        elif intent_name == "delete":
+            reply = await _execute_delete(task_id, user_id)
+        elif intent_name == "reopen":
+            reply = await _execute_reopen(task_id, user_id)
+        else:
+            reply = f"Действие «{intent_name}» пока не поддерживается."
+
+        await callback.answer(reply[:200])
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(reply)
+
+        if callback.bot is not None:
+            async with session_scope() as session:
+                try:
+                    await refresh_pinned_morning(callback.bot, session, user_id)
+                except Exception:
+                    logger.warning(
+                        "callbacks.edit_resolve.refresh_pinned_failed",
+                        user_id=user_id,
                         exc_info=True,
                     )
 

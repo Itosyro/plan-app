@@ -62,6 +62,9 @@ from .tasks import (
     find_task_by_query as find_task_by_query,
 )
 from .tasks import (
+    find_tasks_by_query as find_tasks_by_query,
+)
+from .tasks import (
     get_all_notes as get_all_notes,
 )
 from .tasks import (

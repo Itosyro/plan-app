@@ -383,6 +383,38 @@ async def find_task_by_query(
     return result.first()
 
 
+async def find_tasks_by_query(
+    session: AsyncSession,
+    user_id: int,
+    query: str,
+    *,
+    limit: int = 5,
+    include_done: bool = False,
+) -> list[Task]:
+    """Find user tasks whose title matches *query* (multi-match).
+
+    PR-I1: returns up to *limit* matches so the edit-intent executor
+    can present a disambiguation keyboard when >1 task matches.
+    By default excludes completed tasks; ``include_done=True`` searches
+    everything (useful for ``reopen`` intent).
+    """
+    pattern = f"%{_escape_like(query)}%"
+    stmt = (
+        select(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.title.ilike(pattern, escape="\\"),  # type: ignore[attr-defined]
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+        .order_by(Task.created_at.desc())  # type: ignore[attr-defined]
+        .limit(limit)
+    )
+    if not include_done:
+        stmt = stmt.where(Task.status != "done")
+    result = await session.exec(stmt)
+    return list(result.all())
+
+
 async def update_task_horizon(
     session: AsyncSession,
     task: Task,
