@@ -6,6 +6,104 @@
 
 ---
 
+## 2026-05-11 — feat(bot): richer morning/evening digest sections (PR-G)
+
+PR-G доводит утренний и вечерний дайджесты до спеки `docs/PLAN.md §2.5`.
+Раньше:
+
+- Утренний: только список «Сегодня».
+- Вечерний: «осталось сегодня + завтра».
+
+Теперь:
+
+**Утренний** (`build_morning_digest`):
+1. `🌅 Доброе утро!`
+2. `Сегодня:` — задачи горизонта `today`, status ≠ done (как было).
+3. `Просрочено:` — открытые задачи с `due_at < локальное начало сегодня`,
+   отсортированы oldest-first, лимит 5. Формат строки — `<icon> <title> — ДД.ММ HH:MM`.
+4. `Горячие дедлайны на неделе:` — открытые задачи с `due_at` в окне
+   `[конец сегодня; +7 дней)`, отсортированы по ближайшему дедлайну, лимит 5.
+   Задачи горизонта `today` исключаются (они уже в секции «Сегодня»).
+   Если всё пусто — fallback на «На сегодня задач не запланировано — лёгкого дня.».
+
+**Вечерний** (`build_evening_digest`):
+1. `🌙 Подводим итоги дня.`
+2. `Закрыто сегодня — N ✅` + список title'ов — задачи, у которых есть
+   `TaskEvent(kind="completed")` с `created_at` внутри сегодняшнего
+   user-local дня. Дедуп по `task.id` (если задачу закрыли → переоткрыли →
+   снова закрыли, она засчитывается один раз). Лимит 10, новейшие первыми.
+3. `Осталось на сегодня:` — горизонт `today`, status ≠ done.
+4. `Завтра:` — горизонт `tomorrow`, status ≠ done.
+5. Если открытых нет и закрытых тоже нет — «Сегодня всё закрыто 🎉.»
+   (если только закрытые — победный счётчик уже стоит, второй «всё закрыто»
+   не дублируем).
+
+**Хелперы и техника**
+
+- `app/bot/digest.py:_local_day_bounds_utc(user_tz, now_utc)` →
+  `(today_start_utc, today_end_utc)` как naive UTC. Локальное «сегодня»
+  вычисляется в пользовательской TZ, потом конвертируется обратно в UTC
+  для сравнения с `Task.due_at` / `TaskEvent.created_at` (схема хранит
+  naive UTC — см. `app/shared/time.py`).
+- Новые async-хелперы: `_tasks_overdue`, `_tasks_urgent_week`,
+  `_tasks_completed_today`. Все исключают soft-deleted (`deleted_at IS NOT NULL`).
+- `_format_task_line_with_date` — рендер `<icon> <title> — ДД.ММ[ HH:MM]`,
+  midnight трактуется как date-only (без HH:MM).
+- `build_morning_digest` / `build_evening_digest` получили kw-only
+  `now_utc: datetime | None = None` — тесты могут зафиксировать «сегодня»
+  без monkeypatch'инга `datetime.now`. Прод-вызовы (`tick_digests`,
+  `refresh_pinned_morning`) пробрасывают свой `now`.
+- `OVERDUE_LIMIT = 5`, `URGENT_WEEK_LIMIT = 5`, `COMPLETED_TODAY_LIMIT = 10`
+  — константы модуля, чтобы потом легко настроить.
+
+**Pinned-morning (Phase 6.3)** работает без изменений: `refresh_pinned_morning`
+вызывает обновлённый `build_morning_digest`, новые секции автоматически
+попадают в пин и live-обновляются по мере закрытия/добавления задач.
+
+**Тесты**
+
+- `tests/test_digest.py` — 6 новых кейсов:
+  - `test_morning_digest_includes_overdue` — overdue секция + done task
+    с overdue due_at не попадает.
+  - `test_morning_digest_includes_urgent_week` — окно next-7-days,
+    today-горизонт не дублируется, >7d не попадают.
+  - `test_morning_digest_limits_overdue_to_top_five` — `OVERDUE_LIMIT`
+    отсекает на 5.
+  - `test_evening_digest_includes_completed_today` — счётчик + список +
+    yesterday-event не попадает.
+  - `test_evening_digest_dedupes_reopened_task` — задача с двумя
+    `completed`-эвентами за день засчитывается один раз.
+  - `test_evening_digest_skips_completed_for_other_user` — изоляция
+    между пользователями.
+
+Все 355 тестов плана зелёные. `ruff`/`mypy`/webapp build — чисто.
+
+---
+
+## 2026-05-11 — feat(ops): in-process keep-alive self-ping for Render free-tier (PR-keepalive)
+
+PR #89 — в lifespan приложения запускается фоновая asyncio-задача, которая
+каждые 10 минут делает `GET https://<webhook_base_url>/healthz` через
+`httpx.AsyncClient`. На Render free-tier это сбрасывает idle-таймер,
+dyno не уходит в спячку, бот отвечает мгновенно (а не через 30-60 с
+после холодного старта). Параллельно scheduler (реминдеры/digest)
+получает постоянный uptime — пинги доезжают точно в назначенное время.
+
+- `app/workers/keepalive.py` — `run_keepalive_loop`, `start_keepalive`,
+  `stop_keepalive`. Цикл свертирует ошибки (`logger.warning` и продолжает),
+  graceful-shutdown через `asyncio.Event`.
+- `app/shared/config.py` — `keepalive_enabled` (default `True`),
+  `keepalive_interval_seconds=600`, `keepalive_initial_delay_seconds=60`,
+  `keepalive_timeout_seconds=10`. Property `keepalive_url` гейтит запуск
+  по наличию `webhook_base_url` (на локалке выключено по умолчанию).
+- `app/main.py` — start/stop в lifespan.
+- `render.yaml` — переменные `KEEPALIVE_*`.
+- `docs/RENDER.md` — переписана инструкция, in-process pinger назван
+  основным подходом.
+- `tests/test_keepalive.py` — 5 кейсов (mock через `respx`).
+
+---
+
 ## 2026-05-11 — feat: friendlier bot replies + recognised-card inline keyboard + make-it-concrete (PR-E)
 
 PR-E переписывает ответ бота после разбора входящего сообщения. Раньше

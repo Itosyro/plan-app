@@ -22,7 +22,7 @@ from app.bot.services import (
     get_or_create_horizon,
     get_or_create_user,
 )
-from app.db.models import Task, UserSettings
+from app.db.models import Task, TaskEvent, UserSettings
 
 
 class _FakeBot:
@@ -172,6 +172,249 @@ async def test_evening_digest_celebrates_empty_today(session: AsyncSession) -> N
     text = await build_evening_digest(session, user)
 
     assert "Сегодня всё закрыто" in text
+
+
+# ── PR-G: richer sections (overdue / week / completed_today) ─────────
+
+
+@pytest.mark.asyncio
+async def test_morning_digest_includes_overdue(session: AsyncSession) -> None:
+    """Tasks with due_at before today's user-local start show up under Просрочено."""
+    user, _ = await get_or_create_user(session, telegram_id=1120)
+    user.tz = "Europe/Moscow"
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    today = await get_or_create_horizon(session, user.id, "today")
+    week = await get_or_create_horizon(session, user.id, "week")
+    # Now = 2026-05-08 08:00 MSK (== 05:00 UTC).
+    now_utc = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)
+    # Yesterday 14:00 MSK = 2026-05-07 11:00 UTC.
+    session.add(
+        Task(
+            user_id=user.id,
+            horizon_id=week.id,
+            title="Просроченный отчёт",
+            priority="high",
+            due_at=datetime(2026, 5, 7, 11, 0),
+        ),
+    )
+    # Open today task — should appear under Сегодня, not overdue.
+    session.add(Task(user_id=user.id, horizon_id=today.id, title="Свежая задача"))
+    # Done task with overdue due_at — must NOT appear.
+    session.add(
+        Task(
+            user_id=user.id,
+            horizon_id=week.id,
+            title="Уже сделано",
+            status="done",
+            due_at=datetime(2026, 5, 6, 9, 0),
+        ),
+    )
+    await session.commit()
+
+    text = await build_morning_digest(session, user, now_utc=now_utc)
+
+    assert "Просрочено:" in text
+    assert "Просроченный отчёт" in text
+    assert "07.05" in text  # date marker
+    assert "Уже сделано" not in text
+
+
+@pytest.mark.asyncio
+async def test_morning_digest_includes_urgent_week(session: AsyncSession) -> None:
+    """Tasks with due_at within the next 7 days appear under Горячие дедлайны."""
+    user, _ = await get_or_create_user(session, telegram_id=1121)
+    user.tz = "Europe/Moscow"
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    week = await get_or_create_horizon(session, user.id, "week")
+    today_h = await get_or_create_horizon(session, user.id, "today")
+    now_utc = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)  # 08:00 MSK
+    # In 3 days (within the 7-day window).
+    session.add(
+        Task(
+            user_id=user.id,
+            horizon_id=week.id,
+            title="Совещание со звуковиком",
+            priority="medium",
+            due_at=datetime(2026, 5, 11, 12, 0),
+        ),
+    )
+    # 10 days out — outside the window, must NOT appear.
+    session.add(
+        Task(
+            user_id=user.id,
+            horizon_id=week.id,
+            title="Поездка в горы",
+            due_at=datetime(2026, 5, 18, 9, 0),
+        ),
+    )
+    # Today-bucket task — already in "Сегодня", should NOT be duplicated.
+    session.add(
+        Task(
+            user_id=user.id,
+            horizon_id=today_h.id,
+            title="Подарок маме",
+            due_at=datetime(2026, 5, 8, 18, 0),
+        ),
+    )
+    await session.commit()
+
+    text = await build_morning_digest(session, user, now_utc=now_utc)
+
+    assert "Горячие дедлайны на неделе:" in text
+    assert "Совещание со звуковиком" in text
+    assert "11.05" in text
+    assert "Поездка в горы" not in text
+    # Today task appears under Сегодня, not under the week section.
+    assert text.count("Подарок маме") == 1
+
+
+@pytest.mark.asyncio
+async def test_morning_digest_limits_overdue_to_top_five(
+    session: AsyncSession,
+) -> None:
+    """OVERDUE_LIMIT enforced: 7 overdue tasks → 5 oldest-first listed."""
+    user, _ = await get_or_create_user(session, telegram_id=1122)
+    user.tz = "Europe/Moscow"
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    week = await get_or_create_horizon(session, user.id, "week")
+    now_utc = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)
+    for day in [1, 2, 3, 4, 5, 6, 7]:
+        session.add(
+            Task(
+                user_id=user.id,
+                horizon_id=week.id,
+                title=f"old-{day}",
+                due_at=datetime(2026, 5, day, 9, 0),
+            ),
+        )
+    await session.commit()
+
+    text = await build_morning_digest(session, user, now_utc=now_utc)
+
+    # 5 oldest (1..5) listed; 6, 7 truncated.
+    assert "old-1" in text
+    assert "old-2" in text
+    assert "old-3" in text
+    assert "old-4" in text
+    assert "old-5" in text
+    assert "old-6" not in text
+    assert "old-7" not in text
+
+
+@pytest.mark.asyncio
+async def test_evening_digest_includes_completed_today(session: AsyncSession) -> None:
+    """Tasks marked done today (via TaskEvent kind=completed) appear under Закрыто."""
+    user, _ = await get_or_create_user(session, telegram_id=1123)
+    user.tz = "Europe/Moscow"
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    today = await get_or_create_horizon(session, user.id, "today")
+    now_utc = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)  # 21:00 MSK — evening
+    # Completed earlier today.
+    done_task = Task(
+        user_id=user.id,
+        horizon_id=today.id,
+        title="Купить хлеб",
+        status="done",
+    )
+    session.add(done_task)
+    await session.flush()
+    assert done_task.id is not None
+    # Event timestamp within today's MSK window: 14:00 MSK = 11:00 UTC.
+    event = TaskEvent(
+        task_id=done_task.id,
+        kind="completed",
+        payload_json={"source": "test"},
+    )
+    event.created_at = datetime(2026, 5, 8, 11, 0)
+    session.add(event)
+    # Completed YESTERDAY — must NOT appear.
+    yesterday_task = Task(
+        user_id=user.id,
+        horizon_id=today.id,
+        title="Сходить в спортзал",
+        status="done",
+    )
+    session.add(yesterday_task)
+    await session.flush()
+    assert yesterday_task.id is not None
+    old_event = TaskEvent(task_id=yesterday_task.id, kind="completed")
+    old_event.created_at = datetime(2026, 5, 7, 18, 0)
+    session.add(old_event)
+    # Still-open task.
+    session.add(Task(user_id=user.id, horizon_id=today.id, title="Помыть посуду"))
+    await session.commit()
+
+    text = await build_evening_digest(session, user, now_utc=now_utc)
+
+    assert "Закрыто сегодня — 1 ✅" in text
+    assert "Купить хлеб" in text
+    assert "Сходить в спортзал" not in text
+    assert "Осталось на сегодня:" in text
+    assert "Помыть посуду" in text
+
+
+@pytest.mark.asyncio
+async def test_evening_digest_dedupes_reopened_task(session: AsyncSession) -> None:
+    """A task completed → reopened → completed today shows up once, not twice."""
+    user, _ = await get_or_create_user(session, telegram_id=1124)
+    user.tz = "Europe/Moscow"
+    session.add(user)
+    await session.commit()
+    assert user.id is not None
+    today = await get_or_create_horizon(session, user.id, "today")
+    now_utc = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)
+    task = Task(user_id=user.id, horizon_id=today.id, title="Доделать слайды", status="done")
+    session.add(task)
+    await session.flush()
+    assert task.id is not None
+    # Two completed events on the same day.
+    for hh in (10, 16):
+        ev = TaskEvent(task_id=task.id, kind="completed")
+        ev.created_at = datetime(2026, 5, 8, hh - 3, 0)  # convert MSK → UTC
+        session.add(ev)
+    await session.commit()
+
+    text = await build_evening_digest(session, user, now_utc=now_utc)
+
+    assert text.count("Доделать слайды") == 1
+    assert "Закрыто сегодня — 1 ✅" in text
+
+
+@pytest.mark.asyncio
+async def test_evening_digest_skips_completed_for_other_user(
+    session: AsyncSession,
+) -> None:
+    """Completed tasks of one user must not leak into another's digest."""
+    user_a, _ = await get_or_create_user(session, telegram_id=1125)
+    user_b, _ = await get_or_create_user(session, telegram_id=1126)
+    user_a.tz = "Europe/Moscow"
+    user_b.tz = "Europe/Moscow"
+    session.add_all([user_a, user_b])
+    await session.commit()
+    assert user_a.id is not None and user_b.id is not None
+    today_a = await get_or_create_horizon(session, user_a.id, "today")
+    task = Task(user_id=user_a.id, horizon_id=today_a.id, title="A's task", status="done")
+    session.add(task)
+    await session.flush()
+    assert task.id is not None
+    ev = TaskEvent(task_id=task.id, kind="completed")
+    ev.created_at = datetime(2026, 5, 8, 11, 0)
+    session.add(ev)
+    await session.commit()
+
+    now_utc = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)
+    text_b = await build_evening_digest(session, user_b, now_utc=now_utc)
+
+    assert "A's task" not in text_b
+    assert "Сегодня всё закрыто" in text_b
 
 
 # ── tick_digests ────────────────────────────────────────────────────
