@@ -6,6 +6,119 @@
 
 ---
 
+## 2026-05-11 — feat(webapp): Notes tab — list/detail/create UI (PR-C)
+
+Заметки как отдельный таб в Mini-App. До этого `Note` модель + GET-эндпоинт
+существовали в коде, но фронт показывал только задачи. Теперь:
+
+**Frontend**
+- `webapp/src/components/BottomNav.tsx` — 4-я вкладка `Заметки` (StickyNote icon),
+  тип `NavTab` расширен `"notes"`.
+- `webapp/src/components/NoteCard.tsx` (НОВЫЙ) — минималистичная карточка
+  (title + first-paragraph preview + tone-coded category chip). Тап → detail.
+- `webapp/src/components/NotesList.tsx` (НОВЫЙ) — полноэкранный список с
+  substring-поиском (`Найти в заметках…`), empty state, error fallback,
+  кнопка `×` для очистки поиска. Refresh-signal проп — пересчёт при мутациях.
+- `webapp/src/components/NoteDetail.tsx` (НОВЫЙ) — editable title + body
+  (textarea, blur-to-save), tone-coded категория-строка (тап → BottomSheetSelect),
+  rose-tone «Удалить заметку» с ConfirmDeleteSheet. Поддерживает два режима:
+  `view` (загружает существующую через `apiClient.note(id)`) и `create`
+  (черновые поля → на первом blur заголовка делает POST + navigate на `/note/{id}`).
+- `webapp/src/components/Header.tsx` — новые опциональные пропы `onCreate` /
+  `createLabel`; рендерит синий `+` FAB справа от фильтра.
+- `webapp/src/lib/router.ts` — добавлены маршруты `/note/new` и `/note/:id`.
+  Порядок маршрутов важен: `/note/new` перед `/note/:id`, иначе `:id` съест.
+- `webapp/src/App.tsx` — `noteRoute` `useMemo` извлекает `{ kind: "create" }` или
+  `{ kind: "view", noteId }`; `notesRefresh` state-счётчик; `handleOpenNote`,
+  `handleCreateNote`, `handleNoteMutated`; рендер `<NoteDetail />` поверх всего
+  при активном noteRoute; рендер `<NotesList />` когда `activeTab === "notes"`.
+- `webapp/src/api/client.ts` — `notes()`, `note(id)`, `createNote()`, `patchNote()`,
+  `deleteNote()`. С типами из `webapp/src/types.ts` — `NoteCreate`, `NoteUpdate`.
+
+**Backend**
+- `app/api/schemas.py` — `NoteCreateIn` (title 1-256, body 0-8192 optional,
+  category_id optional) + `NoteUpdateIn` (все поля Optional; `body=""` чистит).
+- `app/api/routers/notes.py`:
+  - `POST /api/notes` → `201 NoteOut`. Валидация ownership категории.
+  - `PATCH /api/notes/{id}` → `200 NoteOut`. Полевая валидация (паттерн
+    `TaskUpdateIn`, никакого `setattr`-цикла).
+  - Существующие `GET /api/notes`, `GET /api/notes/{id}`, `DELETE /api/notes/{id}`
+    не тронуты.
+
+**Tests** (+ 8 новых, все зелёные)
+- `test_notes_create_minimal` — POST с одним title.
+- `test_notes_create_with_body_and_category` — body + category_name резолвится.
+- `test_notes_create_rejects_empty_title` — 422.
+- `test_notes_create_404_on_foreign_category` — категория чужого юзера → 404.
+- `test_notes_patch_title_and_body` — PATCH обоих полей.
+- `test_notes_patch_clears_body_with_empty_string` — `body=""` → `body: None`.
+- `test_notes_patch_404_for_other_user` — ownership-isolation.
+- `test_notes_patch_rejects_unknown_field` — `extra="forbid"` 422.
+
+**Preview / скриншоты**
+- `webapp/dist/preview.html` — заметки добавлены в фикстуру `fixtures.notes`,
+  fetch-mock поддерживает POST/PATCH/DELETE для `/api/notes`.
+- Скриншоты light + dark: list, detail, category picker, create (empty +
+  filled), delete confirm.
+
+**Baseline** (на момент мерджа PR-C):
+- `uv run pytest -q` — **331 passed**, **0 failures**.
+- `uv run ruff format --check . && uv run ruff check . && uv run mypy app` — зелёные.
+- `cd webapp && npm run typecheck && npm run build` — зелёные.
+  Bundle: 252 KB JS (+14 от PR-B), 25 KB CSS (+1).
+
+См. `docs/HANDOFF-2026-05-10-v14.md` — там детали для следующего PR-D.
+
+---
+
+## 2026-05-10 — feat(webapp): UX-итерация Mini-App — упрощённая шапка, detail page, кастомные пикеры (PR-B, PR #85)
+
+Полный второй заход на UX: убрать болтливость карточек, спрятать массовые
+«пилюли» под скролл, заменить нативные `<select>` на bottom-sheets и переехать
+на нормальный detail page вместо встроенных кнопок. См. PR #85 (squash-merge).
+
+**Главные шаги:**
+- `webapp/src/components/Header.tsx` — упрощён до display-title + кнопка-фильтр.
+  Подзаголовок выводит «Привет, X» на Tasks, или контекстную подсказку.
+- `webapp/src/components/HorizonTabs.tsx` — `scroll-snap-x` rail, активная пилюля
+  автоцентрируется (`scrollIntoView({ inline: "center" })`).
+- `webapp/src/components/CategoryFilter.tsx` — теперь bottom-sheet (открывается
+  кнопкой в шапке), а не блок над списком.
+- `webapp/src/components/TaskCard.tsx` — снесены `Перенести / Удалить`
+  inline-кнопки. Карточка тапается, открывая detail page; checkbox остался
+  слева, drag-handle на long-press.
+- `webapp/src/components/BottomNav.tsx` — фикс-ширина каждой вкладки, иконка
+  сверху + label всегда видимый снизу, активный = tone-color, без анимации
+  ширины.
+- `webapp/src/components/SettingsPage.tsx` — все `<select>` заменены на
+  `<BottomSheetSelect />` (tz, дайджесты, response_style, courier_template_style,
+  critic_mode, week_due_semantic).
+
+**Новые примитивы:**
+- `webapp/src/components/BottomSheet.tsx` — базовый bottom-sheet с focus trap,
+  ESC/backdrop dismissal, slide-up animation, ARIA-роли.
+- `webapp/src/components/BottomSheetSelect.tsx` — listbox c радио-маркером, scroll.
+- `webapp/src/components/BottomSheetDate.tsx` — пресеты «Сегодня / Завтра /
+  +Неделя / Своя дата», тайм-инпут, «Убрать дату».
+- `webapp/src/lib/router.ts` — мини hash-router без `react-router-dom`:
+  `useRoute()` подписывается на `hashchange`, `navigate(path)` пишет в hash.
+  Маршруты: `/`, `/task/:id`.
+- `webapp/src/components/TaskDetail.tsx` — большой detail page (editable title +
+  description, tone-coded строки Дата / Горизонт / Категория / Приоритет,
+  rose-tone «Удалить задачу» с confirm-sheet).
+
+**Backend** (минимальный сдвиг):
+- `app/api/routers/tasks.py::patch_task` — теперь патчит `description` тоже
+  (раньше клиент не имел способа сменить description через API). Поле в
+  `TaskUpdateIn` уже было.
+
+**Baseline после PR-B:**
+- 323 passed, ruff/mypy/typecheck/build зелёные.
+- Bundle: 238 KB JS, 24 KB CSS (рост ~+20 KB за счёт BottomSheet-семьи).
+- main HEAD: `b366d25`.
+
+---
+
 ## 2026-05-10 — docs: mega-review v3 после мерджа bento-редизайна (PR-A)
 
 Полное ревью репо после мерджа PR #83. Результат — отчёт

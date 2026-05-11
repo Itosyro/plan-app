@@ -14,6 +14,8 @@ import { ComingSoon } from "./components/ComingSoon";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
+import { NoteDetail } from "./components/NoteDetail";
+import { NotesList } from "./components/NotesList";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
@@ -66,12 +68,26 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const route = useRoute();
+  const [notesRefresh, setNotesRefresh] = useState(0);
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
     const raw = route.params.id;
     if (raw === undefined) return null;
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [route]);
+  const noteRoute = useMemo<
+    null | { kind: "create" } | { kind: "view"; noteId: number }
+  >(() => {
+    if (route.path === "/note/new") return { kind: "create" };
+    if (route.path === "/note/:id") {
+      const raw = route.params.id;
+      if (raw === undefined) return null;
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return null;
+      return { kind: "view", noteId: parsed };
+    }
+    return null;
   }, [route]);
 
   const loadShell = useCallback(async () => {
@@ -147,6 +163,17 @@ export default function App() {
   useEffect(() => {
     loadShell().finally(() => setLoading(false));
   }, [loadShell]);
+
+  // If the user lands on a note URL (deep link, refresh on /note/123),
+  // make sure the Notes tab is the one we fall back to when they hit
+  // «Назад» — otherwise close-detail jumps them to the Tasks list which
+  // is jarring. We don't do this for task URLs because Tasks is the
+  // default tab anyway.
+  useEffect(() => {
+    if (noteRoute !== null && activeTab !== "notes") {
+      setActiveTab("notes");
+    }
+  }, [noteRoute, activeTab]);
 
   // Hydrate UI prefs from Telegram CloudStorage (or localStorage fallback).
   // This runs in parallel with the API shell load so first paint isn't
@@ -265,6 +292,20 @@ export default function App() {
     void refreshCategories();
   }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
 
+  const handleOpenNote = useCallback((id: number) => {
+    haptic("select");
+    navigate(`/note/${id}`);
+  }, []);
+
+  const handleCreateNote = useCallback(() => {
+    haptic("select");
+    navigate("/note/new");
+  }, []);
+
+  const handleNoteMutated = useCallback(() => {
+    setNotesRefresh((n) => n + 1);
+  }, []);
+
   // Phase 5.4b: drag-n-drop. PointerSensor with delay activation so
   // a quick tap on a button inside the card still fires onClick;
   // long-press (250 ms) starts the drag. ``tolerance`` allows a few
@@ -333,12 +374,35 @@ export default function App() {
     );
   }
 
+  if (noteRoute !== null) {
+    return (
+      <DndContext sensors={sensors}>
+        <NoteDetail
+          mode={noteRoute}
+          categories={categories}
+          onClose={handleCloseDetail}
+          onMutated={handleNoteMutated}
+          onDeleted={handleCloseDetail}
+        />
+        <BottomNav
+          active={activeTab}
+          onChange={(tab) => {
+            navigateHome();
+            setActiveTab(tab);
+          }}
+        />
+      </DndContext>
+    );
+  }
+
   const titleSubtitle =
     activeTab === "tasks"
       ? me?.display_name
         ? `Привет, ${me.display_name}`
         : "Лента твоих задач"
-      : undefined;
+      : activeTab === "notes"
+        ? "Любой текст, который не задача"
+        : undefined;
 
   const activeFilterLabel =
     selectedCategory === null
@@ -358,15 +422,19 @@ export default function App() {
           title={
             activeTab === "tasks"
               ? buildHeaderTitle(horizons, activeHorizon, counts)
-              : activeTab === "settings"
-                ? "Настройки"
-                : "Календарь"
+              : activeTab === "notes"
+                ? "Заметки"
+                : activeTab === "settings"
+                  ? "Настройки"
+                  : "Календарь"
           }
           subtitle={titleSubtitle}
           showFilter={activeTab === "tasks"}
           selectedCategoryId={selectedCategory}
           filterLabel={activeFilterLabel}
           onOpenFilter={() => setShowCategorySheet(true)}
+          onCreate={activeTab === "notes" ? handleCreateNote : undefined}
+          createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
         />
         {activeTab === "tasks" ? (
           <>
@@ -398,6 +466,8 @@ export default function App() {
               </ul>
             )}
           </>
+        ) : activeTab === "notes" ? (
+          <NotesList refreshSignal={notesRefresh} onOpen={handleOpenNote} />
         ) : activeTab === "calendar" ? (
           <ComingSoon
             icon={CalendarDays}

@@ -608,6 +608,147 @@ async def test_notes_list(
     assert any(n["title"] == "Тест-заметка" for n in rows)
 
 
+@pytest.mark.asyncio
+async def test_notes_create_minimal(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.post(
+        "/api/notes",
+        headers=auth_headers,
+        json={"title": "Идея на завтра"},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["title"] == "Идея на завтра"
+    assert body["body"] is None
+    assert body["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_notes_create_with_body_and_category(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    # Pull the seeded category for «Работа».
+    cats = (await aclient.get("/api/categories", headers=auth_headers)).json()
+    work = next(c for c in cats if c["name"] == "Работа")
+    resp = await aclient.post(
+        "/api/notes",
+        headers=auth_headers,
+        json={"title": "Конспект", "body": "ABC", "category_id": work["id"]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["body"] == "ABC"
+    assert body["category_id"] == work["id"]
+    assert body["category_name"] == "Работа"
+
+
+@pytest.mark.asyncio
+async def test_notes_create_rejects_empty_title(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.post("/api/notes", headers=auth_headers, json={"title": ""})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_notes_create_404_on_foreign_category(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await aclient.post(
+        "/api/notes",
+        headers=auth_headers,
+        json={"title": "X", "category_id": 999999},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_notes_patch_title_and_body(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    listed = (await aclient.get("/api/notes", headers=auth_headers)).json()
+    note_id = listed[0]["id"]
+    resp = await aclient.patch(
+        f"/api/notes/{note_id}",
+        headers=auth_headers,
+        json={"title": "Изменено", "body": "Новый текст"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "Изменено"
+    assert body["body"] == "Новый текст"
+
+
+@pytest.mark.asyncio
+async def test_notes_patch_clears_body_with_empty_string(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    listed = (await aclient.get("/api/notes", headers=auth_headers)).json()
+    note_id = listed[0]["id"]
+    # First set a non-empty body so the clear is observable.
+    await aclient.patch(
+        f"/api/notes/{note_id}",
+        headers=auth_headers,
+        json={"body": "временно"},
+    )
+    resp = await aclient.patch(
+        f"/api/notes/{note_id}",
+        headers=auth_headers,
+        json={"body": ""},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["body"] is None
+
+
+@pytest.mark.asyncio
+async def test_notes_patch_404_for_other_user(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    listed = (await aclient.get("/api/notes", headers=auth_headers)).json()
+    note_id = listed[0]["id"]
+    other_headers = {"X-Telegram-Init-Data": _build_init_data(user_id=_OTHER_TG_USER)}
+    # Onboard the other user first so auth itself doesn't 404.
+    async with session_scope() as session:
+        await get_or_create_user(session, telegram_id=_OTHER_TG_USER, lang_code="ru")
+    resp = await aclient.patch(
+        f"/api/notes/{note_id}",
+        headers=other_headers,
+        json={"title": "взлом"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_notes_patch_rejects_unknown_field(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    listed = (await aclient.get("/api/notes", headers=auth_headers)).json()
+    note_id = listed[0]["id"]
+    resp = await aclient.patch(
+        f"/api/notes/{note_id}",
+        headers=auth_headers,
+        json={"created_at": "2026-01-01T00:00:00"},
+    )
+    assert resp.status_code == 422
+
+
 # ── /api/inbox ───────────────────────────────────────────────────────
 
 

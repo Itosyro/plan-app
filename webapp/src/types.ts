@@ -38,6 +38,20 @@ export interface Note {
   created_at: string;
 }
 
+// Mirrors app/api/schemas.py::NoteCreateIn.
+export interface NoteCreate {
+  title: string;
+  body?: string | null;
+  category_id?: number | null;
+}
+
+// Mirrors app/api/schemas.py::NoteUpdateIn — every field optional.
+export interface NoteUpdate {
+  title?: string;
+  body?: string | null;
+  category_id?: number | null;
+}
+
 export interface UserSettings {
   critic_mode: string;
   morning_digest_at: string;

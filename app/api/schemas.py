@@ -122,6 +122,38 @@ class NoteOut(_ConfiguredModel):
     created_at: datetime
 
 
+class NoteCreateIn(BaseModel):
+    """Body for ``POST /api/notes``.
+
+    The Mini-App lets users create notes directly (a «new note» FAB on
+    the Notes tab). Bot-side flows go through ``app.bot.services.notes``
+    which writes the row itself; this schema is API-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1, max_length=256)
+    body: str | None = Field(default=None, max_length=8192)
+    category_id: int | None = None
+
+
+class NoteUpdateIn(BaseModel):
+    """Body for ``PATCH /api/notes/{id}``.
+
+    Every field is optional; only the supplied fields are mutated. The
+    handler validates each value explicitly rather than ``setattr``-ing
+    in a loop, matching ``TaskUpdateIn`` (defensive-programming G-1).
+    Empty string in ``body`` clears the field; ``None`` means «don't
+    touch this key».
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    body: str | None = Field(default=None, max_length=8192)
+    category_id: int | None = None
+
+
 # ── /api/me ──────────────────────────────────────────────────────────
 
 
@@ -212,7 +244,9 @@ __all__ = [
     "InboxEntryOut",
     "MeOut",
     "MeUpdateIn",
+    "NoteCreateIn",
     "NoteOut",
+    "NoteUpdateIn",
     "TaskCountsOut",
     "TaskOut",
     "TaskPriority",
