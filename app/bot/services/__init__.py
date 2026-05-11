@@ -104,7 +104,16 @@ from .tasks import (
     update_task_category as update_task_category,
 )
 from .tasks import (
+    update_task_due_at as update_task_due_at,
+)
+from .tasks import (
     update_task_horizon as update_task_horizon,
+)
+from .tasks import (
+    update_task_priority as update_task_priority,
+)
+from .tasks import (
+    update_task_title as update_task_title,
 )
 from .users import (
     complete_onboarding as complete_onboarding,
