@@ -227,6 +227,12 @@ async def patch_task(
         if body.title is not None:
             task.title = body.title
 
+        if body.description is not None:
+            # Empty string clears the field; the API does not mark it
+            # as ``"unset"`` separately from ``None`` to keep the
+            # surface boring (PATCH body without the key = no change).
+            task.description = body.description or None
+
         if body.priority is not None:
             task.priority = body.priority
 

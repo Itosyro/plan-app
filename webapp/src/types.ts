@@ -84,11 +84,12 @@ export interface Me {
 
 export interface TaskUpdate {
   title?: string;
+  description?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
   horizon_slug?: HorizonSlug;
   category_id?: number;
-  due_at?: string;
+  due_at?: string | null;
 }
 
 // Mirrors app/api/schemas.py::TaskCountsOut. One bucket per horizon

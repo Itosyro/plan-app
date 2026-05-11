@@ -27,6 +27,7 @@ import {
 import { ApiError, apiClient } from "../api/client";
 import { haptic } from "../lib/telegram";
 import type { Me, Timezone } from "../types";
+import { BottomSheetSelect } from "./BottomSheetSelect";
 import { IconTile, type TileTone } from "./IconTile";
 
 // Option vocabularies. These match the labels used in
@@ -343,6 +344,11 @@ function BellRow() {
 }
 
 // ── Generic select row ──────────────────────────────────────────────
+//
+// Tapping the row opens a BottomSheet picker (BottomSheetSelect).
+// The native ``<select>`` is gone — it rendered as a Material
+// dropdown on Android, didn't honor our font/theme, and was a
+// notable complaint in v13 UX feedback.
 
 interface SelectRowProps {
   icon: LucideIcon;
@@ -363,25 +369,32 @@ function SettingsSelectRow({
   disabled,
   onChange,
 }: SelectRowProps) {
+  const [open, setOpen] = useState(false);
+  const current = options.find((o) => o.value === value);
+  const currentLabel = current?.label ?? value;
   return (
-    <CardRow as="label" disabled={disabled}>
-      <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
-        <IconTile icon={icon} tone={tone} size="md" />
-        <span className="truncate font-medium">{label}</span>
-      </span>
-      <select
-        className="font-display shrink-0 rounded-xl bg-bento px-3 py-1.5 text-[14px] font-medium tracking-tight text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
+    <>
+      <CardRow as="button" disabled={disabled} onClick={() => setOpen(true)}>
+        <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+          <IconTile icon={icon} tone={tone} size="md" />
+          <span className="truncate font-medium">{label}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
+          <span className="font-display max-w-[160px] truncate font-medium tracking-tight text-tg-text/80">
+            {currentLabel}
+          </span>
+          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+        </span>
+      </CardRow>
+      <BottomSheetSelect
+        open={open}
+        onClose={() => setOpen(false)}
+        title={label}
+        options={options}
         value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </CardRow>
+        onSelect={onChange}
+      />
+    </>
   );
 }
 
@@ -508,16 +521,24 @@ function SettingsTimezoneRow({
   onCancel,
   onSubmit,
 }: TimezoneRowProps) {
+  // Two surfaces: a tap on the row opens the popular-zones picker
+  // (BottomSheetSelect). A small "Указать другой" link inside the
+  // sheet's footer area is not natively supported, so we expose a
+  // separate "free-text" sub-row when ``editing`` is true and the
+  // user explicitly entered custom mode.
   const popularContains = timezones.some((t) => t.iana === currentIana);
-  const [mode, setMode] = useState<"popular" | "custom">(
-    popularContains ? "popular" : "custom",
-  );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
   const [draft, setDraft] = useState(currentIana);
 
   useEffect(() => {
     if (editing) {
-      setMode(popularContains ? "popular" : "custom");
+      setSheetOpen(false);
+      setCustomMode(!popularContains);
       setDraft(currentIana);
+    } else {
+      setSheetOpen(false);
+      setCustomMode(false);
     }
   }, [editing, currentIana, popularContains]);
 
@@ -537,77 +558,88 @@ function SettingsTimezoneRow({
     );
   }
 
+  // Editing surface: bento card with an IconTile, the current
+  // picker (either tappable row → sheet OR free-text input), and
+  // Cancel/Save row.
   return (
-    <form
-      className="ease-apple flex flex-col gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void onSubmit(draft);
-      }}
-    >
-      <div className="flex items-center gap-2">
-        <IconTile icon={icon} tone={tone} size="md" />
-        {mode === "popular" ? (
-          <select
-            autoFocus
-            className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
-            value={draft}
-            disabled={pending || timezones.length === 0}
-            onChange={(e) => setDraft(e.target.value)}
-          >
-            {timezones.map((tz) => (
-              <option key={tz.iana} value={tz.iana}>
-                {tz.label}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            autoFocus
-            type="text"
-            className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
-            value={draft}
-            maxLength={64}
-            placeholder="Europe/Moscow"
-            spellCheck={false}
-            disabled={pending}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                onCancel();
-              }
-            }}
-          />
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-2 text-[13px]">
-        <button
-          type="button"
-          className="ease-apple rounded-xl px-2 py-1 text-tg-link transition-all duration-200 active:scale-[0.96]"
-          onClick={() => setMode((m) => (m === "popular" ? "custom" : "popular"))}
-          disabled={pending}
-        >
-          {mode === "popular" ? "Указать другой" : "Из списка"}
-        </button>
-        <div className="flex gap-2">
+    <>
+      <form
+        className="ease-apple flex flex-col gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSubmit(draft);
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <IconTile icon={icon} tone={tone} size="md" />
+          {customMode ? (
+            <input
+              autoFocus
+              type="text"
+              className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
+              value={draft}
+              maxLength={64}
+              placeholder="Europe/Moscow"
+              spellCheck={false}
+              disabled={pending}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancel();
+                }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSheetOpen(true)}
+              disabled={pending || timezones.length === 0}
+              className="ease-apple flex min-w-0 flex-1 items-center justify-between rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text transition-all duration-200 active:scale-[0.99] hover:bg-bento/70"
+            >
+              <span className="truncate">
+                {timezones.find((t) => t.iana === draft)?.label ?? draft}
+              </span>
+              <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2 text-[13px]">
           <button
             type="button"
-            onClick={onCancel}
-            className="ease-apple rounded-xl px-2.5 py-1.5 text-tg-hint transition-all duration-200 active:scale-[0.96]"
+            className="ease-apple rounded-xl px-2 py-1 text-tg-link transition-all duration-200 active:scale-[0.96]"
+            onClick={() => setCustomMode((m) => !m)}
             disabled={pending}
           >
-            Отмена
+            {customMode ? "Из списка" : "Указать другой"}
           </button>
-          <button
-            type="submit"
-            className="ease-apple rounded-xl bg-tg-button px-2.5 py-1.5 font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
-            disabled={pending}
-          >
-            Сохранить
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="ease-apple rounded-xl px-2.5 py-1.5 text-tg-hint transition-all duration-200 active:scale-[0.96]"
+              disabled={pending}
+            >
+              Отмена
+            </button>
+            <button
+              type="submit"
+              className="ease-apple rounded-xl bg-tg-button px-2.5 py-1.5 font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
+              disabled={pending}
+            >
+              Сохранить
+            </button>
+          </div>
         </div>
-      </div>
-    </form>
+      </form>
+      <BottomSheetSelect
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        title="Часовой пояс"
+        options={timezones.map((tz) => ({ value: tz.iana, label: tz.label }))}
+        value={draft}
+        onSelect={(value) => setDraft(value)}
+      />
+    </>
   );
 }

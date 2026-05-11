@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -12,11 +12,13 @@ import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { ComingSoon } from "./components/ComingSoon";
 import { EmptyState } from "./components/EmptyState";
-import { Header } from "./components/Header";
+import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
+import { TaskDetail } from "./components/TaskDetail";
 import { haptic } from "./lib/telegram";
+import { navigate, navigateHome, useRoute } from "./lib/router";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
 import type {
   Category,
@@ -58,9 +60,19 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
+  const [showCategorySheet, setShowCategorySheet] = useState(false);
   // Phase 7c: Tasks + Settings tabs are real screens. Calendar still
   // renders a "coming soon" placeholder (Phase 5.5).
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
+
+  const route = useRoute();
+  const detailTaskId = useMemo(() => {
+    if (route.path !== "/task/:id") return null;
+    const raw = route.params.id;
+    if (raw === undefined) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [route]);
 
   const loadShell = useCallback(async () => {
     try {
@@ -117,6 +129,17 @@ export default function App() {
     } catch (err) {
       if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
         console.error("loadCounts failed", err);
+      }
+    }
+  }, []);
+
+  const refreshCategories = useCallback(async () => {
+    try {
+      const resp = await apiClient.categories();
+      setCategories(resp);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
+        console.error("loadCategories failed", err);
       }
     }
   }, []);
@@ -198,13 +221,14 @@ export default function App() {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }, 350);
         void loadCounts();
+        void refreshCategories();
       } catch (err) {
         // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
         console.error("done failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks, loadCounts],
+    [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
   );
 
   const handleMove = useCallback(
@@ -214,7 +238,6 @@ export default function App() {
       );
       try {
         await apiClient.patchTask(id, { horizon_slug: slug });
-        // Removed from current horizon if user moved away.
         if (slug !== activeHorizon) {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }
@@ -227,19 +250,20 @@ export default function App() {
     [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
 
-  const handleDelete = useCallback(
-    async (id: number) => {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
-      try {
-        await apiClient.deleteTask(id);
-        void loadCounts();
-      } catch (err) {
-        loadTasks(activeHorizon, selectedCategory);
-        console.error("delete failed", err);
-      }
-    },
-    [activeHorizon, selectedCategory, loadTasks, loadCounts],
-  );
+  const handleOpenTask = useCallback((id: number) => {
+    haptic("select");
+    navigate(`/task/${id}`);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    navigateHome();
+  }, []);
+
+  const handleDetailMutated = useCallback(() => {
+    void loadTasks(activeHorizon, selectedCategory);
+    void loadCounts();
+    void refreshCategories();
+  }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
 
   // Phase 5.4b: drag-n-drop. PointerSensor with delay activation so
   // a quick tap on a button inside the card still fires onClick;
@@ -289,18 +313,61 @@ export default function App() {
 
   const tz = me?.tz ?? "Europe/Moscow";
 
+  // Detail page is a full-bleed overlay. We render it inside the same
+  // DndContext so any open sheets share haptic/keyboard handling
+  // (though dragging is disabled inside the detail screen).
+  if (detailTaskId !== null) {
+    return (
+      <DndContext sensors={sensors}>
+        <TaskDetail
+          taskId={detailTaskId}
+          tz={tz}
+          horizons={horizons}
+          categories={categories}
+          onClose={handleCloseDetail}
+          onMutated={handleDetailMutated}
+          onDeleted={handleCloseDetail}
+        />
+        <BottomNav active={activeTab} onChange={setActiveTab} />
+      </DndContext>
+    );
+  }
+
+  const titleSubtitle =
+    activeTab === "tasks"
+      ? me?.display_name
+        ? `Привет, ${me.display_name}`
+        : "Лента твоих задач"
+      : undefined;
+
+  const activeFilterLabel =
+    selectedCategory === null
+      ? undefined
+      : categories.find((c) => c.id === selectedCategory)?.name;
+
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div
         className="mx-auto max-w-md px-4"
         style={{
           paddingTop: "calc(var(--safe-top) + 0.75rem)",
-          // Reserve space at bottom for the floating nav bar so the
-          // last task card isn't hidden behind it.
-          paddingBottom: "calc(var(--safe-bottom) + 5rem)",
+          paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
         }}
       >
-        <Header me={me} />
+        <Header
+          title={
+            activeTab === "tasks"
+              ? buildHeaderTitle(horizons, activeHorizon, counts)
+              : activeTab === "settings"
+                ? "Настройки"
+                : "Календарь"
+          }
+          subtitle={titleSubtitle}
+          showFilter={activeTab === "tasks"}
+          selectedCategoryId={selectedCategory}
+          filterLabel={activeFilterLabel}
+          onOpenFilter={() => setShowCategorySheet(true)}
+        />
         {activeTab === "tasks" ? (
           <>
             <HorizonTabs
@@ -308,11 +375,6 @@ export default function App() {
               active={activeHorizon}
               counts={counts}
               onChange={handleHorizonChange}
-            />
-            <CategoryFilter
-              categories={categories}
-              selectedId={selectedCategory}
-              onChange={handleCategoryChange}
             />
             {tasks.length === 0 ? (
               <EmptyState
@@ -329,8 +391,7 @@ export default function App() {
                       task={task}
                       tz={tz}
                       onDone={handleDone}
-                      onMove={handleMove}
-                      onDelete={handleDelete}
+                      onOpen={handleOpenTask}
                     />
                   </li>
                 ))}
@@ -348,6 +409,13 @@ export default function App() {
           <SettingsPage me={me} onUpdated={setMe} />
         ) : null}
       </div>
+      <CategoryFilter
+        open={showCategorySheet}
+        onClose={() => setShowCategorySheet(false)}
+        categories={categories}
+        selectedId={selectedCategory}
+        onChange={handleCategoryChange}
+      />
       <BottomNav active={activeTab} onChange={setActiveTab} />
     </DndContext>
   );

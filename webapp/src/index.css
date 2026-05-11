@@ -63,3 +63,25 @@ body,
     transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
+
+/* Bottom-sheet entry animations. ``slide-up`` matches Apple's
+   sheet curve (custom-spring-out), ``fade-in`` runs on the
+   backdrop. Both run once on mount — the sheet unmounts on
+   close so we don't need a reverse animation. */
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

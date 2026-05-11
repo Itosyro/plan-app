@@ -102,6 +102,7 @@ export const apiClient = {
   tasks: (q?: { horizon?: string; category_id?: number; status?: string; include_done?: boolean }) =>
     api<Task[]>("/tasks", { query: q }),
   taskCounts: () => api<TaskCounts>("/tasks/counts"),
+  task: (id: number) => api<Task>(`/tasks/${id}`),
   patchTask: (id: number, body: TaskUpdate) =>
     api<Task>(`/tasks/${id}`, { method: "PATCH", body }),
   deleteTask: (id: number) => api<void>(`/tasks/${id}`, { method: "DELETE" }),
