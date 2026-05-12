@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-05-11 — feat: undo (TaskEditSnapshot) (PR-I4)
+
+PR-I4 добавляет поддержку отмены последнего edit-действия:
+
+- **TaskEditSnapshot** (`app/db/models.py`): новая таблица для хранения
+  снимков изменений полей — `field`, `old_value`, `new_value`,
+  `task_id`, `user_id`, `created_at`. CASCADE delete при удалении задачи.
+- **Alembic migration 0011**: создание таблицы `task_edit_snapshots`.
+- **Snapshot saving** (`edit_executor.py`): каждый executor (complete,
+  delete, reopen, reorder_horizon, rename, set_due, set_priority,
+  set_category, reorder_time) сохраняет снимок перед возвратом ответа.
+  Функция `_save_snapshot()` + `_undo_keyboard()`.
+- **Inline кнопка [Отменить]** (`edit_executor.py`, `callbacks.py`):
+  при успешном выполнении edit-действия к ответу прикрепляется
+  inline-кнопка `[Отменить]` с callback `edit:undo:<snapshot_id>`.
+- **Undo handler** (`callbacks.py`): `cb_edit_undo` обрабатывает callback,
+  проверяет lazy TTL (5 мин), восстанавливает `old_value` через
+  `_apply_undo()`, удаляет inline-кнопку после отмены или истечения TTL.
+- **12 новых тестов** (`tests/test_edit_i4.py`): snapshot CRUD, keyboard
+  format, parse callback, executor returns snapshot, _apply_undo для
+  status/title/deleted_at/priority, execute_edit returns undo kb.
+- **Итого тестов: 412** (400 → 412).
+
+---
+
 ## 2026-05-11 — feat: context + multi-intent + list_done (PR-I3)
 
 PR-I3 добавляет контекстные фичи поверх intent-based editing:

@@ -111,7 +111,8 @@ async def test_execute_edit_anaphora(session: AsyncSession) -> None:
     intent = EditIntent(intent="complete", task_query="", confidence=0.85)
     reply, kb = await execute_edit(intent, user.id)
     assert "Закрыл" in reply
-    assert kb is None
+    # PR-I4: undo keyboard now returned after successful edit.
+    assert kb is not None
 
 
 @pytest.mark.asyncio

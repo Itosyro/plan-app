@@ -14,6 +14,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlmodel import select
 
 from app.ai.courier import (
     NOTE_PREFIX,
@@ -21,10 +22,12 @@ from app.ai.courier import (
     TASK_PENDING_PREFIX,
 )
 from app.bot.edit_executor import (
+    _UNDO_TTL_SECONDS,
     _dispatch_single,
     _execute_complete,
     _execute_delete,
     _execute_reopen,
+    _undo_keyboard,
     pop_pending_edit,
     touch_last_task,
 )
@@ -40,8 +43,9 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.base import session_scope
-from app.db.models import Category
+from app.db.models import Category, Task, TaskEditSnapshot
 from app.shared.logging import get_logger
+from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -215,6 +219,20 @@ def parse_edit_resolve_callback(data: str) -> tuple[str, int] | None:
     except ValueError:
         return None
     return parts[2], task_id
+
+
+def parse_edit_undo_callback(data: str) -> int | None:
+    """Parse an ``edit:undo:<snapshot_id>`` callback string.
+
+    Returns ``snapshot_id`` on success, ``None`` on malformed input.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "edit" or parts[1] != "undo":
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
 
 
 def create_router() -> Router:
@@ -544,23 +562,25 @@ def create_router() -> Router:
             user_id = user.id
 
         # PR-I3: try stored PENDING_EDITS for I2+ intents that carry extra fields.
+        snap_id: int | None = None
         stored_intent = pop_pending_edit(user_id)
         if stored_intent is not None and stored_intent.intent == intent_name:
-            reply = await _dispatch_single(task_id, user_id, stored_intent)
+            reply, snap_id = await _dispatch_single(task_id, user_id, stored_intent)
         elif intent_name == "complete":
-            reply = await _execute_complete(task_id, user_id)
+            reply, snap_id = await _execute_complete(task_id, user_id)
         elif intent_name == "delete":
-            reply = await _execute_delete(task_id, user_id)
+            reply, snap_id = await _execute_delete(task_id, user_id)
         elif intent_name == "reopen":
-            reply = await _execute_reopen(task_id, user_id)
+            reply, snap_id = await _execute_reopen(task_id, user_id)
         else:
             reply = f"Действие «{intent_name}» пока не поддерживается."
 
         touch_last_task(user_id, task_id)
 
         await callback.answer(reply[:200])
+        kb = _undo_keyboard(snap_id) if snap_id else None
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(reply)
+            await callback.message.edit_text(reply, reply_markup=kb)
 
         if callback.bot is not None:
             async with session_scope() as session:
@@ -572,6 +592,63 @@ def create_router() -> Router:
                         user_id=user_id,
                         exc_info=True,
                     )
+
+    # ── PR-I4: undo callback ──────────────────────────────────────────
+
+    @router.callback_query(F.data.startswith("edit:undo:"))
+    async def cb_edit_undo(callback: CallbackQuery) -> None:
+        """Undo a recent edit by restoring the snapshot's old_value."""
+        if callback.from_user is None or callback.data is None:
+            return
+        snapshot_id = parse_edit_undo_callback(callback.data)
+        if snapshot_id is None:
+            await callback.answer("Неверный формат.")
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+
+            result = await session.exec(
+                select(TaskEditSnapshot).where(
+                    TaskEditSnapshot.id == snapshot_id,
+                    TaskEditSnapshot.user_id == user.id,
+                ),
+            )
+            snap = result.first()
+            if snap is None:
+                await callback.answer("Снимок не найден.")
+                return
+
+            # Lazy TTL check.
+            elapsed = (utcnow_naive() - snap.created_at).total_seconds()
+            if elapsed > _UNDO_TTL_SECONDS:
+                await callback.answer("Время для отмены истекло (5 мин).")
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                return
+
+            # Restore old value.
+            task_result = await session.exec(
+                select(Task).where(Task.id == snap.task_id),
+            )
+            task = task_result.first()
+            if task is None:
+                await callback.answer("Задача не найдена.")
+                return
+
+            reply = _apply_undo(task, snap)
+            await session.delete(snap)
+            await session.flush()
+
+        await callback.answer(reply[:200])
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(reply, reply_markup=None)
 
     return router
 
@@ -616,3 +693,48 @@ def _flip_summary_row(
             )
         rows_out.append(new_row)
     return InlineKeyboardMarkup(inline_keyboard=rows_out)
+
+
+def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
+    """Restore old_value to the task field described by the snapshot."""
+    field = snap.field
+    old = snap.old_value
+    title = task.title
+
+    if field == "status":
+        if old == "done":
+            task.status = "done"
+            return f"Отменил: «{title}» снова выполнена."
+        task.status = old or "open"
+        return f"Отменил: «{title}» снова в активных."
+
+    if field == "deleted_at":
+        task.deleted_at = None  # type: ignore[assignment]
+        return f"Отменил удаление: «{title}» восстановлена."
+
+    if field == "title":
+        task.title = old or title
+        return f"Отменил переименование: «{old}»."
+
+    if field == "priority":
+        task.priority = old or "medium"
+        return f"Отменил: приоритет «{title}» → {old}."
+
+    if field == "due_at":
+        from datetime import datetime
+
+        if old is not None:
+            task.due_at = datetime.fromisoformat(old)
+        else:
+            task.due_at = None  # type: ignore[assignment]
+        return f"Отменил: дедлайн «{title}» восстановлен."
+
+    if field == "horizon_id":
+        task.horizon_id = int(old) if old is not None else None  # type: ignore[assignment]
+        return f"Отменил: горизонт «{title}» восстановлен."
+
+    if field == "category_id":
+        task.category_id = int(old) if old is not None else None  # type: ignore[assignment]
+        return f"Отменил: категория «{title}» восстановлена."
+
+    return f"Отменил изменение «{field}» для «{title}»."

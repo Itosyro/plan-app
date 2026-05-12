@@ -4,6 +4,7 @@ Phase 1: ``users``, ``user_settings``, ``inbox_entries``, ``telegram_updates``.
 Phase 2.2: ``categories``, ``horizons``, ``tasks``, ``notes``, ``ai_runs``,
 ``task_events``.
 Phase 4a: ``reminders``.
+PR-I4: ``task_edit_snapshots``.
 """
 
 from __future__ import annotations
@@ -292,4 +293,34 @@ class Reminder(SQLModel, table=True):
     attempts: int = Field(default=0)
     last_error: str | None = Field(default=None)
     sent_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+
+
+# ── PR-I4 ────────────────────────────────────────────────────────────
+
+
+class TaskEditSnapshot(SQLModel, table=True):
+    """Snapshot of a single field change for undo support.
+
+    Written by each edit executor after a successful mutation.
+    The ``[Отменить]`` inline button triggers ``edit:undo:<id>``
+    which restores ``old_value``.  Lazy TTL: 5 minutes from
+    ``created_at`` — callback checks on arrival, no background job.
+    """
+
+    __tablename__ = "task_edit_snapshots"
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("tasks.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
+    user_id: int = Field(foreign_key="users.id", index=True)
+    field: str = Field(max_length=32)
+    old_value: str | None = Field(default=None)
+    new_value: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)

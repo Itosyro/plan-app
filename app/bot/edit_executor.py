@@ -34,7 +34,7 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Task, TaskEvent
+from app.db.models import Task, TaskEditSnapshot, TaskEvent
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -121,36 +121,76 @@ def _disambiguation_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _execute_complete(task_id: int, user_id: int) -> str:
+_UNDO_TTL_SECONDS = 300  # 5 minutes
+
+
+async def _save_snapshot(
+    task_id: int,
+    user_id: int,
+    field: str,
+    old_value: str | None,
+    new_value: str | None,
+) -> int | None:
+    """Persist a TaskEditSnapshot and return its id."""
+    async with session_scope() as session:
+        snap = TaskEditSnapshot(
+            task_id=task_id,
+            user_id=user_id,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+        )
+        session.add(snap)
+        await session.flush()
+        return snap.id
+
+
+def _undo_keyboard(snapshot_id: int) -> InlineKeyboardMarkup:
+    """Build a single-button [Отменить] inline keyboard."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Отменить",
+                    callback_data=f"edit:undo:{snapshot_id}",
+                )
+            ]
+        ]
+    )
+
+
+async def _execute_complete(task_id: int, user_id: int) -> tuple[str, int | None]:
     """Mark a task as done."""
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
         if task.status == "done":
-            return f"«{task.title}» уже отмечена как выполненная."
+            return f"«{task.title}» уже отмечена как выполненная.", None
+        old_status = task.status
         await mark_task_done(session, task, user_id)
         title = task.title
-    return f"Закрыл «{title}»."
+    snap_id = await _save_snapshot(task_id, user_id, "status", old_status, "done")
+    return f"Закрыл «{title}».", snap_id
 
 
-async def _execute_delete(task_id: int, user_id: int) -> str:
+async def _execute_delete(task_id: int, user_id: int) -> tuple[str, int | None]:
     """Soft-delete a task."""
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
         title = task.title
         await delete_task(session, task, user_id)
-    return f"Удалил «{title}»."
+    snap_id = await _save_snapshot(task_id, user_id, "deleted_at", None, "soft_deleted")
+    return f"Удалил «{title}».", snap_id
 
 
-async def _execute_reopen(task_id: int, user_id: int) -> str:
+async def _execute_reopen(task_id: int, user_id: int) -> tuple[str, int | None]:
     """Re-open a previously completed task."""
     from sqlmodel import select
 
     async with session_scope() as session:
-        # Need to find task including done ones.
         result = await session.exec(
             select(Task).where(
                 Task.id == task_id,
@@ -160,54 +200,63 @@ async def _execute_reopen(task_id: int, user_id: int) -> str:
         )
         task = result.first()
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
         if task.status != "done":
-            return f"«{task.title}» и так в активных."
+            return f"«{task.title}» и так в активных.", None
         await mark_task_undone(session, task, user_id)
         title = task.title
-    return f"Вернул «{title}» в активные."
+    snap_id = await _save_snapshot(task_id, user_id, "status", "done", "open")
+    return f"Вернул «{title}» в активные.", snap_id
 
 
-async def _execute_reorder_horizon(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_reorder_horizon(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
     """Move a task to a different horizon."""
     if not intent.new_horizon:
-        return "Не понял, в какой горизонт перенести. Уточни: сегодня, завтра, неделя?"
+        return "Не понял, в какой горизонт перенести. Уточни: сегодня, завтра, неделя?", None
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
+        old_horizon = str(task.horizon_id) if task.horizon_id else None
         await update_task_horizon(session, task, intent.new_horizon, user_id)
         title = task.title
+        new_horizon = str(task.horizon_id) if task.horizon_id else None
 
     label = HORIZON_LABELS.get(intent.new_horizon, intent.new_horizon)
-    return f"Перенёс «{title}» → {label}."
+    snap_id = await _save_snapshot(task_id, user_id, "horizon_id", old_horizon, new_horizon)
+    return f"Перенёс «{title}» → {label}.", snap_id
 
 
 # ── PR-I2 executors ──────────────────────────────────────────────────
 
 
-async def _execute_rename(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_rename(task_id: int, user_id: int, intent: EditIntent) -> tuple[str, int | None]:
     """Rename a task."""
     if not intent.new_title:
-        return "Не понял новое название. Уточни, как назвать задачу."
+        return "Не понял новое название. Уточни, как назвать задачу.", None
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
         old_title = task.title
         await update_task_title(session, task, intent.new_title, user_id)
 
-    return f"Переименовал «{old_title}» → «{intent.new_title}»."
+    snap_id = await _save_snapshot(task_id, user_id, "title", old_title, intent.new_title)
+    return f"Переименовал «{old_title}» → «{intent.new_title}».", snap_id
 
 
-async def _execute_set_due(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_set_due(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
     """Set or change a task's due date/time."""
     import dateparser
 
     if not intent.new_due_raw:
-        return "Не понял дату/время. Уточни: «до пятницы», «завтра в 10»."
+        return "Не понял дату/время. Уточни: «до пятницы», «завтра в 10».", None
 
     parsed = dateparser.parse(
         intent.new_due_raw,
@@ -215,7 +264,7 @@ async def _execute_set_due(task_id: int, user_id: int, intent: EditIntent) -> st
         settings={"PREFER_DATES_FROM": "future"},
     )
     if parsed is None:
-        return f"Не смог разобрать дату «{intent.new_due_raw}». Попробуй иначе."
+        return f"Не смог разобрать дату «{intent.new_due_raw}». Попробуй иначе.", None
 
     from app.shared.time import to_naive_utc
 
@@ -224,54 +273,66 @@ async def _execute_set_due(task_id: int, user_id: int, intent: EditIntent) -> st
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
+        old_due = task.due_at.isoformat() if task.due_at else None
         await update_task_due_at(session, task, naive_utc, user_id)
         title = task.title
 
     formatted = parsed.strftime("%d.%m %H:%M")
-    return f"Поставил дедлайн «{title}» → {formatted}."
+    snap_id = await _save_snapshot(task_id, user_id, "due_at", old_due, naive_utc.isoformat())
+    return f"Поставил дедлайн «{title}» → {formatted}.", snap_id
 
 
-async def _execute_set_priority(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_set_priority(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
     """Change a task's priority."""
     if not intent.new_priority:
-        return "Не понял приоритет. Уточни: высокий, средний, низкий."
+        return "Не понял приоритет. Уточни: высокий, средний, низкий.", None
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
+        old_priority = task.priority
         await update_task_priority(session, task, intent.new_priority, user_id)
         title = task.title
 
     label = PRIORITY_LABELS.get(intent.new_priority, intent.new_priority)
-    return f"Приоритет «{title}» → {label}."
+    snap_id = await _save_snapshot(task_id, user_id, "priority", old_priority, intent.new_priority)
+    return f"Приоритет «{title}» → {label}.", snap_id
 
 
-async def _execute_set_category(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_set_category(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
     """Move a task to a different category."""
     if not intent.new_category:
-        return "Не понял категорию. Уточни название."
+        return "Не понял категорию. Уточни название.", None
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
+        old_cat_id = str(task.category_id) if task.category_id else None
         cat = await get_or_create_category(session, user_id, intent.new_category)
         if cat.id is None:
-            return "Ошибка создания категории."
+            return "Ошибка создания категории.", None
         await update_task_category(session, task, cat.id, user_id)
         title = task.title
 
-    return f"Перенёс «{title}» в категорию «{intent.new_category}»."
+    snap_id = await _save_snapshot(task_id, user_id, "category_id", old_cat_id, str(cat.id))
+    return f"Перенёс «{title}» в категорию «{intent.new_category}».", snap_id
 
 
-async def _execute_reorder_time(task_id: int, user_id: int, intent: EditIntent) -> str:
+async def _execute_reorder_time(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
     """Change the exact time of a task (reorder_time ≈ set_due for time changes)."""
     import dateparser
 
     if not intent.new_due_raw:
-        return "Не понял, на какое время перенести. Уточни: «на 14:00», «на 8 утра»."
+        return "Не понял, на какое время перенести. Уточни: «на 14:00», «на 8 утра».", None
 
     parsed = dateparser.parse(
         intent.new_due_raw,
@@ -279,7 +340,7 @@ async def _execute_reorder_time(task_id: int, user_id: int, intent: EditIntent) 
         settings={"PREFER_DATES_FROM": "future"},
     )
     if parsed is None:
-        return f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе."
+        return f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.", None
 
     from app.shared.time import to_naive_utc
 
@@ -288,16 +349,23 @@ async def _execute_reorder_time(task_id: int, user_id: int, intent: EditIntent) 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
-            return "Задача не найдена."
+            return "Задача не найдена.", None
+        old_due = task.due_at.isoformat() if task.due_at else None
         await update_task_due_at(session, task, naive_utc, user_id)
         title = task.title
 
     formatted = parsed.strftime("%d.%m %H:%M")
-    return f"Перенёс «{title}» → {formatted}."
+    snap_id = await _save_snapshot(task_id, user_id, "due_at", old_due, naive_utc.isoformat())
+    return f"Перенёс «{title}» → {formatted}.", snap_id
 
 
-async def _dispatch_single(task_id: int, user_id: int, intent: EditIntent) -> str:
-    """Run the appropriate executor for *one* resolved task."""
+async def _dispatch_single(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
+    """Run the appropriate executor for *one* resolved task.
+
+    Returns ``(reply_text, snapshot_id_or_none)``.
+    """
     if intent.intent == "complete":
         return await _execute_complete(task_id, user_id)
     if intent.intent == "delete":
@@ -316,7 +384,7 @@ async def _dispatch_single(task_id: int, user_id: int, intent: EditIntent) -> st
         return await _execute_set_category(task_id, user_id, intent)
     if intent.intent == "reorder_time":
         return await _execute_reorder_time(task_id, user_id, intent)
-    return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю."
+    return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю.", None
 
 
 async def _execute_list_completed_today(
@@ -373,9 +441,10 @@ async def execute_edit(
         last_id = pop_last_task(user_id)
         if last_id is not None:
             logger.info("edit.anaphora", user_id=user_id, task_id=last_id)
-            reply = await _dispatch_single(last_id, user_id, intent)
+            reply, snap_id = await _dispatch_single(last_id, user_id, intent)
             touch_last_task(user_id, last_id)
-            return reply, None
+            kb = _undo_keyboard(snap_id) if snap_id else None
+            return reply, kb
         return (
             "Не понял, какую задачу ты имеешь в виду. Уточни название.",
             None,
@@ -408,7 +477,7 @@ async def execute_edit(
     if task.id is None:
         return "Ошибка: задача без ID.", None
 
-    reply = await _dispatch_single(task.id, user_id, intent)
+    reply, snap_id = await _dispatch_single(task.id, user_id, intent)
 
     if task.id is not None:
         touch_last_task(user_id, task.id)
@@ -419,4 +488,5 @@ async def execute_edit(
         task_id=task.id,
         user_id=user_id,
     )
-    return reply, None
+    kb = _undo_keyboard(snap_id) if snap_id else None
+    return reply, kb

@@ -138,7 +138,7 @@ async def test_execute_rename(session: AsyncSession) -> None:
         new_title="Новое название",
         confidence=0.9,
     )
-    reply = await _execute_rename(row.id, user.id, intent)
+    reply, _snap = await _execute_rename(row.id, user.id, intent)
     assert "Переименовал" in reply
     assert "Новое название" in reply
 
@@ -157,7 +157,7 @@ async def test_execute_rename_no_title(session: AsyncSession) -> None:
     await session.commit()
 
     intent = EditIntent(intent="rename", task_query="Задача", confidence=0.9)
-    reply = await _execute_rename(row.id, user.id, intent)
+    reply, _snap = await _execute_rename(row.id, user.id, intent)
     assert "Не понял" in reply
 
 
@@ -180,7 +180,7 @@ async def test_execute_set_due(session: AsyncSession) -> None:
         new_due_raw="завтра в 10",
         confidence=0.9,
     )
-    reply = await _execute_set_due(row.id, user.id, intent)
+    reply, _snap = await _execute_set_due(row.id, user.id, intent)
     assert "дедлайн" in reply or "Поставил" in reply
 
 
@@ -198,7 +198,7 @@ async def test_execute_set_due_no_raw(session: AsyncSession) -> None:
     await session.commit()
 
     intent = EditIntent(intent="set_due", task_query="Задача", confidence=0.9)
-    reply = await _execute_set_due(row.id, user.id, intent)
+    reply, _snap = await _execute_set_due(row.id, user.id, intent)
     assert "Не понял" in reply
 
 
@@ -221,7 +221,7 @@ async def test_execute_set_priority(session: AsyncSession) -> None:
         new_priority="high",
         confidence=0.9,
     )
-    reply = await _execute_set_priority(row.id, user.id, intent)
+    reply, _snap = await _execute_set_priority(row.id, user.id, intent)
     assert "Приоритет" in reply
     assert "высокий" in reply
 
@@ -245,7 +245,7 @@ async def test_execute_set_category(session: AsyncSession) -> None:
         new_category="Работа",
         confidence=0.9,
     )
-    reply = await _execute_set_category(row.id, user.id, intent)
+    reply, _snap = await _execute_set_category(row.id, user.id, intent)
     assert "категорию" in reply
     assert "Работа" in reply
 
@@ -269,7 +269,7 @@ async def test_execute_reorder_time(session: AsyncSession) -> None:
         new_due_raw="в 14:00",
         confidence=0.9,
     )
-    reply = await _execute_reorder_time(row.id, user.id, intent)
+    reply, _snap = await _execute_reorder_time(row.id, user.id, intent)
     assert "Перенёс" in reply
 
 
@@ -295,4 +295,4 @@ async def test_execute_edit_rename_dispatch(session: AsyncSession) -> None:
     )
     reply, kb = await execute_edit(intent, user.id)
     assert "Переименовал" in reply
-    assert kb is None
+    assert kb is not None  # PR-I4: undo keyboard
