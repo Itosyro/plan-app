@@ -6,6 +6,33 @@
 
 ---
 
+## 2026-05-11 — feat: context + multi-intent + list_done (PR-I3)
+
+PR-I3 добавляет контекстные фичи поверх intent-based editing:
+
+- **LAST_TASK анафоры** (`edit_executor.py`): in-memory dict
+  `{user_id: (task_id, timestamp)}` с TTL 60с. Обновляется при
+  `persist_classification`, `execute_edit`, `cb_edit_resolve`.
+  Если `intent.task_query` пуст → используется последняя задача.
+- **PENDING_EDITS** (`edit_executor.py`): `{user_id: (EditIntent, timestamp)}`
+  для multi-match disambiguation — I2 интенты (rename, set_due и пр.)
+  сохраняют полный EditIntent для callback `edit:resolve:`.
+- **Multi-intent** (`_pipeline.py`): после `split_message` каждый unit
+  проходит через `detect_intent` — edit-интенты выполняются сразу,
+  create-интенты идут в обычный classify/persist pipeline. Смешанные
+  сообщения поддерживаются (edit + create в одном тексте).
+- **list_completed_today** (`edit_executor.py`): read-only интент `list_done` —
+  показывает задачи завершённые сегодня (JOIN Task ↔ TaskEvent.kind=completed).
+- **EDIT_INTENTS_ALL** расширен до 10 (I1:4 + I2:5 + I3_READONLY:1).
+- **Callback handler** (`callbacks.py`): `cb_edit_resolve` использует
+  `pop_pending_edit` для I2+ интентов, `touch_last_task` при каждом resolve.
+- **12 тестов** (`tests/test_edit_i3.py`): LAST_TASK TTL, PENDING_EDITS,
+  anaphora, multi-match storage, list_completed_today, execute_edit dispatch.
+- **E2E тесты** обновлены для multi-intent mock sequences (+per-unit intent).
+- Итого: 400 тестов, все зелёные.
+
+---
+
 ## 2026-05-11 — feat: edit executors — rename/set_due/set_priority/set_category/reorder_time (PR-I2)
 
 PR-I2 расширяет intent-based редактирование задач из PR-I1:

@@ -21,9 +21,12 @@ from app.ai.courier import (
     TASK_PENDING_PREFIX,
 )
 from app.bot.edit_executor import (
+    _dispatch_single,
     _execute_complete,
     _execute_delete,
     _execute_reopen,
+    pop_pending_edit,
+    touch_last_task,
 )
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.services import (
@@ -540,7 +543,11 @@ def create_router() -> Router:
                 return
             user_id = user.id
 
-        if intent_name == "complete":
+        # PR-I3: try stored PENDING_EDITS for I2+ intents that carry extra fields.
+        stored_intent = pop_pending_edit(user_id)
+        if stored_intent is not None and stored_intent.intent == intent_name:
+            reply = await _dispatch_single(task_id, user_id, stored_intent)
+        elif intent_name == "complete":
             reply = await _execute_complete(task_id, user_id)
         elif intent_name == "delete":
             reply = await _execute_delete(task_id, user_id)
@@ -548,6 +555,8 @@ def create_router() -> Router:
             reply = await _execute_reopen(task_id, user_id)
         else:
             reply = f"Действие «{intent_name}» пока не поддерживается."
+
+        touch_last_task(user_id, task_id)
 
         await callback.answer(reply[:200])
         if isinstance(callback.message, Message):

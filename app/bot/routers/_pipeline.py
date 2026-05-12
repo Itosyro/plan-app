@@ -35,7 +35,7 @@ from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
-from app.bot.edit_executor import EDIT_INTENTS_ALL, execute_edit
+from app.bot.edit_executor import EDIT_INTENTS_ALL, execute_edit, touch_last_task
 from app.bot.services import (
     find_task_by_query,
     get_user_categories,
@@ -280,7 +280,22 @@ async def _run_pipeline_inner(
             "попробуй переформулировать."
         ), None
 
-    # Resolve time for each unit (pure Python, fast)
+    # PR-I3: multi-intent — detect_intent each unit, separate edits from creates.
+    edit_replies: list[str] = []
+    create_units = []
+    for unit in split_result.units:
+        unit_intent = await detect_intent(groq_router, unit.text)
+        if unit_intent.intent in EDIT_INTENTS_ALL:
+            reply_text, _kb = await execute_edit(unit_intent, user_id)
+            edit_replies.append(reply_text)
+        else:
+            create_units.append(unit)
+
+    if not create_units:
+        # All units were edits — return combined replies.
+        return "\n".join(edit_replies), None
+
+    # Resolve time for each remaining create-unit (pure Python, fast)
     resolved_list: list[ResolvedTime | None] = [
         resolve_time(
             unit.text,
@@ -288,7 +303,7 @@ async def _run_pipeline_inner(
             morning_anchor=morning_anchor,
             evening_anchor=evening_anchor,
         )
-        for unit in split_result.units
+        for unit in create_units
     ]
 
     # Fetch the user's existing categories so the classifier can reuse
@@ -304,12 +319,12 @@ async def _run_pipeline_inner(
     # the failed unit and continue with the rest.
     classify_tasks = [
         classify_intent(groq_router, unit.text, resolved, user_categories, user_tz)
-        for unit, resolved in zip(split_result.units, resolved_list, strict=True)
+        for unit, resolved in zip(create_units, resolved_list, strict=True)
     ]
     raw_results = await asyncio.gather(*classify_tasks, return_exceptions=True)
 
     survivors: list[tuple[ClassifierResult, ResolvedTime | None, str]] = []
-    for unit, resolved, item in zip(split_result.units, resolved_list, raw_results, strict=True):
+    for unit, resolved, item in zip(create_units, resolved_list, raw_results, strict=True):
         if isinstance(item, BaseException):
             logger.exception(
                 "pipeline.classify_failed",
@@ -381,6 +396,9 @@ async def _run_pipeline_inner(
                 concretize_tasks=concretize_tasks,
             )
             if row.id is not None:
+                # PR-I3: update LAST_TASK so the user can refer back.
+                if isinstance(row, Task):
+                    touch_last_task(user_id, row.id)
                 items.append(
                     SummaryItem(
                         kind="task" if isinstance(row, Task) else "note",
@@ -413,6 +431,11 @@ async def _run_pipeline_inner(
         mode=courier_mode,
         style=courier_style,
     )
+
+    # PR-I3: prepend edit replies when message contained mixed intents.
+    if edit_replies:
+        text_reply = "\n".join(edit_replies) + "\n\n" + text_reply
+
     return text_reply, keyboard
 
 

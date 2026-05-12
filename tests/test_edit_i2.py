@@ -57,7 +57,7 @@ def test_edit_intents_i2_set() -> None:
 def test_edit_intents_all_superset() -> None:
     assert "complete" in EDIT_INTENTS_ALL
     assert "rename" in EDIT_INTENTS_ALL
-    assert len(EDIT_INTENTS_ALL) == 9
+    assert len(EDIT_INTENTS_ALL) == 10  # I1(4) + I2(5) + I3_READONLY(1)
 
 
 # ── Service functions ─────────────────────────────────────────────────

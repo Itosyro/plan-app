@@ -2,6 +2,8 @@
 
 PR-I1: complete, delete, reopen, reorder_horizon.
 PR-I2: rename, set_due, set_priority, set_category, reorder_time.
+PR-I3: LAST_TASK anaphora, PENDING_EDITS for multi-match I2 state,
+       list_completed_today read-only intent.
 
 Each executor receives a ``task_id`` and performs the action in its own
 ``session_scope``, returning a human-readable confirmation string.
@@ -11,7 +13,11 @@ handles multi-match disambiguation via inline keyboard.
 
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlmodel import select
 
 from app.ai.schemas import EditIntent
 from app.bot.services import (
@@ -28,15 +34,61 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Task
+from app.db.models import Task, TaskEvent
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+# ── PR-I3: In-memory context stores ─────────────────────────────────
+
+_LAST_TASK_TTL = 60  # seconds
+_PENDING_EDITS_TTL = 60  # seconds
+
+# {user_id: (task_id, monotonic_timestamp)}
+LAST_TASK: dict[int, tuple[int, float]] = {}
+
+# {user_id: (EditIntent, monotonic_timestamp)}
+PENDING_EDITS: dict[int, tuple[EditIntent, float]] = {}
+
+
+def touch_last_task(user_id: int, task_id: int) -> None:
+    """Record the most-recently-used task for anaphora resolution."""
+    LAST_TASK[user_id] = (task_id, time.monotonic())
+
+
+def pop_last_task(user_id: int) -> int | None:
+    """Return LAST_TASK task_id if TTL not expired, else None."""
+    entry = LAST_TASK.get(user_id)
+    if entry is None:
+        return None
+    task_id, ts = entry
+    if time.monotonic() - ts > _LAST_TASK_TTL:
+        LAST_TASK.pop(user_id, None)
+        return None
+    return task_id
+
+
+def store_pending_edit(user_id: int, intent: EditIntent) -> None:
+    """Save an EditIntent for later disambiguation callback."""
+    PENDING_EDITS[user_id] = (intent, time.monotonic())
+
+
+def pop_pending_edit(user_id: int) -> EditIntent | None:
+    """Retrieve and remove the stored EditIntent if still valid."""
+    entry = PENDING_EDITS.pop(user_id, None)
+    if entry is None:
+        return None
+    intent, ts = entry
+    if time.monotonic() - ts > _PENDING_EDITS_TTL:
+        return None
+    return intent
+
+
 # Intents handled by this module.
 EDIT_INTENTS_I1 = frozenset({"complete", "delete", "reopen", "reorder_horizon"})
 EDIT_INTENTS_I2 = frozenset({"rename", "set_due", "set_priority", "set_category", "reorder_time"})
-EDIT_INTENTS_ALL = EDIT_INTENTS_I1 | EDIT_INTENTS_I2
+EDIT_INTENTS_I3_READONLY = frozenset({"list_done"})
+EDIT_INTENTS_ALL = EDIT_INTENTS_I1 | EDIT_INTENTS_I2 | EDIT_INTENTS_I3_READONLY
 
 PRIORITY_LABELS: dict[str, str] = {
     "high": "высокий",
@@ -244,6 +296,61 @@ async def _execute_reorder_time(task_id: int, user_id: int, intent: EditIntent) 
     return f"Перенёс «{title}» → {formatted}."
 
 
+async def _dispatch_single(task_id: int, user_id: int, intent: EditIntent) -> str:
+    """Run the appropriate executor for *one* resolved task."""
+    if intent.intent == "complete":
+        return await _execute_complete(task_id, user_id)
+    if intent.intent == "delete":
+        return await _execute_delete(task_id, user_id)
+    if intent.intent == "reopen":
+        return await _execute_reopen(task_id, user_id)
+    if intent.intent == "reorder_horizon":
+        return await _execute_reorder_horizon(task_id, user_id, intent)
+    if intent.intent == "rename":
+        return await _execute_rename(task_id, user_id, intent)
+    if intent.intent == "set_due":
+        return await _execute_set_due(task_id, user_id, intent)
+    if intent.intent == "set_priority":
+        return await _execute_set_priority(task_id, user_id, intent)
+    if intent.intent == "set_category":
+        return await _execute_set_category(task_id, user_id, intent)
+    if intent.intent == "reorder_time":
+        return await _execute_reorder_time(task_id, user_id, intent)
+    return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю."
+
+
+async def _execute_list_completed_today(
+    user_id: int,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Return a list of tasks completed today (read-only)."""
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    async with session_scope() as session:
+        stmt = (
+            select(Task)
+            .where(
+                Task.user_id == user_id,
+                Task.status == "done",
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
+            .join(
+                TaskEvent,
+                (TaskEvent.task_id == Task.id) & (TaskEvent.kind == "completed"),  # type: ignore[arg-type]
+            )
+            .where(TaskEvent.created_at >= today_start)
+        )
+        result = await session.exec(stmt)
+        tasks = list(result.all())
+
+    if not tasks:
+        return "Сегодня пока ничего не завершено.", None
+
+    lines = [f"Сегодня завершено ({len(tasks)}):"]
+    for t in tasks:
+        lines.append(f"  • {t.title}")
+    return "\n".join(lines), None
+
+
 async def execute_edit(
     intent: EditIntent,
     user_id: int,
@@ -254,10 +361,21 @@ async def execute_edit(
     """
     query = (intent.task_query or "").strip()
 
+    # PR-I3: list_completed_today is read-only, no task lookup needed.
+    if intent.intent == "list_done":
+        return await _execute_list_completed_today(user_id)
+
     # For reopen, search among completed tasks too.
     include_done = intent.intent == "reopen"
 
     if not query:
+        # PR-I3: LAST_TASK anaphora — fallback when query is empty.
+        last_id = pop_last_task(user_id)
+        if last_id is not None:
+            logger.info("edit.anaphora", user_id=user_id, task_id=last_id)
+            reply = await _dispatch_single(last_id, user_id, intent)
+            touch_last_task(user_id, last_id)
+            return reply, None
         return (
             "Не понял, какую задачу ты имеешь в виду. Уточни название.",
             None,
@@ -278,6 +396,8 @@ async def execute_edit(
         )
 
     if len(matches) > 1:
+        # PR-I3: store intent for disambiguation callback (I2 intents need extra fields).
+        store_pending_edit(user_id, intent)
         keyboard = _disambiguation_keyboard(intent, matches)
         return (
             f"Нашёл несколько подходящих задач по запросу «{query}», уточни какую:",
@@ -288,26 +408,10 @@ async def execute_edit(
     if task.id is None:
         return "Ошибка: задача без ID.", None
 
-    if intent.intent == "complete":
-        reply = await _execute_complete(task.id, user_id)
-    elif intent.intent == "delete":
-        reply = await _execute_delete(task.id, user_id)
-    elif intent.intent == "reopen":
-        reply = await _execute_reopen(task.id, user_id)
-    elif intent.intent == "reorder_horizon":
-        reply = await _execute_reorder_horizon(task.id, user_id, intent)
-    elif intent.intent == "rename":
-        reply = await _execute_rename(task.id, user_id, intent)
-    elif intent.intent == "set_due":
-        reply = await _execute_set_due(task.id, user_id, intent)
-    elif intent.intent == "set_priority":
-        reply = await _execute_set_priority(task.id, user_id, intent)
-    elif intent.intent == "set_category":
-        reply = await _execute_set_category(task.id, user_id, intent)
-    elif intent.intent == "reorder_time":
-        reply = await _execute_reorder_time(task.id, user_id, intent)
-    else:
-        reply = f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю."
+    reply = await _dispatch_single(task.id, user_id, intent)
+
+    if task.id is not None:
+        touch_last_task(user_id, task.id)
 
     logger.info(
         "edit.executed",

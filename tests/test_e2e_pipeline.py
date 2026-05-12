@@ -171,6 +171,7 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "утром пробежка"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(category="Здоровье", horizon="today", title="Утренняя пробежка")
             ),
@@ -216,6 +217,8 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "купить хлеб и молоко"}, {"text": "записаться к врачу"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(_cr_dict(category="Покупки", title="Купить хлеб и молоко")),
             _classifier_response(
                 _cr_dict(category="Здоровье", horizon="week", title="Записаться к врачу")
@@ -262,6 +265,8 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "позвонить Олегу"}, {"text": "книга про AI интересная"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(_cr_dict(category="Личное", title="Позвонить Олегу")),
             _classifier_response(
                 _cr_dict(
@@ -320,6 +325,8 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "до пятницы отчёт"}, {"text": "в 11 совещание"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(
                     category="Работа", horizon="week", priority="high", title="Отчёт до пятницы"
@@ -417,6 +424,9 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
                     {"text": "записать идею про стартап"},
                 ]
             ),
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(category="Здоровье", horizon="today", title="Утренняя йога")
             ),
@@ -475,6 +485,7 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "интересная мысль про архитектуру проекта"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(
                     category="Работа",
@@ -549,12 +560,18 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
                 ),
             )
         if n == 4:
+            # PR-I3: per-unit intent #1
+            return httpx.Response(200, json=_intent_response("create"))
+        if n == 5:
+            # PR-I3: per-unit intent #2
+            return httpx.Response(200, json=_intent_response("create"))
+        if n == 6:
             # classifier #1 - succeeds
             return httpx.Response(
                 200,
                 json=_classifier_response(_cr_dict(category="Покупки", title="Купить хлеб")),
             )
-        if n == 5:
+        if n == 7:
             # classifier #2 — fails. Use 400 (not 429) so neither the Groq
             # SDK's internal retry policy nor ``call_with_rotation`` (I-1)
             # waits through exponential-backoff retries: 4xx is treated
@@ -570,7 +587,7 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
                 json={"error": {"message": "bad request", "type": "invalid_request_error"}},
             )
         # any extra call (e.g. courier in template_only mode shouldn't happen)
-        raise RuntimeError(f"Unexpected LLM call #{n}")
+        raise RuntimeError(f"Unexpected LLM call #{n}")  # pragma: no cover
 
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=staged)
 
@@ -611,6 +628,7 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
             _intent_response("create"),
             _reorder_response(False),
             _splitter_response([{"text": "позвонить в банк до 15:00"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(
                     category="Финансы",
@@ -677,7 +695,8 @@ async def test_e2e_classifier_receives_user_existing_categories(
 
     def side_effect(request: httpx.Request) -> httpx.Response:
         captured.append(request)
-        # First call is intent detection (PR-I1), then reorder, splitter, classifier.
+        # First call is intent detection (PR-I1), then reorder, splitter,
+        # PR-I3 per-unit intent, then classifier.
         if len(captured) == 1:
             return httpx.Response(200, json=_intent_response("create"))
         if len(captured) == 2:
@@ -686,6 +705,9 @@ async def test_e2e_classifier_receives_user_existing_categories(
             return httpx.Response(
                 200, json=_splitter_response([{"text": "доделать отчёт по работе"}])
             )
+        if len(captured) == 4:
+            # PR-I3: per-unit intent
+            return httpx.Response(200, json=_intent_response("create"))
         return httpx.Response(
             200,
             json=_classifier_response(
@@ -705,7 +727,7 @@ async def test_e2e_classifier_receives_user_existing_categories(
         courier_mode="template_only",
     )
 
-    classifier_request = captured[3]
+    classifier_request = captured[4]  # shifted by 1 for PR-I3 per-unit intent
     body = classifier_request.read().decode()
     assert "Работа" in body, f"existing category 'Работа' missing from classifier prompt: {body!r}"
     assert "Здоровье" in body, (
