@@ -13,6 +13,7 @@ from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, EditIntent
 from app.bot.edit_executor import (
     EDIT_INTENTS_I1,
+    LAST_TASK,
     _execute_complete,
     _execute_delete,
     _execute_reopen,
@@ -214,7 +215,7 @@ async def test_execute_complete(session: AsyncSession) -> None:
     assert row.id is not None
     await session.commit()
 
-    reply = await _execute_complete(row.id, user.id)
+    reply, _snap = await _execute_complete(row.id, user.id)
     assert "Закрыл" in reply
 
 
@@ -237,7 +238,7 @@ async def test_execute_complete_already_done(session: AsyncSession) -> None:
     session.add(row)
     await session.commit()
 
-    reply = await _execute_complete(row.id, user.id)
+    reply, _snap = await _execute_complete(row.id, user.id)
     assert "уже" in reply
 
 
@@ -258,7 +259,7 @@ async def test_execute_delete(session: AsyncSession) -> None:
     assert row.id is not None
     await session.commit()
 
-    reply = await _execute_delete(row.id, user.id)
+    reply, _snap = await _execute_delete(row.id, user.id)
     assert "Удалил" in reply
 
 
@@ -280,7 +281,7 @@ async def test_execute_reopen(session: AsyncSession) -> None:
     await mark_task_done(session, row, user.id)
     await session.commit()
 
-    reply = await _execute_reopen(row.id, user.id)
+    reply, _snap = await _execute_reopen(row.id, user.id)
     assert "Вернул" in reply
 
 
@@ -301,7 +302,7 @@ async def test_execute_reopen_already_active(session: AsyncSession) -> None:
     assert row.id is not None
     await session.commit()
 
-    reply = await _execute_reopen(row.id, user.id)
+    reply, _snap = await _execute_reopen(row.id, user.id)
     assert "и так" in reply
 
 
@@ -310,6 +311,7 @@ async def test_execute_reopen_already_active(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_edit_no_query() -> None:
+    LAST_TASK.pop(1, None)
     intent = EditIntent(intent="complete", task_query="", confidence=0.9)
     reply, kb = await execute_edit(intent, user_id=1)
     assert "Не понял" in reply
