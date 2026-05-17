@@ -6,6 +6,15 @@
 
 ---
 
+## 2026-05-11 — feat: DeprecationWarning cleanup (PR-L)
+
+PR-L убирает `DeprecationWarning` из тестов:
+
+- Заменено `session.execute()` на `session.exec()` в `app/workers/scheduler.py` и `app/bot/services/tasks.py`.
+- Это исправляет предупреждения, возникающие во время запуска тестов (`pytest`).
+
+---
+
 ## 2026-05-11 — feat: undo (TaskEditSnapshot) (PR-I4)
 
 PR-I4 добавляет поддержку отмены последнего edit-действия:
