@@ -709,7 +709,7 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
         return f"Отменил: «{title}» снова в активных."
 
     if field == "deleted_at":
-        task.deleted_at = None  # type: ignore[assignment]
+        task.deleted_at = None
         return f"Отменил удаление: «{title}» восстановлена."
 
     if field == "title":
@@ -726,15 +726,15 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
         if old is not None:
             task.due_at = datetime.fromisoformat(old)
         else:
-            task.due_at = None  # type: ignore[assignment]
+            task.due_at = None
         return f"Отменил: дедлайн «{title}» восстановлен."
 
     if field == "horizon_id":
-        task.horizon_id = int(old) if old is not None else None  # type: ignore[assignment]
+        task.horizon_id = int(old) if old is not None else None
         return f"Отменил: горизонт «{title}» восстановлен."
 
     if field == "category_id":
-        task.category_id = int(old) if old is not None else None  # type: ignore[assignment]
+        task.category_id = int(old) if old is not None else None
         return f"Отменил: категория «{title}» восстановлена."
 
     return f"Отменил изменение «{field}» для «{title}»."
