@@ -6,12 +6,19 @@
 
 ---
 
-## 2026-05-11 — feat: DeprecationWarning cleanup (PR-L)
+## 2026-05-18 — feat: needs clarification UI (PR-K)
 
-PR-L убирает `DeprecationWarning` из тестов:
+PR-K внедряет промежуточное уточнение для неуверенных классификаций:
 
-- Заменено `session.execute()` на `session.exec()` в `app/workers/scheduler.py` и `app/bot/services/tasks.py`.
-- Это исправляет предупреждения, возникающие во время запуска тестов (`pytest`).
+- **_pipeline.py**: Перехват интентов, где `confidence < 0.7`.
+  Сохранение `(cr, resolved, inbox_id, user_id, timestamp)` в
+  глобальный словарь `PENDING_CLARIFICATIONS` с уникальным `uuid`.
+- **Inline клавиатура**: Пользователю отправляется клавиатура
+  с кнопками `[Да, создать]` и `[Нет, отмена]`.
+- **callbacks.py**: Обработка кнопок с авторизацией (отсечение IDOR)
+  и TTL в 5 минут (чтобы не было утечек памяти).
+- **Слияние логики**: При подтверждении используется `persist_classification`.
+  Обновление текста происходит через склейку старого текста и результата.
 
 ---
 

@@ -96,7 +96,7 @@ async def tick_reminders(
         for reminder, task, user in rows:
             assert reminder.id is not None  # SELECT-loaded → never NULL
             # ── 1. Claim the row atomically ────────────────────────
-            claim_result = await session.exec(
+            claim_result = await session.execute(
                 update(Reminder)
                 .where(
                     Reminder.id == reminder.id,  # type: ignore[arg-type]

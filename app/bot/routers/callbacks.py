@@ -235,6 +235,17 @@ def parse_edit_undo_callback(data: str) -> int | None:
         return None
 
 
+def parse_clarify_callback(data: str) -> tuple[str, str] | None:
+    """Parse a ``clarify:<action>:<id>`` callback string.
+
+    Returns ``(action, uuid)`` on success, ``None`` on malformed input.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "clarify" or parts[1] not in {"yes", "no"}:
+        return None
+    return parts[1], parts[2]
+
+
 def create_router() -> Router:
     """Build a fresh ``callbacks`` router."""
     router = Router(name="callbacks")
@@ -592,6 +603,107 @@ def create_router() -> Router:
                         user_id=user_id,
                         exc_info=True,
                     )
+
+    # ── PR-K: needs_clarification UI ──────────────────────────────────
+
+    @router.callback_query(F.data.startswith("clarify:"))
+    async def cb_clarify(callback: CallbackQuery) -> None:
+        """Handle clarification prompt (Yes/No)."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_clarify_callback(callback.data)
+        if not parsed:
+            await callback.answer("Неверный формат.")
+            return
+
+        action, clarify_id = parsed
+
+        from app.bot.routers._pipeline import pop_pending_clarification
+        from app.bot.services.tasks import persist_classification
+
+        def _remove_clarify_buttons(kb: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup | None:
+            if not kb:
+                return None
+            new_rows = []
+            for row in kb.inline_keyboard:
+                if any(
+                    isinstance(btn, InlineKeyboardButton)
+                    and btn.callback_data
+                    and clarify_id in btn.callback_data
+                    for btn in row
+                ):
+                    continue
+                new_rows.append(row)
+            if not new_rows:
+                return None
+            return InlineKeyboardMarkup(inline_keyboard=new_rows)
+
+        try:
+            item = pop_pending_clarification(clarify_id, callback.from_user.id)
+        except PermissionError:
+            await callback.answer("Нет доступа.")
+            return
+
+        if item is None:
+            await callback.answer("Запрос устарел или уже обработан.")
+            if isinstance(callback.message, Message):
+                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                await callback.message.edit_reply_markup(reply_markup=new_markup)
+            return
+
+        cr, resolved, inbox_id = item
+
+        import html
+
+        if action == "no":
+            await callback.answer("Отменено.")
+            if isinstance(callback.message, Message):
+                msg_text = (
+                    callback.message.html_text
+                    if callback.message.html_text
+                    else callback.message.text
+                )
+                safe_text = msg_text or ""
+                safe_title = html.escape(cr.title)
+                new_text = safe_text + f"\n\n❌ Отменено: «{safe_title}»"
+                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                await callback.message.edit_text(new_text, reply_markup=new_markup)
+            return
+
+        async with session_scope() as session:
+            from app.db.models import UserSettings
+
+            user, _ = await get_or_create_user(session, telegram_id=callback.from_user.id)
+            if user.id is None:
+                await callback.answer("Ошибка пользователя.")
+                return
+
+            user_settings = (
+                await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+            ).first()
+            default_offsets = user_settings.default_reminder_offsets if user_settings else None
+
+            due_at = resolved.resolved_dt if resolved else None
+            await persist_classification(
+                session,
+                user_id=user.id,
+                cr=cr,
+                due_at=due_at,
+                inbox_id=inbox_id,
+                default_reminder_offsets=default_offsets,
+            )
+            await callback.answer("Создано.")
+            if isinstance(callback.message, Message):
+                msg_text = (
+                    callback.message.html_text
+                    if callback.message.html_text
+                    else callback.message.text
+                )
+                safe_text = msg_text or ""
+                safe_title = html.escape(cr.title)
+                new_text = safe_text + f"\n\n✅ Создано: «{safe_title}»"
+                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                await callback.message.edit_text(new_text, reply_markup=new_markup)
 
     # ── PR-I4: undo callback ──────────────────────────────────────────
 
