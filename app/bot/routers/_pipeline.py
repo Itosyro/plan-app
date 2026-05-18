@@ -23,8 +23,10 @@ descriptors, and trip the rate-limiter for every other user.
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
@@ -71,6 +73,39 @@ _groq_router: GroqKeyRouter | None = None
 _global_pipeline_semaphore: asyncio.Semaphore | None = None
 _user_pipeline_semaphores: dict[int, asyncio.Semaphore] = {}
 _user_semaphores_lock: asyncio.Lock | None = None
+
+PENDING_CLARIFICATIONS: dict[
+    str, tuple[ClassifierResult, ResolvedTime | None, int | None, int, float]
+] = {}
+
+
+def pop_pending_clarification(
+    clarify_id: str,
+    tg_user_id: int,
+) -> tuple[ClassifierResult, ResolvedTime | None, int | None] | None:
+    """Pop a pending clarification if it belongs to the user and is fresh.
+
+    Implements a 5-minute TTL to avoid memory leaks from abandoned prompts,
+    and checks authorization (IDOR protection) so one user cannot click
+    another user's clarification buttons.
+    """
+    now = time.monotonic()
+    stale_keys = [k for k, v in PENDING_CLARIFICATIONS.items() if now - v[4] > 300]
+    for k in stale_keys:
+        PENDING_CLARIFICATIONS.pop(k, None)
+
+    item = PENDING_CLARIFICATIONS.get(clarify_id)
+    if item is None:
+        return None
+
+    cr, resolved, inbox_id, owner_id, _ts = item
+    if owner_id != tg_user_id:
+        # Prevent IDOR where user B clicks user A's clarification button.
+        # Don't pop it, so user A can still click it.
+        raise PermissionError("unauthorized")
+
+    PENDING_CLARIFICATIONS.pop(clarify_id, None)
+    return cr, resolved, inbox_id
 
 
 def _get_global_pipeline_semaphore() -> asyncio.Semaphore:
@@ -356,6 +391,9 @@ async def _run_pipeline_inner(
 
     # Persist surviving units.
     items: list[SummaryItem] = []
+    clarification_texts: list[str] = []
+    clarification_buttons: list[list[InlineKeyboardButton]] = []
+
     async with session_scope() as session:
         await log_ai_run(
             session,
@@ -385,6 +423,28 @@ async def _run_pipeline_inner(
                 and not cr.reminder_offsets
             ):
                 cr = cr.model_copy(update={"reminder_offsets": [0]})
+
+            if cr.confidence < confidence_threshold:
+                clarify_id = uuid.uuid4().hex[:8]
+                PENDING_CLARIFICATIONS[clarify_id] = (
+                    cr,
+                    resolved,
+                    inbox_id,
+                    tg_user_id,
+                    time.monotonic(),
+                )
+                clarification_texts.append(f"🤔 Я не совсем уверен. Вы имели в виду: «{cr.title}»?")
+                clarification_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            text="Да, создать", callback_data=f"clarify:yes:{clarify_id}"
+                        ),
+                        InlineKeyboardButton(
+                            text="Нет, отмена", callback_data=f"clarify:no:{clarify_id}"
+                        ),
+                    ]
+                )
+                continue
 
             row = await persist_classification(
                 session,
@@ -431,6 +491,15 @@ async def _run_pipeline_inner(
         mode=courier_mode,
         style=courier_style,
     )
+
+    if clarification_texts:
+        if text_reply:
+            text_reply += "\n\n"
+        text_reply += "\n".join(clarification_texts)
+        if keyboard:
+            keyboard.inline_keyboard.extend(clarification_buttons)
+        else:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=clarification_buttons)
 
     # PR-I3: prepend edit replies when message contained mixed intents.
     if edit_replies:
