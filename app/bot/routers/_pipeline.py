@@ -108,6 +108,11 @@ def pop_pending_clarification(
     return cr, resolved, inbox_id
 
 
+def reset_pending_clarifications_for_tests() -> None:
+    """Test-only hook: clear in-memory clarification prompts."""
+    PENDING_CLARIFICATIONS.clear()
+
+
 def _get_global_pipeline_semaphore() -> asyncio.Semaphore:
     """Return the lazily-initialised global semaphore.
 

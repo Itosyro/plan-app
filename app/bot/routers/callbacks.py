@@ -32,6 +32,7 @@ from app.bot.edit_executor import (
     touch_last_task,
 )
 from app.bot.pinned_today import refresh_pinned_morning
+from app.bot.routers._pipeline import pop_pending_clarification
 from app.bot.services import (
     delete_task,
     get_or_create_user,
@@ -39,15 +40,18 @@ from app.bot.services import (
     get_user_categories_full,
     mark_task_done,
     mark_task_undone,
+    persist_classification,
     update_task_category,
     update_task_horizon,
 )
 from app.db.base import session_scope
-from app.db.models import Category, Task, TaskEditSnapshot
+from app.db.models import Category, Task, TaskEditSnapshot, UserSettings
 from app.shared.logging import get_logger
 from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
+
+_CLARIFY_ID_HEX = frozenset("0123456789abcdef")
 
 HORIZON_OPTIONS: list[tuple[str, str]] = [
     ("today", "Сегодня"),
@@ -243,7 +247,29 @@ def parse_clarify_callback(data: str) -> tuple[str, str] | None:
     parts = data.split(":")
     if len(parts) != 3 or parts[0] != "clarify" or parts[1] not in {"yes", "no"}:
         return None
+    clarify_id = parts[2]
+    if len(clarify_id) != 8 or any(ch not in _CLARIFY_ID_HEX for ch in clarify_id):
+        return None
     return parts[1], parts[2]
+
+
+def remove_clarify_buttons(
+    kb: InlineKeyboardMarkup | None,
+    clarify_id: str,
+) -> InlineKeyboardMarkup | None:
+    """Return ``kb`` without rows belonging to one clarification prompt."""
+    if kb is None:
+        return None
+    target_yes = f"clarify:yes:{clarify_id}"
+    target_no = f"clarify:no:{clarify_id}"
+    new_rows: list[list[InlineKeyboardButton]] = []
+    for row in kb.inline_keyboard:
+        if any(btn.callback_data in {target_yes, target_no} for btn in row):
+            continue
+        new_rows.append(row)
+    if not new_rows:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=new_rows)
 
 
 def create_router() -> Router:
@@ -618,26 +644,6 @@ def create_router() -> Router:
 
         action, clarify_id = parsed
 
-        from app.bot.routers._pipeline import pop_pending_clarification
-        from app.bot.services.tasks import persist_classification
-
-        def _remove_clarify_buttons(kb: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup | None:
-            if not kb:
-                return None
-            new_rows = []
-            for row in kb.inline_keyboard:
-                if any(
-                    isinstance(btn, InlineKeyboardButton)
-                    and btn.callback_data
-                    and clarify_id in btn.callback_data
-                    for btn in row
-                ):
-                    continue
-                new_rows.append(row)
-            if not new_rows:
-                return None
-            return InlineKeyboardMarkup(inline_keyboard=new_rows)
-
         try:
             item = pop_pending_clarification(clarify_id, callback.from_user.id)
         except PermissionError:
@@ -647,32 +653,23 @@ def create_router() -> Router:
         if item is None:
             await callback.answer("Запрос устарел или уже обработан.")
             if isinstance(callback.message, Message):
-                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
                 await callback.message.edit_reply_markup(reply_markup=new_markup)
             return
 
         cr, resolved, inbox_id = item
 
-        import html
-
         if action == "no":
             await callback.answer("Отменено.")
             if isinstance(callback.message, Message):
-                msg_text = (
-                    callback.message.html_text
-                    if callback.message.html_text
-                    else callback.message.text
-                )
+                msg_text = callback.message.text
                 safe_text = msg_text or ""
-                safe_title = html.escape(cr.title)
-                new_text = safe_text + f"\n\n❌ Отменено: «{safe_title}»"
-                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                new_text = safe_text + f"\n\n❌ Отменено: «{cr.title}»"
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
                 await callback.message.edit_text(new_text, reply_markup=new_markup)
             return
 
         async with session_scope() as session:
-            from app.db.models import UserSettings
-
             user, _ = await get_or_create_user(session, telegram_id=callback.from_user.id)
             if user.id is None:
                 await callback.answer("Ошибка пользователя.")
@@ -694,15 +691,10 @@ def create_router() -> Router:
             )
             await callback.answer("Создано.")
             if isinstance(callback.message, Message):
-                msg_text = (
-                    callback.message.html_text
-                    if callback.message.html_text
-                    else callback.message.text
-                )
+                msg_text = callback.message.text
                 safe_text = msg_text or ""
-                safe_title = html.escape(cr.title)
-                new_text = safe_text + f"\n\n✅ Создано: «{safe_title}»"
-                new_markup = _remove_clarify_buttons(callback.message.reply_markup)
+                new_text = safe_text + f"\n\n✅ Создано: «{cr.title}»"
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
                 await callback.message.edit_text(new_text, reply_markup=new_markup)
 
     # ── PR-I4: undo callback ──────────────────────────────────────────

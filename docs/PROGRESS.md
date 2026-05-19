@@ -19,6 +19,9 @@ PR-K внедряет промежуточное уточнение для не�
   и TTL в 5 минут (чтобы не было утечек памяти).
 - **Слияние логики**: При подтверждении используется `persist_classification`.
   Обновление текста происходит через склейку старого текста и результата.
+- **PR-L включён в этот же открытый PR**: фактически убраны SQLModel
+  `DeprecationWarning` в `app/bot/services/tasks.py` и
+  `app/workers/scheduler.py` (`session.execute()` → `session.exec()`).
 
 ---
 

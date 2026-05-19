@@ -5,13 +5,16 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.bot.routers import callbacks as callbacks_module
 from app.bot.routers.callbacks import (
     category_picker_keyboard,
     horizon_picker_keyboard,
+    parse_clarify_callback,
     parse_task_callback,
+    remove_clarify_buttons,
     task_action_keyboard,
 )
 from app.bot.services import (
@@ -60,6 +63,38 @@ def test_horizon_picker_keyboard_structure() -> None:
     assert "task:move:7:year" in data_values
     assert "task:move:7:someday" in data_values
     assert "task:cancel:7" in data_values
+
+
+def test_parse_clarify_callback_valid() -> None:
+    assert parse_clarify_callback("clarify:yes:abcdef12") == ("yes", "abcdef12")
+    assert parse_clarify_callback("clarify:no:12345678") == ("no", "12345678")
+
+
+def test_parse_clarify_callback_invalid() -> None:
+    assert parse_clarify_callback("clarify:maybe:abcdef12") is None
+    assert parse_clarify_callback("clarify:yes:not-hex!") is None
+    assert parse_clarify_callback("clarify:yes:abc") is None
+    assert parse_clarify_callback("clarify:yes:abcdef12:extra") is None
+
+
+def test_remove_clarify_buttons_removes_only_exact_prompt() -> None:
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Да", callback_data="clarify:yes:abcdef12")],
+            [InlineKeyboardButton(text="Нет", callback_data="clarify:no:abcdef12")],
+            [InlineKeyboardButton(text="Да 2", callback_data="clarify:yes:12345678")],
+            [InlineKeyboardButton(text="Задача", callback_data="summary:toggle:task:42")],
+        ],
+    )
+
+    cleaned = remove_clarify_buttons(kb, "abcdef12")
+
+    assert cleaned is not None
+    data_values = [btn.callback_data for row in cleaned.inline_keyboard for btn in row]
+    assert "clarify:yes:abcdef12" not in data_values
+    assert "clarify:no:abcdef12" not in data_values
+    assert "clarify:yes:12345678" in data_values
+    assert "summary:toggle:task:42" in data_values
 
 
 # ── Service-level tests for callback operations ──────────────────────

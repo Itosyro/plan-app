@@ -70,7 +70,7 @@ async def get_or_create_category(
         .values(user_id=user_id, name=name)
         .on_conflict_do_nothing()
     )
-    await session.execute(stmt)
+    await session.exec(stmt)
     await session.flush()
     result = await session.exec(
         select(Category).where(Category.user_id == user_id, Category.name == name),
@@ -114,7 +114,7 @@ async def get_or_create_horizon(
         .values(user_id=user_id, slug=slug, label=label)
         .on_conflict_do_nothing()
     )
-    await session.execute(stmt)
+    await session.exec(stmt)
     await session.flush()
     result = await session.exec(
         select(Horizon).where(Horizon.user_id == user_id, Horizon.slug == slug),

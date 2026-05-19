@@ -22,7 +22,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
-from app.bot.routers._pipeline import run_pipeline
+from app.bot.routers._pipeline import (
+    PENDING_CLARIFICATIONS,
+    reset_pending_clarifications_for_tests,
+    run_pipeline,
+)
 from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import Note, Task
 
@@ -101,6 +105,20 @@ def _courier_response(text: str) -> dict[str, Any]:
             {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
         ],
         "usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
+    }
+
+
+def _critic_response(result: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps({"approved": True, "reason": "ok", "corrected": result})
+    return {
+        "id": "chatcmpl-critic",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "qwen-qwq-32b",
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
     }
 
 
@@ -247,6 +265,58 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
 
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
     assert len(tasks) == 2
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_low_confidence_asks_for_clarification(session: AsyncSession) -> None:
+    """Low-confidence classifier result is not persisted until user confirms."""
+    reset_pending_clarifications_for_tests()
+    user, _ = await get_or_create_user(session, telegram_id=309)
+    await session.commit()
+    assert user.id is not None
+
+    low_conf = _cr_dict(
+        category="Работа",
+        horizon="today",
+        title="Созвон с командой",
+        confidence=0.4,
+    )
+    tracker = _CallTracker(
+        [
+            _intent_response("create"),
+            _reorder_response(False),
+            _splitter_response([{"text": "созвон с командой"}]),
+            _intent_response("create"),
+            _classifier_response(low_conf),
+            _critic_response(low_conf),
+        ]
+    )
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        side_effect=tracker.side_effect
+    )
+
+    text, keyboard = await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "созвон с командой",
+        tg_user_id=309,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=None,
+        courier_mode="template_only",
+    )
+
+    assert "Я не совсем уверен" in text
+    assert "Созвон с командой" in text
+    assert keyboard is not None
+    buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+    assert any(btn.text == "Да, создать" and btn.callback_data for btn in buttons)
+    assert any(btn.text == "Нет, отмена" and btn.callback_data for btn in buttons)
+    assert len(PENDING_CLARIFICATIONS) == 1
+
+    tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
+    assert tasks == []
+    reset_pending_clarifications_for_tests()
 
 
 # ── e2e: task + note mix ─────────────────────────────────────────────
