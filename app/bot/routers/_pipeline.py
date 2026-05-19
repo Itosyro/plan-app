@@ -77,22 +77,32 @@ _user_semaphores_lock: asyncio.Lock | None = None
 PENDING_CLARIFICATIONS: dict[
     str, tuple[ClassifierResult, ResolvedTime | None, int | None, int, float]
 ] = {}
+_CLARIFICATION_TTL_SECONDS = 300
 
 
-def pop_pending_clarification(
+def purge_pending_clarifications(now: float | None = None) -> None:
+    """Drop expired clarification prompts from the in-memory store."""
+    current = time.monotonic() if now is None else now
+    stale_keys = [
+        key
+        for key, value in PENDING_CLARIFICATIONS.items()
+        if current - value[4] > _CLARIFICATION_TTL_SECONDS
+    ]
+    for key in stale_keys:
+        PENDING_CLARIFICATIONS.pop(key, None)
+
+
+def get_pending_clarification(
     clarify_id: str,
     tg_user_id: int,
 ) -> tuple[ClassifierResult, ResolvedTime | None, int | None] | None:
-    """Pop a pending clarification if it belongs to the user and is fresh.
+    """Return a pending clarification if it belongs to the user and is fresh.
 
     Implements a 5-minute TTL to avoid memory leaks from abandoned prompts,
     and checks authorization (IDOR protection) so one user cannot click
     another user's clarification buttons.
     """
-    now = time.monotonic()
-    stale_keys = [k for k, v in PENDING_CLARIFICATIONS.items() if now - v[4] > 300]
-    for k in stale_keys:
-        PENDING_CLARIFICATIONS.pop(k, None)
+    purge_pending_clarifications()
 
     item = PENDING_CLARIFICATIONS.get(clarify_id)
     if item is None:
@@ -104,8 +114,24 @@ def pop_pending_clarification(
         # Don't pop it, so user A can still click it.
         raise PermissionError("unauthorized")
 
-    PENDING_CLARIFICATIONS.pop(clarify_id, None)
     return cr, resolved, inbox_id
+
+
+def discard_pending_clarification(clarify_id: str) -> None:
+    """Forget one clarification prompt after a terminal outcome."""
+    PENDING_CLARIFICATIONS.pop(clarify_id, None)
+
+
+def pop_pending_clarification(
+    clarify_id: str,
+    tg_user_id: int,
+) -> tuple[ClassifierResult, ResolvedTime | None, int | None] | None:
+    """Pop a pending clarification if it belongs to the user and is fresh."""
+    item = get_pending_clarification(clarify_id, tg_user_id)
+    if item is None:
+        return None
+    PENDING_CLARIFICATIONS.pop(clarify_id, None)
+    return item
 
 
 def reset_pending_clarifications_for_tests() -> None:
@@ -430,6 +456,7 @@ async def _run_pipeline_inner(
                 cr = cr.model_copy(update={"reminder_offsets": [0]})
 
             if cr.confidence < confidence_threshold:
+                purge_pending_clarifications()
                 clarify_id = uuid.uuid4().hex[:8]
                 PENDING_CLARIFICATIONS[clarify_id] = (
                     cr,

@@ -34,7 +34,10 @@ from app.bot.edit_executor import (
     touch_last_task,
 )
 from app.bot.pinned_today import refresh_pinned_morning
-from app.bot.routers._pipeline import pop_pending_clarification
+from app.bot.routers._pipeline import (
+    discard_pending_clarification,
+    get_pending_clarification,
+)
 from app.bot.services import (
     cancel_reminder,
     delete_task,
@@ -692,7 +695,7 @@ def create_router() -> Router:
         action, clarify_id = parsed
 
         try:
-            item = pop_pending_clarification(clarify_id, callback.from_user.id)
+            item = get_pending_clarification(clarify_id, callback.from_user.id)
         except PermissionError:
             await callback.answer("Нет доступа.")
             return
@@ -707,6 +710,7 @@ def create_router() -> Router:
         cr, resolved, inbox_id = item
 
         if action == "no":
+            discard_pending_clarification(clarify_id)
             await callback.answer("Отменено.")
             if isinstance(callback.message, Message):
                 msg_text = callback.message.text
@@ -736,6 +740,7 @@ def create_router() -> Router:
                 inbox_id=inbox_id,
                 default_reminder_offsets=default_offsets,
             )
+            discard_pending_clarification(clarify_id)
             await callback.answer("Создано.")
             if isinstance(callback.message, Message):
                 msg_text = callback.message.text

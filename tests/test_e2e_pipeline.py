@@ -12,6 +12,7 @@ The tests verify that the pipeline correctly:
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
@@ -22,8 +23,12 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
+from app.ai.schemas import ClassifierResult
 from app.bot.routers._pipeline import (
     PENDING_CLARIFICATIONS,
+    discard_pending_clarification,
+    get_pending_clarification,
+    purge_pending_clarifications,
     reset_pending_clarifications_for_tests,
     run_pipeline,
 )
@@ -156,6 +161,50 @@ def _cr_dict(
         "title": title,
         "reminder_offsets": None,
     }
+
+
+def test_pending_clarification_get_does_not_pop_until_discard() -> None:
+    reset_pending_clarifications_for_tests()
+    cr = _cr_dict(category="Работа", title="Созвон")
+    PENDING_CLARIFICATIONS["abcdef12"] = (
+        ClassifierResult(**cr),
+        None,
+        None,
+        300,
+        time.monotonic(),
+    )
+
+    item = get_pending_clarification("abcdef12", 300)
+
+    assert item is not None
+    assert "abcdef12" in PENDING_CLARIFICATIONS
+    discard_pending_clarification("abcdef12")
+    assert "abcdef12" not in PENDING_CLARIFICATIONS
+
+
+def test_pending_clarification_purge_removes_expired_entries() -> None:
+    reset_pending_clarifications_for_tests()
+    cr = _cr_dict(category="Работа", title="Созвон")
+    PENDING_CLARIFICATIONS["stale001"] = (
+        ClassifierResult(**cr),
+        None,
+        None,
+        300,
+        100.0,
+    )
+    PENDING_CLARIFICATIONS["fresh001"] = (
+        ClassifierResult(**cr),
+        None,
+        None,
+        300,
+        350.0,
+    )
+
+    purge_pending_clarifications(now=401.0)
+
+    assert "stale001" not in PENDING_CLARIFICATIONS
+    assert "fresh001" in PENDING_CLARIFICATIONS
+    reset_pending_clarifications_for_tests()
 
 
 class _CallTracker:
