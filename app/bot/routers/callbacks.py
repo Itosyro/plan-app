@@ -32,6 +32,7 @@ from app.bot.edit_executor import (
     touch_last_task,
 )
 from app.bot.pinned_today import refresh_pinned_morning
+from app.bot.routers._pipeline import pop_pending_clarification
 from app.bot.services import (
     delete_task,
     get_or_create_user,
@@ -39,15 +40,18 @@ from app.bot.services import (
     get_user_categories_full,
     mark_task_done,
     mark_task_undone,
+    persist_classification,
     update_task_category,
     update_task_horizon,
 )
 from app.db.base import session_scope
-from app.db.models import Category, Task, TaskEditSnapshot
+from app.db.models import Category, Task, TaskEditSnapshot, UserSettings
 from app.shared.logging import get_logger
 from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
+
+_CLARIFY_ID_HEX = frozenset("0123456789abcdef")
 
 HORIZON_OPTIONS: list[tuple[str, str]] = [
     ("today", "Сегодня"),
@@ -233,6 +237,39 @@ def parse_edit_undo_callback(data: str) -> int | None:
         return int(parts[2])
     except ValueError:
         return None
+
+
+def parse_clarify_callback(data: str) -> tuple[str, str] | None:
+    """Parse a ``clarify:<action>:<id>`` callback string.
+
+    Returns ``(action, uuid)`` on success, ``None`` on malformed input.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "clarify" or parts[1] not in {"yes", "no"}:
+        return None
+    clarify_id = parts[2]
+    if len(clarify_id) != 8 or any(ch not in _CLARIFY_ID_HEX for ch in clarify_id):
+        return None
+    return parts[1], parts[2]
+
+
+def remove_clarify_buttons(
+    kb: InlineKeyboardMarkup | None,
+    clarify_id: str,
+) -> InlineKeyboardMarkup | None:
+    """Return ``kb`` without rows belonging to one clarification prompt."""
+    if kb is None:
+        return None
+    target_yes = f"clarify:yes:{clarify_id}"
+    target_no = f"clarify:no:{clarify_id}"
+    new_rows: list[list[InlineKeyboardButton]] = []
+    for row in kb.inline_keyboard:
+        if any(btn.callback_data in {target_yes, target_no} for btn in row):
+            continue
+        new_rows.append(row)
+    if not new_rows:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=new_rows)
 
 
 def create_router() -> Router:
@@ -593,6 +630,73 @@ def create_router() -> Router:
                         exc_info=True,
                     )
 
+    # ── PR-K: needs_clarification UI ──────────────────────────────────
+
+    @router.callback_query(F.data.startswith("clarify:"))
+    async def cb_clarify(callback: CallbackQuery) -> None:
+        """Handle clarification prompt (Yes/No)."""
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_clarify_callback(callback.data)
+        if not parsed:
+            await callback.answer("Неверный формат.")
+            return
+
+        action, clarify_id = parsed
+
+        try:
+            item = pop_pending_clarification(clarify_id, callback.from_user.id)
+        except PermissionError:
+            await callback.answer("Нет доступа.")
+            return
+
+        if item is None:
+            await callback.answer("Запрос устарел или уже обработан.")
+            if isinstance(callback.message, Message):
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
+                await callback.message.edit_reply_markup(reply_markup=new_markup)
+            return
+
+        cr, resolved, inbox_id = item
+
+        if action == "no":
+            await callback.answer("Отменено.")
+            if isinstance(callback.message, Message):
+                msg_text = callback.message.text
+                safe_text = msg_text or ""
+                new_text = safe_text + f"\n\n❌ Отменено: «{cr.title}»"
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
+                await callback.message.edit_text(new_text, reply_markup=new_markup)
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(session, telegram_id=callback.from_user.id)
+            if user.id is None:
+                await callback.answer("Ошибка пользователя.")
+                return
+
+            user_settings = (
+                await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+            ).first()
+            default_offsets = user_settings.default_reminder_offsets if user_settings else None
+
+            due_at = resolved.resolved_dt if resolved else None
+            await persist_classification(
+                session,
+                user_id=user.id,
+                cr=cr,
+                due_at=due_at,
+                inbox_id=inbox_id,
+                default_reminder_offsets=default_offsets,
+            )
+            await callback.answer("Создано.")
+            if isinstance(callback.message, Message):
+                msg_text = callback.message.text
+                safe_text = msg_text or ""
+                new_text = safe_text + f"\n\n✅ Создано: «{cr.title}»"
+                new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
+                await callback.message.edit_text(new_text, reply_markup=new_markup)
+
     # ── PR-I4: undo callback ──────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("edit:undo:"))
@@ -709,7 +813,7 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
         return f"Отменил: «{title}» снова в активных."
 
     if field == "deleted_at":
-        task.deleted_at = None  # type: ignore[assignment]
+        task.deleted_at = None
         return f"Отменил удаление: «{title}» восстановлена."
 
     if field == "title":
@@ -726,15 +830,15 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
         if old is not None:
             task.due_at = datetime.fromisoformat(old)
         else:
-            task.due_at = None  # type: ignore[assignment]
+            task.due_at = None
         return f"Отменил: дедлайн «{title}» восстановлен."
 
     if field == "horizon_id":
-        task.horizon_id = int(old) if old is not None else None  # type: ignore[assignment]
+        task.horizon_id = int(old) if old is not None else None
         return f"Отменил: горизонт «{title}» восстановлен."
 
     if field == "category_id":
-        task.category_id = int(old) if old is not None else None  # type: ignore[assignment]
+        task.category_id = int(old) if old is not None else None
         return f"Отменил: категория «{title}» восстановлена."
 
     return f"Отменил изменение «{field}» для «{title}»."
