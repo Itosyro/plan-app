@@ -15,6 +15,7 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - **set_priority** — change priority (high/medium/low).
 - **set_category** — move a task to a different category.
 - **list_done** — show tasks completed today (read-only query).
+- **cancel_reminder** — cancel pending reminders for an existing task, without deleting the task.
 - **none** — unclear or not an intent directed at an existing task; fall back to create.
 
 ## Rules
@@ -32,7 +33,8 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - "это" / "эту" / "её" / "его" — anaphora to the last created/updated task. Leave task_query empty; the system will resolve from context.
 - If the phrase is simply a new task ("утром пробежка", "купить хлеб") → **create**.
 - "срочно" / "горит" / "важно" / "критично" → high; "не срочно" / "не горит" / "можно потом" → low; "обычно" / "средне" → medium.
-- "отмени напоминание" is NOT delete — return **none** (reminder management is separate).
+- "отмени напоминание про X" / "убери напоминания для X" → **cancel_reminder**. Do not delete the task.
+- Bare "отмени напоминание" without a task name may use last-task anaphora: leave task_query empty.
 
 ## Output
 
@@ -83,6 +85,9 @@ User: "это важно"
 
 User: "что я закрыл сегодня"
 → {"intent": "list_done", "confidence": 0.95}
+
+User: "отмени напоминание про созвон"
+→ {"intent": "cancel_reminder", "task_query": "созвон", "confidence": 0.95}
 
 User: "утром пробежка 5 км"
 → {"intent": "create", "confidence": 0.95}

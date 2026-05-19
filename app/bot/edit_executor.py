@@ -21,6 +21,7 @@ from sqlmodel import select
 
 from app.ai.schemas import EditIntent
 from app.bot.services import (
+    cancel_task_reminders,
     delete_task,
     find_tasks_by_query,
     get_or_create_category,
@@ -88,7 +89,10 @@ def pop_pending_edit(user_id: int) -> EditIntent | None:
 EDIT_INTENTS_I1 = frozenset({"complete", "delete", "reopen", "reorder_horizon"})
 EDIT_INTENTS_I2 = frozenset({"rename", "set_due", "set_priority", "set_category", "reorder_time"})
 EDIT_INTENTS_I3_READONLY = frozenset({"list_done"})
-EDIT_INTENTS_ALL = EDIT_INTENTS_I1 | EDIT_INTENTS_I2 | EDIT_INTENTS_I3_READONLY
+EDIT_INTENTS_I4_REMINDERS = frozenset({"cancel_reminder"})
+EDIT_INTENTS_ALL = (
+    EDIT_INTENTS_I1 | EDIT_INTENTS_I2 | EDIT_INTENTS_I3_READONLY | EDIT_INTENTS_I4_REMINDERS
+)
 
 PRIORITY_LABELS: dict[str, str] = {
     "high": "высокий",
@@ -359,6 +363,19 @@ async def _execute_reorder_time(
     return f"Перенёс «{title}» → {formatted}.", snap_id
 
 
+async def _execute_cancel_reminder(task_id: int, user_id: int) -> tuple[str, int | None]:
+    """Cancel pending reminders for a task without mutating the task itself."""
+    async with session_scope() as session:
+        task = await get_task_by_id(session, user_id, task_id)
+        if task is None:
+            return "Задача не найдена.", None
+        title = task.title
+        cancelled = await cancel_task_reminders(session, user_id, task_id)
+    if cancelled == 0:
+        return f"У «{title}» нет активных напоминаний.", None
+    return f"Отменил напоминания для «{title}»: {cancelled}.", None
+
+
 async def _dispatch_single(
     task_id: int, user_id: int, intent: EditIntent
 ) -> tuple[str, int | None]:
@@ -384,6 +401,8 @@ async def _dispatch_single(
         return await _execute_set_category(task_id, user_id, intent)
     if intent.intent == "reorder_time":
         return await _execute_reorder_time(task_id, user_id, intent)
+    if intent.intent == "cancel_reminder":
+        return await _execute_cancel_reminder(task_id, user_id)
     return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю.", None
 
 
