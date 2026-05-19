@@ -14,6 +14,9 @@ PR-J добавляет первый слой управления напоми�
 - **Inline отмена**: кнопки `rem:cancel:<id>` отменяют только pending-напоминание текущего пользователя.
 - **Голос/текст intent**: `cancel_reminder` отменяет все pending-напоминания найденной задачи, не удаляя саму задачу.
 - **Сервисы**: `list_pending_reminders`, `cancel_reminder`, `cancel_task_reminders`.
+- **Follow-up**: `/reminders` показывает только будущие pending-напоминания;
+  просроченные pending-строки остаются задачей scheduler-а, но не засоряют
+  пользовательский список upcoming reminders.
 
 ---
 

@@ -74,6 +74,21 @@ async def test_list_pending_reminders_orders_and_filters(session: AsyncSession) 
 
 
 @pytest.mark.asyncio
+async def test_list_pending_reminders_skips_overdue_pending(session: AsyncSession) -> None:
+    user_id, _task_id, _reminder_ids = await _create_task_with_reminders(
+        session,
+        telegram_id=814,
+    )
+
+    rows = await list_pending_reminders(session, user_id, now=datetime(2026, 5, 20, 10, 30))
+
+    assert len(rows) == 1
+    reminder, task = rows[0]
+    assert reminder.fire_at == datetime(2026, 5, 20, 11, 45)
+    assert task.title == "Созвон"
+
+
+@pytest.mark.asyncio
 async def test_cancel_reminder_is_user_scoped(session: AsyncSession) -> None:
     _user_id, _task_id, reminder_ids = await _create_task_with_reminders(
         session,
