@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-05-19 — feat: PR-J UX polish (multi-match copy + /reminders all + пагинация)
+
+**Контекст.** HANDOFF v20 §6 оставил три недоделанных UX-куска поверх первого слайса PR-J:
+односложный ответ после `cancel_reminder`, отсутствие способа увидеть >20 pending reminders
+и отсутствие способа взглянуть на overdue pending rows, которые не успел подобрать scheduler.
+
+**Сделано.**
+- **Голос/текст `cancel_reminder` теперь показывает локальные времена и склоняется**: «Отменил 2 напоминания для «X»: 10:00, 11:45, 20 мая.» вместо безликого «Отменил напоминания для «X»: 2.». Helpers `format_reminder_local` и `plural_ru` в `app/shared/time.py`. `cancel_task_reminders` теперь возвращает `list[Reminder]` (а не `int`), чтобы вызывающий мог достать `fire_at` для рендера.
+- **`/reminders all`** — новый аргумент: рендерит overdue + upcoming pending до `REMINDERS_ALL_CAP = 200`, overdue-строки помечены `❗ ... (просрочено)`.
+- **Пагинация для дефолтного `/reminders`** — кнопка `[➡️ Ещё]` подгружает следующую страницу `REMINDERS_PAGE_SIZE = 20` в то же сообщение через `rem:page:<offset>`.
+- **Сервисы**: `list_pending_reminders(offset, include_overdue)`, новый `count_pending_reminders` для футера «Показано N из M».
+- **Общий рендер** вынесен в `app/bot/reminder_view.py::format_reminder_list`, чтобы commands и callbacks не дублировали логику и не плодили циклический импорт.
+
+**Верификация.** `uv run ruff format/check .`, `uv run mypy`, `TZ=UTC uv run pytest -q` — все зелёные. **438 passed, 2 skipped** (было 426; +12 новых тестов в `tests/test_reminder_management.py`, включая overdue-маркер, footer, pluralization, paging offset, валидацию `rem:page:<n>` callback'а и копи `_execute_cancel_reminder`).
+
+**Не сделано / отложено.**
+- `TaskEvent` для cancel-reminders — осознанный долг из v20 §7, отдельный PR.
+- Подмеченный пре-существующий грабельник: на Windows без `TZ=UTC` падают API/soft-delete тесты, потому что `utcnow_naive().timestamp()` на naive datetime трактуется как local. На Render/CI с TZ=UTC маскируется. Заведу отдельной мини-задачей.
+
+---
+
 ## 2026-05-19 — feat: reminder management (PR-J)
 
 PR-J добавляет первый слой управления напоминаниями:

@@ -62,6 +62,9 @@ from .tasks import (
     cancel_task_reminders as cancel_task_reminders,
 )
 from .tasks import (
+    count_pending_reminders as count_pending_reminders,
+)
+from .tasks import (
     delete_task as delete_task,
 )
 from .tasks import (
