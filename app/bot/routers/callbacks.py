@@ -7,6 +7,8 @@ Callback data format: ``task:<action>:<task_id>[:<extra>]``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from aiogram import F, Router
 from aiogram.types import (
     CallbackQuery,
@@ -34,6 +36,7 @@ from app.bot.edit_executor import (
 from app.bot.pinned_today import refresh_pinned_morning
 from app.bot.routers._pipeline import pop_pending_clarification
 from app.bot.services import (
+    cancel_reminder,
     delete_task,
     get_or_create_user,
     get_task_by_id,
@@ -267,6 +270,50 @@ def remove_clarify_buttons(
         if any(btn.callback_data in {target_yes, target_no} for btn in row):
             continue
         new_rows.append(row)
+    if not new_rows:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=new_rows)
+
+
+def parse_reminder_cancel_callback(data: str) -> int | None:
+    """Parse a ``rem:cancel:<reminder_id>`` callback string."""
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "rem" or parts[1] != "cancel":
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
+
+
+def reminder_list_keyboard(indices: Sequence[tuple[int, int | None]]) -> InlineKeyboardMarkup:
+    """Build compact cancel buttons for the /reminders list."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, reminder_id in indices:
+        if reminder_id is None:
+            continue
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Отменить #{index}",
+                    callback_data=f"rem:cancel:{reminder_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def remove_reminder_button(
+    kb: InlineKeyboardMarkup | None,
+    reminder_id: int,
+) -> InlineKeyboardMarkup | None:
+    """Return ``kb`` without the cancel button for one reminder."""
+    if kb is None:
+        return None
+    target = f"rem:cancel:{reminder_id}"
+    new_rows = [
+        row for row in kb.inline_keyboard if all(btn.callback_data != target for btn in row)
+    ]
     if not new_rows:
         return None
     return InlineKeyboardMarkup(inline_keyboard=new_rows)
@@ -696,6 +743,32 @@ def create_router() -> Router:
                 new_text = safe_text + f"\n\n✅ Создано: «{cr.title}»"
                 new_markup = remove_clarify_buttons(callback.message.reply_markup, clarify_id)
                 await callback.message.edit_text(new_text, reply_markup=new_markup)
+
+    @router.callback_query(F.data.startswith("rem:cancel:"))
+    async def cb_reminder_cancel(callback: CallbackQuery) -> None:
+        """Cancel one pending reminder from the /reminders list."""
+        if callback.from_user is None or callback.data is None:
+            return
+        reminder_id = parse_reminder_cancel_callback(callback.data)
+        if reminder_id is None:
+            await callback.answer("Неверный формат.")
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(session, telegram_id=callback.from_user.id)
+            if user.id is None:
+                await callback.answer("Ошибка пользователя.")
+                return
+            reminder = await cancel_reminder(session, user.id, reminder_id)
+
+        if reminder is None:
+            await callback.answer("Напоминание уже отменено или не найдено.")
+            return
+        await callback.answer("Напоминание отменено.")
+        if isinstance(callback.message, Message):
+            await callback.message.edit_reply_markup(
+                reply_markup=remove_reminder_button(callback.message.reply_markup, reminder_id)
+            )
 
     # ── PR-I4: undo callback ──────────────────────────────────────────
 

@@ -242,6 +242,76 @@ async def schedule_reminders(
     return created
 
 
+async def list_pending_reminders(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 20,
+) -> list[tuple[Reminder, Task]]:
+    """Return upcoming pending reminders for active tasks."""
+    result = await session.exec(
+        select(Reminder, Task)
+        .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
+        .where(
+            Reminder.user_id == user_id,
+            Reminder.status == "pending",
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+        .order_by(Reminder.fire_at)  # type: ignore[arg-type]
+        .limit(limit),
+    )
+    return list(result.all())
+
+
+async def cancel_reminder(
+    session: AsyncSession,
+    user_id: int,
+    reminder_id: int,
+) -> Reminder | None:
+    """Cancel one pending reminder owned by the user."""
+    result = await session.exec(
+        select(Reminder).where(
+            Reminder.id == reminder_id,
+            Reminder.user_id == user_id,
+            Reminder.status == "pending",
+        ),
+    )
+    reminder = result.first()
+    if reminder is None:
+        return None
+    reminder.status = "cancelled"
+    reminder.last_error = None
+    session.add(reminder)
+    await session.flush()
+    return reminder
+
+
+async def cancel_task_reminders(
+    session: AsyncSession,
+    user_id: int,
+    task_id: int,
+) -> int:
+    """Cancel all pending reminders for one active task."""
+    result = await session.exec(
+        select(Reminder)
+        .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
+        .where(
+            Reminder.user_id == user_id,
+            Reminder.task_id == task_id,
+            Reminder.status == "pending",
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        ),
+    )
+    reminders = list(result.all())
+    for reminder in reminders:
+        reminder.status = "cancelled"
+        reminder.last_error = None
+        session.add(reminder)
+    if reminders:
+        await session.flush()
+    return len(reminders)
+
+
 # ── Classification persistence ────────────────────────────────────────
 
 

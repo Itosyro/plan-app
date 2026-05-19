@@ -143,6 +143,7 @@ class EditIntent(BaseModel):
         "set_priority",
         "set_category",
         "list_done",
+        "cancel_reminder",
         "none",
     ] = Field(description="Detected user intent")
     task_query: str | None = Field(

@@ -6,6 +6,17 @@
 
 ---
 
+## 2026-05-19 — feat: reminder management (PR-J)
+
+PR-J добавляет первый слой управления напоминаниями:
+
+- **/reminders**: показывает ближайшие pending-напоминания с локальным временем пользователя.
+- **Inline отмена**: кнопки `rem:cancel:<id>` отменяют только pending-напоминание текущего пользователя.
+- **Голос/текст intent**: `cancel_reminder` отменяет все pending-напоминания найденной задачи, не удаляя саму задачу.
+- **Сервисы**: `list_pending_reminders`, `cancel_reminder`, `cancel_task_reminders`.
+
+---
+
 ## 2026-05-18 — feat: needs clarification UI (PR-K)
 
 PR-K внедряет промежуточное уточнение для неуверенных классификаций:

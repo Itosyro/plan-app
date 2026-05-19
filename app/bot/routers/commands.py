@@ -11,15 +11,16 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.bot.courier_templates import NOT_ONBOARDED
-from app.bot.routers.callbacks import horizon_list_keyboard
+from app.bot.routers.callbacks import horizon_list_keyboard, reminder_list_keyboard
 from app.bot.services import (
     get_all_notes,
     get_categories_with_counts,
     get_or_create_user,
     get_tasks_by_horizon,
+    list_pending_reminders,
 )
 from app.db.base import session_scope
-from app.db.models import Note, Task
+from app.db.models import Note, Reminder, Task
 from app.shared.logging import get_logger
 from app.shared.time import format_due_local
 
@@ -107,6 +108,19 @@ def _format_note_list(notes: list[Note]) -> str:
         lines.append(f"{i}. {note.title}")
 
     lines.append(f"\nВсего: {len(notes)}")
+    return "\n".join(lines)
+
+
+def _format_reminder_list(rows: list[tuple[Reminder, Task]], user_tz: str) -> str:
+    """Format upcoming reminders as plain text."""
+    if not rows:
+        return "⏰ Напоминания\n\nАктивных напоминаний нет."
+
+    lines = ["⏰ Напоминания\n"]
+    for i, (reminder, task) in enumerate(rows, 1):
+        fire_at = format_due_local(reminder.fire_at, user_tz) or "без времени"
+        lines.append(f"{i}. {fire_at} — {task.title}")
+    lines.append(f"\nВсего: {len(rows)}")
     return "\n".join(lines)
 
 
@@ -226,5 +240,35 @@ def create_router() -> Router:
         for cat, count in pairs:
             lines.append(f"• {cat.name} — {count} задач(и)")
         await message.answer("\n".join(lines))
+
+    @router.message(Command("reminders"))
+    async def cmd_reminders(message: Message) -> None:
+        """Show upcoming reminders with cancel buttons."""
+        if message.from_user is None:
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=message.from_user.id,
+            )
+            if user.onboarded_at is None:
+                await message.answer(NOT_ONBOARDED)
+                return
+            if user.id is None:
+                return
+            rows = await list_pending_reminders(session, user.id)
+            user_tz = user.tz
+
+        text = _format_reminder_list(rows, user_tz)
+        ids = [
+            (i, reminder.id)
+            for i, (reminder, _task) in enumerate(rows, 1)
+            if reminder.id is not None
+        ]
+        if ids:
+            await message.answer(text, reply_markup=reminder_list_keyboard(ids))
+        else:
+            await message.answer(text)
 
     return router

@@ -56,6 +56,12 @@ from .tasks import (
     _to_naive_utc as _to_naive_utc,
 )
 from .tasks import (
+    cancel_reminder as cancel_reminder,
+)
+from .tasks import (
+    cancel_task_reminders as cancel_task_reminders,
+)
+from .tasks import (
     delete_task as delete_task,
 )
 from .tasks import (
@@ -87,6 +93,9 @@ from .tasks import (
 )
 from .tasks import (
     get_user_categories_full as get_user_categories_full,
+)
+from .tasks import (
+    list_pending_reminders as list_pending_reminders,
 )
 from .tasks import (
     mark_task_done as mark_task_done,

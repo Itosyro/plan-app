@@ -13,8 +13,11 @@ from app.bot.routers.callbacks import (
     category_picker_keyboard,
     horizon_picker_keyboard,
     parse_clarify_callback,
+    parse_reminder_cancel_callback,
     parse_task_callback,
+    reminder_list_keyboard,
     remove_clarify_buttons,
+    remove_reminder_button,
     task_action_keyboard,
 )
 from app.bot.services import (
@@ -95,6 +98,32 @@ def test_remove_clarify_buttons_removes_only_exact_prompt() -> None:
     assert "clarify:no:abcdef12" not in data_values
     assert "clarify:yes:12345678" in data_values
     assert "summary:toggle:task:42" in data_values
+
+
+def test_reminder_list_keyboard_structure() -> None:
+    kb = reminder_list_keyboard([(1, 10), (2, 11)])
+    assert len(kb.inline_keyboard) == 2
+    assert kb.inline_keyboard[0][0].text == "Отменить #1"
+    assert kb.inline_keyboard[0][0].callback_data == "rem:cancel:10"
+    assert kb.inline_keyboard[1][0].callback_data == "rem:cancel:11"
+
+
+def test_parse_reminder_cancel_callback() -> None:
+    assert parse_reminder_cancel_callback("rem:cancel:42") == 42
+    assert parse_reminder_cancel_callback("rem:cancel:abc") is None
+    assert parse_reminder_cancel_callback("rem:done:42") is None
+    assert parse_reminder_cancel_callback("task:cancel:42") is None
+
+
+def test_remove_reminder_button_removes_only_exact_button() -> None:
+    kb = reminder_list_keyboard([(1, 10), (2, 11)])
+
+    cleaned = remove_reminder_button(kb, 10)
+
+    assert cleaned is not None
+    data_values = [btn.callback_data for row in cleaned.inline_keyboard for btn in row]
+    assert "rem:cancel:10" not in data_values
+    assert "rem:cancel:11" in data_values
 
 
 # ── Service-level tests for callback operations ──────────────────────
