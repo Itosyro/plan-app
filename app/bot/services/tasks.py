@@ -247,23 +247,65 @@ async def list_pending_reminders(
     user_id: int,
     *,
     limit: int = 20,
+    offset: int = 0,
+    include_overdue: bool = False,
     now: datetime | None = None,
 ) -> list[tuple[Reminder, Task]]:
-    """Return upcoming pending reminders for active tasks."""
-    cutoff = to_naive_utc(now) if now is not None else utcnow_naive()
-    result = await session.exec(
+    """Return pending reminders for active tasks.
+
+    ``include_overdue=False`` (default) keeps only ``fire_at >= now`` —
+    that's the "upcoming" view used by ``/reminders``. Setting it to
+    ``True`` returns overdue pending rows too, used by ``/reminders all``
+    so the user can still see reminders the scheduler hasn't fired yet
+    (e.g. after a long Render cold-start).
+    """
+    stmt = (
         select(Reminder, Task)
         .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
         .where(
             Reminder.user_id == user_id,
             Reminder.status == "pending",
-            Reminder.fire_at >= cutoff,
             Task.deleted_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(Reminder.fire_at)  # type: ignore[arg-type]
-        .limit(limit),
+        .offset(offset)
+        .limit(limit)
     )
+    if not include_overdue:
+        cutoff = to_naive_utc(now) if now is not None else utcnow_naive()
+        stmt = stmt.where(Reminder.fire_at >= cutoff)
+    result = await session.exec(stmt)
     return list(result.all())
+
+
+async def count_pending_reminders(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    include_overdue: bool = False,
+    now: datetime | None = None,
+) -> int:
+    """Count pending reminders for active tasks, mirroring filters of
+    :func:`list_pending_reminders`.
+
+    Used by the ``/reminders`` UI to decide whether to render the "next
+    page" button and the "Показано N из M" footer without re-querying
+    every page.
+    """
+    stmt = (
+        select(func.count(Reminder.id))  # type: ignore[arg-type]
+        .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
+        .where(
+            Reminder.user_id == user_id,
+            Reminder.status == "pending",
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+    )
+    if not include_overdue:
+        cutoff = to_naive_utc(now) if now is not None else utcnow_naive()
+        stmt = stmt.where(Reminder.fire_at >= cutoff)
+    result = await session.exec(stmt)
+    return int(result.one() or 0)
 
 
 async def cancel_reminder(
@@ -293,8 +335,14 @@ async def cancel_task_reminders(
     session: AsyncSession,
     user_id: int,
     task_id: int,
-) -> int:
-    """Cancel all pending reminders for one active task."""
+) -> list[Reminder]:
+    """Cancel all pending reminders for one active task.
+
+    Returns the list of cancelled ``Reminder`` rows (with their original
+    ``fire_at`` preserved) so callers can show *when* the cancelled
+    reminders were scheduled, not just how many. Caller treats an empty
+    list as "nothing to cancel".
+    """
     result = await session.exec(
         select(Reminder)
         .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
@@ -303,7 +351,8 @@ async def cancel_task_reminders(
             Reminder.task_id == task_id,
             Reminder.status == "pending",
             Task.deleted_at.is_(None),  # type: ignore[union-attr]
-        ),
+        )
+        .order_by(Reminder.fire_at),  # type: ignore[arg-type]
     )
     reminders = list(result.all())
     for reminder in reminders:
@@ -312,7 +361,7 @@ async def cancel_task_reminders(
         session.add(reminder)
     if reminders:
         await session.flush()
-    return len(reminders)
+    return reminders
 
 
 # ── Classification persistence ────────────────────────────────────────

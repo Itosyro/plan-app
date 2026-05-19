@@ -35,8 +35,9 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Task, TaskEditSnapshot, TaskEvent
+from app.db.models import Task, TaskEditSnapshot, TaskEvent, User
 from app.shared.logging import get_logger
+from app.shared.time import format_reminder_local, plural_ru
 
 logger = get_logger(__name__)
 
@@ -364,16 +365,26 @@ async def _execute_reorder_time(
 
 
 async def _execute_cancel_reminder(task_id: int, user_id: int) -> tuple[str, int | None]:
-    """Cancel pending reminders for a task without mutating the task itself."""
+    """Cancel pending reminders for a task without mutating the task itself.
+
+    Reply lists *when* each cancelled reminder was scheduled in the
+    user's local tz so they can sanity-check the action — a bare count
+    ("отменил 3") doesn't tell them which 3.
+    """
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
         if task is None:
             return "Задача не найдена.", None
         title = task.title
+        user_row = (await session.exec(select(User).where(User.id == user_id))).first()
+        user_tz = user_row.tz if user_row is not None else "UTC"
         cancelled = await cancel_task_reminders(session, user_id, task_id)
-    if cancelled == 0:
+    if not cancelled:
         return f"У «{title}» нет активных напоминаний.", None
-    return f"Отменил напоминания для «{title}»: {cancelled}.", None
+    times = ", ".join(format_reminder_local(r.fire_at, user_tz) for r in cancelled)
+    n = len(cancelled)
+    noun = plural_ru(n, ("напоминание", "напоминания", "напоминаний"))
+    return f"Отменил {n} {noun} для «{title}»: {times}.", None
 
 
 async def _dispatch_single(

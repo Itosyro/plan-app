@@ -65,3 +65,57 @@ def format_due_local(due_at: datetime, user_tz: str) -> str | None:
     if local.hour == 0 and local.minute == 0:
         return None
     return f"{local:%H:%M}"
+
+
+_RU_MONTHS_GEN: tuple[str, ...] = (
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+
+
+def format_reminder_local(fire_at: datetime, user_tz: str) -> str:
+    """Render a reminder ``fire_at`` as ``HH:MM, DD <месяц>`` in *user_tz*.
+
+    Unlike :func:`format_due_local`, this never returns ``None`` — for a
+    reminder, midnight is a legitimate fire time and must be shown. The
+    month is the Russian genitive form (``"мая"``, ``"августа"``) so the
+    string reads naturally in messages like ``«отменил напоминание на
+    14:00, 18 мая»``.
+    """
+    aware_utc = fire_at.replace(tzinfo=UTC) if fire_at.tzinfo is None else fire_at
+    zi: ZoneInfo | timezone
+    try:
+        zi = ZoneInfo(user_tz or "UTC")
+    except ZoneInfoNotFoundError:
+        zi = UTC
+    local = aware_utc.astimezone(zi)
+    month = _RU_MONTHS_GEN[local.month - 1]
+    return f"{local:%H:%M}, {local.day} {month}"
+
+
+def plural_ru(n: int, forms: tuple[str, str, str]) -> str:
+    """Pick the Russian plural form of *forms* matching *n*.
+
+    *forms* is ``(one, few, many)`` — e.g. ``("напоминание",
+    "напоминания", "напоминаний")``. Returns just the noun, without the
+    number; callers compose ``f"{n} {plural_ru(n, ...)}"`` themselves.
+    """
+    mod100 = abs(n) % 100
+    mod10 = abs(n) % 10
+    if 11 <= mod100 <= 14:
+        return forms[2]
+    if mod10 == 1:
+        return forms[0]
+    if 2 <= mod10 <= 4:
+        return forms[1]
+    return forms[2]

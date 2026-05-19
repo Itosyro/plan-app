@@ -286,8 +286,40 @@ def parse_reminder_cancel_callback(data: str) -> int | None:
         return None
 
 
-def reminder_list_keyboard(indices: Sequence[tuple[int, int | None]]) -> InlineKeyboardMarkup:
-    """Build compact cancel buttons for the /reminders list."""
+# Hard ceiling on the encoded offset so a tampered callback can't make
+# us paginate through a few million rows. Matches REMINDERS_ALL_CAP.
+_REMINDERS_OFFSET_MAX = 200
+
+
+def parse_reminder_page_callback(data: str) -> int | None:
+    """Parse a ``rem:page:<offset>`` callback string.
+
+    Returns the next-page offset, or ``None`` for malformed input or an
+    offset outside the accepted range. Digits-only to match the strict
+    parsing applied to other reminder callbacks.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "rem" or parts[1] != "page":
+        return None
+    raw = parts[2]
+    if not raw.isdigit() or len(raw) > 4:
+        return None
+    offset = int(raw)
+    if offset <= 0 or offset > _REMINDERS_OFFSET_MAX:
+        return None
+    return offset
+
+
+def reminder_list_keyboard(
+    indices: Sequence[tuple[int, int | None]],
+    *,
+    next_offset: int | None = None,
+) -> InlineKeyboardMarkup:
+    """Build compact cancel buttons for the /reminders list.
+
+    When *next_offset* is set, a final ``[➡️ Ещё]`` row is appended
+    that pages forward via the ``rem:page:<offset>`` callback.
+    """
     rows: list[list[InlineKeyboardButton]] = []
     for index, reminder_id in indices:
         if reminder_id is None:
@@ -297,6 +329,15 @@ def reminder_list_keyboard(indices: Sequence[tuple[int, int | None]]) -> InlineK
                 InlineKeyboardButton(
                     text=f"Отменить #{index}",
                     callback_data=f"rem:cancel:{reminder_id}",
+                )
+            ]
+        )
+    if next_offset is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="➡️ Ещё",
+                    callback_data=f"rem:page:{next_offset}",
                 )
             ]
         )
@@ -769,6 +810,57 @@ def create_router() -> Router:
             await callback.message.edit_reply_markup(
                 reply_markup=remove_reminder_button(callback.message.reply_markup, reminder_id)
             )
+
+    @router.callback_query(F.data.startswith("rem:page:"))
+    async def cb_reminder_page(callback: CallbackQuery) -> None:
+        """Render the next page of the /reminders list in place."""
+        # Local imports avoid a circular import — commands imports
+        # from this module for the keyboard builders.
+        from app.bot.reminder_view import format_reminder_list
+        from app.bot.routers.commands import REMINDERS_PAGE_SIZE
+        from app.bot.services import count_pending_reminders, list_pending_reminders
+
+        if callback.from_user is None or callback.data is None:
+            return
+        offset = parse_reminder_page_callback(callback.data)
+        if offset is None:
+            await callback.answer("Неверный формат.")
+            return
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(session, telegram_id=callback.from_user.id)
+            if user.id is None:
+                await callback.answer("Ошибка пользователя.")
+                return
+            rows = await list_pending_reminders(
+                session,
+                user.id,
+                limit=REMINDERS_PAGE_SIZE,
+                offset=offset,
+            )
+            total = await count_pending_reminders(session, user.id)
+            user_tz = user.tz
+
+        text = format_reminder_list(
+            rows,
+            user_tz,
+            total_count=total,
+            page_offset=offset,
+        )
+        ids = [
+            (i, reminder.id)
+            for i, (reminder, _task) in enumerate(rows, offset + 1)
+            if reminder.id is not None
+        ]
+        next_offset = offset + REMINDERS_PAGE_SIZE if total > offset + REMINDERS_PAGE_SIZE else None
+        kb = (
+            reminder_list_keyboard(ids, next_offset=next_offset)
+            if (ids or next_offset is not None)
+            else None
+        )
+        await callback.answer()
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(text, reply_markup=kb)
 
     # ── PR-I4: undo callback ──────────────────────────────────────────
 

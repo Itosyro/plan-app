@@ -7,12 +7,14 @@ notes, and category summaries.  Inline-button actions come in Phase 3b.
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.reminder_view import format_reminder_list
 from app.bot.routers.callbacks import horizon_list_keyboard, reminder_list_keyboard
 from app.bot.services import (
+    count_pending_reminders,
     get_all_notes,
     get_categories_with_counts,
     get_or_create_user,
@@ -20,9 +22,18 @@ from app.bot.services import (
     list_pending_reminders,
 )
 from app.db.base import session_scope
-from app.db.models import Note, Reminder, Task
+from app.db.models import Note, Task
 from app.shared.logging import get_logger
 from app.shared.time import format_due_local
+
+# /reminders renders one page at a time. The button below the list
+# loads the next page in-place via the rem:page:<offset> callback.
+REMINDERS_PAGE_SIZE = 20
+
+# /reminders all bounds the query so a runaway pending table can't
+# blow past Telegram's message size limits. Anything beyond the cap
+# is reported via the "Показано N из M" footer.
+REMINDERS_ALL_CAP = 200
 
 # Cap the number of tasks shown per /today-like command. With four
 # action buttons per row, 25 tasks fills 100 inline-keyboard buttons,
@@ -108,19 +119,6 @@ def _format_note_list(notes: list[Note]) -> str:
         lines.append(f"{i}. {note.title}")
 
     lines.append(f"\nВсего: {len(notes)}")
-    return "\n".join(lines)
-
-
-def _format_reminder_list(rows: list[tuple[Reminder, Task]], user_tz: str) -> str:
-    """Format upcoming reminders as plain text."""
-    if not rows:
-        return "⏰ Напоминания\n\nАктивных напоминаний нет."
-
-    lines = ["⏰ Напоминания\n"]
-    for i, (reminder, task) in enumerate(rows, 1):
-        fire_at = format_due_local(reminder.fire_at, user_tz) or "без времени"
-        lines.append(f"{i}. {fire_at} — {task.title}")
-    lines.append(f"\nВсего: {len(rows)}")
     return "\n".join(lines)
 
 
@@ -242,10 +240,18 @@ def create_router() -> Router:
         await message.answer("\n".join(lines))
 
     @router.message(Command("reminders"))
-    async def cmd_reminders(message: Message) -> None:
-        """Show upcoming reminders with cancel buttons."""
+    async def cmd_reminders(message: Message, command: CommandObject) -> None:
+        """Show pending reminders with cancel buttons.
+
+        Default form (``/reminders``) shows the first page of upcoming
+        reminders, with a ``[➡️ Ещё]`` button when more pages exist.
+        ``/reminders all`` drops the cutoff (so overdue rows show too)
+        and renders one capped page.
+        """
         if message.from_user is None:
             return
+
+        show_all = (command.args or "").strip().lower() == "all"
 
         async with session_scope() as session:
             user, _ = await get_or_create_user(
@@ -257,17 +263,42 @@ def create_router() -> Router:
                 return
             if user.id is None:
                 return
-            rows = await list_pending_reminders(session, user.id)
             user_tz = user.tz
+            if show_all:
+                rows = await list_pending_reminders(
+                    session,
+                    user.id,
+                    limit=REMINDERS_ALL_CAP,
+                    include_overdue=True,
+                )
+                total = await count_pending_reminders(
+                    session,
+                    user.id,
+                    include_overdue=True,
+                )
+            else:
+                rows = await list_pending_reminders(
+                    session,
+                    user.id,
+                    limit=REMINDERS_PAGE_SIZE,
+                )
+                total = await count_pending_reminders(session, user.id)
 
-        text = _format_reminder_list(rows, user_tz)
+        text = format_reminder_list(rows, user_tz, total_count=total)
         ids = [
             (i, reminder.id)
             for i, (reminder, _task) in enumerate(rows, 1)
             if reminder.id is not None
         ]
-        if ids:
-            await message.answer(text, reply_markup=reminder_list_keyboard(ids))
+        # Next-page button only for the default (paginated) view.
+        next_offset = (
+            REMINDERS_PAGE_SIZE if (not show_all and total > REMINDERS_PAGE_SIZE) else None
+        )
+        if ids or next_offset is not None:
+            await message.answer(
+                text,
+                reply_markup=reminder_list_keyboard(ids, next_offset=next_offset),
+            )
         else:
             await message.answer(text)
 
