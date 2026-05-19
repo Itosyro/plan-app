@@ -247,14 +247,17 @@ async def list_pending_reminders(
     user_id: int,
     *,
     limit: int = 20,
+    now: datetime | None = None,
 ) -> list[tuple[Reminder, Task]]:
     """Return upcoming pending reminders for active tasks."""
+    cutoff = to_naive_utc(now) if now is not None else utcnow_naive()
     result = await session.exec(
         select(Reminder, Task)
         .join(Task, Task.id == Reminder.task_id)  # type: ignore[arg-type]
         .where(
             Reminder.user_id == user_id,
             Reminder.status == "pending",
+            Reminder.fire_at >= cutoff,
             Task.deleted_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(Reminder.fire_at)  # type: ignore[arg-type]
