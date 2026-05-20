@@ -2,49 +2,70 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-10, после PR #78 + #79):**
-> Phase 0..7c — **done и в проде**. Работает: голосовое/текстовое
-> сообщение → задачи + заметки + напоминания, утренний/вечерний
-> дайджест (с pinned live-update), команды `/today /week /...`,
-> callback-кнопки, /settings, **Mini-App** на `/app/` в стиле
-> Todoist (lucide-icons + capsule bottom nav + drag-n-drop +
-> per-horizon counts + CloudStorage prefs **+ настоящая Settings
-> страница** с PATCH /api/me и picker'ом часовых поясов),
-> **построчная** (streaming) выдача ответов бота, **emoji
-> reactions** как ack/result-индикаторы, **quote replies**
-> (`reply_parameters` + `quote`), **онбординг через inline-
-> клавиатуру** (12 популярных CIS-часовых поясов + «Указать другой»).
-> **323 теста**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
+> **Status (на 2026-05-19, после PR #104):**
+> Phase 0..7c + Voice/Text Edit (PR-I серия) + Reminder Management
+> (PR-J серия) + Needs-Clarification UI (PR-K) — **done и в проде**.
+> Работает: голосовое/текстовое сообщение → задачи + заметки +
+> напоминания, утренний/вечерний дайджест (с pinned live-update),
+> команды `/today /week /reminders ...`, callback-кнопки, /settings,
+> **Mini-App** на `/app/` в стиле Todoist (lucide-icons + capsule
+> bottom nav + drag-n-drop + per-horizon counts + CloudStorage prefs
+> + Settings page с PATCH /api/me + Trash / soft-delete + Notes tab),
+> **построчная** (streaming) выдача ответов бота, **emoji reactions**,
+> **quote replies**, **онбординг через inline-клавиатуру** (12 CIS
+> часовых поясов).
+>
+> **Voice/Text Edit Pipeline (PR-I серия):** голосом или текстом
+> можно сказать «отмени звонок», «перенеси отчёт на пятницу»,
+> «переименуй задачу X в Y», «приоритет высокий» — `edit_executor`
+> через intent-detection дёргает соответствующий сервис. PR-I3 даёт
+> анафоры (`LAST_TASK`) + multi-intent + disambiguation для multi-
+> match. PR-I4 — undo через `TaskEditSnapshot` (inline `[Отменить]`,
+> TTL 5 мин).
+>
+> **Needs-Clarification UI (PR-K):** при `confidence < 0.7`
+> classifier-результат не персистится сразу — юзер видит inline
+> `[Да, создать] / [Нет, отмена]`, TTL 5 мин в памяти.
+>
+> **Reminder Management (PR-J):** `/reminders` + `/reminders all`
+> + кнопка `[➡️ Ещё]` пагинация + голосовой `cancel_reminder` с
+> локальными временами и склонением.
+>
+> **438 тестов**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
 >
 > Все critical (C-1..C-6) и important (I-1..I-8) findings из
-> `docs/REVIEW-2026-05-09-v2.md` — закрыты. Плюс закрыты три
-> reminder-бага (см. PR #79 в PROGRESS.md): `в 12` без минут теперь
-> парсится, `is_reminder` пробрасывается в pipeline, `offset=0`
-> валиден.
+> `docs/REVIEW-2026-05-09-v2.md` — закрыты.
 >
 > **Прод-операция:**
-> - Alembic migrations 0001..0008 накатаны на Neon.
+> - Alembic migrations 0001..0011 накатаны на Neon (последняя —
+>   `task_edit_snapshots` под PR-I4 undo).
 > - Render `startCommand` авто-применяет `alembic upgrade head` на
 >   каждом деплое.
 > - Render env: `GROQ_API_KEYS` поддерживает comma-separated список
 >   из 1+ ключей. Для ротации на 3 ключа нужно вручную обновить
 >   на Render (юзер должен сделать).
 >
-> Что осталось:
-> - **Phase 8** (voice/text-команды на удаление/перенос/изменение
->   задач) — **next priority**, юзер просил. Нужен action-classifier
->   + context-tracker + service-binding.
-> - **Slash-команды** (`/add`, `/done`, `/move`, `/del`) — короткий
->   PR на ~150 LOC.
-> - **Excel export/import** + table-classifier — отдельная фаза.
-> - **Phase 7d** (Task detail + inline edit modal) — после 7c.
-> - **Phase 5.5** (FullCalendar) — есть полу-готовая ветка
+> **Что осталось (см. секцию «Next Up» внизу для приоритетов):**
+> - **Phase 7d** (Task detail + inline edit modal в Mini-App) — TODO.
+> - **Phase 5.5** (FullCalendar) — полу-готовая ветка
 >   `devin/*-phase5-5-calendar`.
-> - Phase 7 polish (наблюдаемость + эвалы) — **частично**
->   (structlog ✓, mypy strict ✓; golden-evals/DSPy/backup/Sentry ✗).
+> - **PR-H Critic refinement** — multi-stage critic, golden-set,
+>   eval-метрика.
+> - **PR-F OpenRouter fallback** — нужен OPENROUTER_API_KEY от юзера.
+> - **LLM golden evals** — пересекается с PR-H.
+> - **Voice Inbox card UX** (новая идея) — карточка распознавания с
+>   `[Подтвердить / Исправить / Разбить]`, развивает PR-K
+>   clarification flow.
+> - **`TaskEvent` для cancel-reminders** — отложенный долг из PR-J.
+> - **Windows TZ-bug fix** — `utcnow_naive().timestamp()` на naive
+>   datetime ломает 40 API-тестов на Windows (на Linux/TZ=UTC чисто).
+>   Mini-PR ~30 LOC.
+> - **Excel export/import** + table-classifier — отдельная фаза.
+> - **Phase 8 (Graph view, Obsidian-style)** — future.
+> - Phase 7 polish (наблюдаемость + эвалы) — частично (structlog ✓,
+>   mypy strict ✓; DSPy / backup / Sentry / расширенный README ✗).
 > - **Brand design / design tokens** — ждём go-ahead от юзера, пока
 >   белая палитра.
-> - Minor M-1..M-9 из v2-ревью — открыты.
 
 ---
 
@@ -318,16 +339,14 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
   CSS-переменные.
 - Bundle: 193 → 202 KB raw / 62 → 65.6 KB gzip (+~4 KB gzip).
 
-### Phase 7c — Settings page в Mini-App ❌ TODO (next session)
+### Phase 7c — Settings page в Mini-App ✅ DONE (PR #78)
 
-- Заменить `ComingSoon` placeholder на реальный экран настроек.
-- Секции по референсам: «✦ Основные», «🗒 Поведение», «⚪ Лимиты».
-- Toggle-rows с leading-icon (`Bell` / `Sun` / `MessageSquare`/...).
-- Связать с существующим `/api/me` + новым `PATCH /api/settings`
-  (нужно добавить эндпоинт; bot-аналог `/settings` уже есть).
-- Поля: tz (с тем же inline-keyboard-вызовом из бота? или
-  Mini-App-native picker), morning/evening digest at, response
-  style, courier template style, week_due_semantic, critic_mode.
+- `webapp/src/components/SettingsPage.tsx` заменяет `ComingSoon`.
+- Секции «✦ Основные», «🗒 Поведение», «⚪ Лимиты» с toggle-rows.
+- `PATCH /api/me` — обновление display_name, tz, digest times,
+  courier style, week_due_semantic, critic_mode.
+- TZ picker — native Mini-App picker (BottomSheetSelect) с списком
+  IANA-зон.
 
 ### Phase 7d — Task detail + inline edit ❌ TODO
 
@@ -368,7 +387,56 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
 
 ---
 
-## Phase 8 — Graph view (Obsidian-style) ❌ FUTURE
+## Phase 8 — Voice/Text Edit Pipeline ✅ DONE (PR-I серия + PR-J + PR-K)
+
+**Цель:** дать юзеру управлять задачами голосом или текстом без
+заходов в Mini-App — «отмени звонок», «перенеси отчёт на пятницу»,
+«готово молоко».
+
+**Реализовано:**
+
+### Phase 8a (PR-I1) — complete / delete / reopen
+- `app/ai/intent.py::detect_intent()` — отдельный AI-шаг до
+  classifier'а, ловит edit-интенты.
+- `app/bot/edit_executor.py::execute_edit()` — диспатч на сервис.
+- Multi-match disambiguation через inline-клавиатуру.
+
+### Phase 8b (PR-I2) — rename / set_due / set_priority / set_category / reorder_time
+- Расширенная схема `EditIntent` с полями `new_title`, `new_due`,
+  `new_priority`, `new_category`, etc.
+
+### Phase 8c (PR-I3) — context + multi-intent
+- `LAST_TASK` анафоры (TTL 60с) — «удали её» применяется к
+  последней упомянутой задаче.
+- Multi-intent: `split_message` → каждый unit отдельно через
+  `detect_intent` → edit-интенты сразу, create-интенты в обычный
+  classify-pipeline.
+- `list_done` read-only intent.
+
+### Phase 8d (PR-I4) — undo
+- `TaskEditSnapshot` таблица (миграция 0011) + inline `[Отменить]`
+  кнопка с TTL 5 мин. Восстанавливает `old_value` любого поля.
+
+### Phase 8e (PR-K) — needs_clarification UI
+- При `confidence < 0.7` — не персистим сразу. Inline
+  `[Да, создать] / [Нет, отмена]` с TTL 5 мин (in-memory).
+
+### Phase 8f (PR-J) — Reminder Management
+- `/reminders` + `/reminders all` + пагинация.
+- `cancel_reminder` голосом — с локальными временами и
+  склонением (PR #104).
+- Inline-cancel кнопки.
+
+**Откатано / отложено:**
+- ❌ Slash-команды `/add /done /del /move /postpone` (Phase 8b в
+  PROGRESS под PR #82) — реализованы и потом удалены, потому что
+  voice/text intent пайплайн делает то же самое более естественно.
+  Парсер `parse_horizon` и константа `HORIZON_ALIASES` остались
+  в истории git, но не в текущем коде.
+
+---
+
+## Phase 9 — Graph view (Obsidian-style) ❌ FUTURE
 
 **Цель:** визуализация связей между задачами и категориями в виде
 графа узлов и рёбер, как в Obsidian. По запросу пользователя:
@@ -401,3 +469,47 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
 - **Скиллы и best practices** — пополняем `.agents/skills/` по мере находок;
 - **`docs/PROGRESS.md`** — обновляем после каждого PR;
 - **`memory/`** — копим транскрипты для DSPy.
+
+---
+
+## Next Up — приоритеты на 2026-05-19
+
+Расстановка после прохода по PROGRESS / handoff v20 / предложений от ревьюера.
+Каждый пункт — потенциально отдельный PR ≤ 400 LOC.
+
+### P0 — гигиена и долги
+1. **Windows TZ-bug fix** — `app/shared/time.py::utcnow_naive().timestamp()`
+   на naive datetime интерпретируется как local на Windows. Падает 40
+   тестов локально без `TZ=UTC`. На Linux/Render маскируется.
+   ~30 LOC, нужно правильно считать epoch через `datetime.now(UTC).timestamp()`.
+2. **`TaskEvent` для cancel-reminders** — отложенный долг PR-J.
+   Audit-история reminder-изменений.
+
+### P1 — продуктовое
+3. **Voice Inbox card UX** (новая идея от ревьюера) — карточка с
+   оригиналом транскрипта + извлечёнными задачами с чекбоксами +
+   кнопками `[Подтвердить / Исправить / Разбить ещё]`. Расширяет
+   PR-K clarification flow. Большой PR, бить на ~3 слайса.
+4. **Phase 7d — Task detail + inline edit** в Mini-App. Modal с
+   полями, TaskEvent-история, inline-edit title через double-tap.
+5. **Phase 5.5 — FullCalendar view** — есть полу-готовая ветка,
+   докрутить и замёржить.
+
+### P2 — AI-качество
+6. **PR-H Critic refinement** — multi-stage critic, чёткие пороги
+   confidence, prompt с chain-of-thought.
+7. **LLM golden evals** — 50 русских фраз в `tests/golden/ru/*.json`,
+   метрика % правильных category/horizon/priority. Пересекается с P2.6.
+8. **PR-F OpenRouter fallback** — нужен `OPENROUTER_API_KEY` от юзера.
+
+### P3 — observability / ops
+9. **Sentry/Logfire** на free tier — error tracking в проде.
+10. **Backup БД** — nightly `pg_dump → S3/R2/B2`.
+11. **Расширенный README** — скриншоты, GIF, deployment guide.
+12. **DSPy** — автоподбор промптов на основе golden-set (после P2.7).
+
+### P4 — отложено / future
+- **Excel export/import** + table-classifier.
+- **Graph view (Phase 9)** — Obsidian-style визуализация связей.
+- **Brand design / design tokens** — ждём go-ahead от юзера.
+- **Minor M-1..M-9** из v2-ревью — чистка, не критично.

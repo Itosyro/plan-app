@@ -72,7 +72,13 @@ async def test_list_pending_reminders_orders_and_filters(session: AsyncSession) 
     assert cancelled is not None
     await session.commit()
 
-    rows = await list_pending_reminders(session, user_id)
+    # Fixed clock before either seeded reminder so wall-clock drift in
+    # the sandbox doesn't make both rows look overdue → filtered out.
+    rows = await list_pending_reminders(
+        session,
+        user_id,
+        now=datetime(2026, 5, 20, 9, 0),
+    )
 
     assert len(rows) == 1
     reminder, task = rows[0]
