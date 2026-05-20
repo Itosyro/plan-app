@@ -6,6 +6,7 @@ structured output.  The prompt lives in ``app/ai/prompts/classifier.md``.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 from pathlib import Path
@@ -41,13 +42,21 @@ def _build_user_message(
     user_tz: str,
 ) -> str:
     """Build the user message with context for the classifier."""
+    # JSON-escape user-controlled fields so newlines / quotes / fake
+    # "system:" prefixes can't break the prompt structure (defence
+    # against prompt injection from message text and category names).
     now = datetime.now(ZoneInfo(user_tz))
+    resolved_iso = (
+        resolved_time.resolved_dt.isoformat()
+        if resolved_time and resolved_time.resolved_dt
+        else None
+    )
     parts = [
-        f"intent: {intent_text}",
-        f"resolved_time: {resolved_time.resolved_dt.isoformat() if resolved_time and resolved_time.resolved_dt else 'null'}",
-        f"existing_categories: {user_categories}",
-        f"user_tz: {user_tz}",
-        f"current_time: {now.isoformat()}",
+        f"intent: {json.dumps(intent_text, ensure_ascii=False)}",
+        f"resolved_time: {json.dumps(resolved_iso)}",
+        f"existing_categories: {json.dumps(user_categories, ensure_ascii=False)}",
+        f"user_tz: {json.dumps(user_tz)}",
+        f"current_time: {json.dumps(now.isoformat())}",
     ]
     return "\n".join(parts)
 

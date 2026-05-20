@@ -36,10 +36,13 @@ from app.shared.time import utcnow_naive
 
 logger = get_logger(__name__)
 
-# Telegram says ``auth_date`` must be checked to prevent replay. 24 h is
-# the recommended ceiling — anything older we treat as invalid even if
-# the signature still matches.
-INIT_DATA_MAX_AGE_SECONDS: Final[int] = 24 * 60 * 60
+# Telegram says ``auth_date`` must be checked to prevent replay. We use
+# a tight 10-minute window: an intercepted ``initData`` is useless after
+# this expires, and a real Mini-App reopens trigger a fresh ``initData``
+# from Telegram so users never notice. 24 h (the prior value) was a
+# replay window wide enough to matter; this matches the official
+# Telegram SDK examples.
+INIT_DATA_MAX_AGE_SECONDS: Final[int] = 10 * 60
 
 
 def _hex_digest(secret: bytes, msg: bytes) -> bytes:
