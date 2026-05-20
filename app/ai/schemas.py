@@ -35,7 +35,7 @@ class SplitterResult(BaseModel):
 class ClassifierResult(BaseModel):
     """Output of the Classifier LLM call."""
 
-    category_name: str = Field(description="Category name in Russian")
+    category_name: str = Field(max_length=80, description="Category name in Russian")
     horizon: Literal["today", "tomorrow", "week", "month", "year", "someday"] = Field(
         description="Horizon slug: today/tomorrow/week/month/year/someday",
     )
@@ -44,7 +44,7 @@ class ClassifierResult(BaseModel):
     )
     is_task: bool = Field(description="True if task, False if note")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score")
-    title: str = Field(description="Short title in Russian, max 50 chars")
+    title: str = Field(max_length=200, description="Short title in Russian, max 50 chars")
     reminder_offsets: list[int] | None = Field(
         default=None,
         description="Minutes before due_at to remind (only if user explicitly asked)",
@@ -58,6 +58,7 @@ class ClassifierResult(BaseModel):
     # включён (см. :class:`app.db.models.UserSettings`).
     first_step: str | None = Field(
         default=None,
+        max_length=200,
         description=(
             "Optional concrete first action (5–15 min) for abstract goals. "
             "Null when the task is already concrete."
