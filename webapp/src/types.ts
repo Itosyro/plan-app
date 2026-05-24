@@ -31,6 +31,18 @@ export interface Task {
   horizon_slug: HorizonSlug | null;
   category_id: number | null;
   category_name: string | null;
+  // Subtasks: ``parent_id`` is set on child rows (top-level tasks have
+  // ``null``). ``subtasks_total`` / ``subtasks_done`` are computed
+  // server-side for list endpoints so the UI can render a "1/3" chip
+  // without fetching children.
+  parent_id: number | null;
+  subtasks_total: number;
+  subtasks_done: number;
+}
+
+// Returned by ``GET /api/tasks/{id}``: full parent + hydrated children.
+export interface TaskDetail extends Task {
+  subtasks: Task[];
 }
 
 export interface Note {

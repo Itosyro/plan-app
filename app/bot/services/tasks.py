@@ -460,6 +460,7 @@ async def persist_classification(
     await session.flush()
 
     reminders_created = 0
+    subtasks_created = 0
     if cr.is_task:
         if not isinstance(row, Task) or row.id is None:
             raise RuntimeError("Expected a flushed Task row after persist")
@@ -479,6 +480,14 @@ async def persist_classification(
             )
             reminders_created = len(reminders)
 
+        subtasks_created = await _persist_subtasks(
+            session,
+            parent=row,
+            cr=cr,
+            cat_id=cat.id,
+            hor_id=hor.id,
+        )
+
     logger.info(
         "persist.done",
         user_id=user_id,
@@ -486,8 +495,61 @@ async def persist_classification(
         category=cr.category_name,
         title=cr.title,
         reminders_created=reminders_created,
+        subtasks_created=subtasks_created,
     )
     return row
+
+
+# Hard cap on classifier-proposed subtasks per parent — anything beyond
+# this is almost always LLM noise or runaway output and clutters the UI.
+_MAX_SUBTASKS_PER_PARENT = 5
+
+
+async def _persist_subtasks(
+    session: AsyncSession,
+    *,
+    parent: Task,
+    cr: ClassifierResult,
+    cat_id: int | None,
+    hor_id: int | None,
+) -> int:
+    """Persist classifier-proposed subtasks as child Tasks of ``parent``.
+
+    Children inherit the parent's category / horizon / priority — the
+    classifier only emits a list of titles. Empty / null subtasks list
+    is a no-op. Capped at :data:`_MAX_SUBTASKS_PER_PARENT` items so a
+    runaway LLM can't blow up a single parent into hundreds of rows.
+    Returns the number of subtasks actually created (after de-duping
+    blank strings).
+    """
+    if not cr.subtasks or parent.id is None:
+        return 0
+    titles: list[str] = []
+    seen: set[str] = set()
+    for raw in cr.subtasks[:_MAX_SUBTASKS_PER_PARENT]:
+        title = raw.strip()
+        if not title or title in seen:
+            continue
+        if len(title) > 256:
+            title = title[:255].rstrip() + "…"
+        seen.add(title)
+        titles.append(title)
+    if not titles:
+        return 0
+    for title in titles:
+        child = Task(
+            user_id=parent.user_id,
+            parent_id=parent.id,
+            category_id=cat_id,
+            horizon_id=hor_id,
+            title=title,
+            priority=parent.priority,
+            confidence=parent.confidence,
+            source_inbox_id=parent.source_inbox_id,
+        )
+        session.add(child)
+    await session.flush()
+    return len(titles)
 
 
 # ── Task search / reorder ─────────────────────────────────────────────

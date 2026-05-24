@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Check, Clock, Flag, Tag } from "lucide-react";
+import { Check, Clock, Flag, ListChecks, Tag } from "lucide-react";
 import type { Task } from "../types";
 import { formatDue } from "../lib/format";
 import { haptic } from "../lib/telegram";
@@ -144,12 +144,26 @@ export function TaskCard({ task, tz, onDone, onOpen }: Props) {
               )}
             </div>
           </div>
-          {(due || task.category_name) && (
+          {(due || task.category_name || task.subtasks_total > 0) && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tg-hint">
               {due && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-bento px-2 py-0.5">
                   <Clock size={12} strokeWidth={2} aria-hidden />
                   {due}
+                </span>
+              )}
+              {task.subtasks_total > 0 && (
+                <span
+                  className={
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] " +
+                    (task.subtasks_done === task.subtasks_total
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : "bg-bento text-tg-text/70")
+                  }
+                  aria-label={`${task.subtasks_done} из ${task.subtasks_total} подзадач выполнено`}
+                >
+                  <ListChecks size={11} strokeWidth={2} aria-hidden />
+                  {task.subtasks_done}/{task.subtasks_total}
                 </span>
               )}
               {task.category_name && (

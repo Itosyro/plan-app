@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Flag,
@@ -34,6 +35,7 @@ import type {
   Horizon,
   HorizonSlug,
   Task,
+  TaskDetail as TaskDetailType,
   TaskPriority,
   TaskUpdate,
 } from "../types";
@@ -93,7 +95,7 @@ export function TaskDetail({
   onMutated,
   onDeleted,
 }: Props) {
-  const [task, setTask] = useState<Task | null>(null);
+  const [task, setTask] = useState<TaskDetailType | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -132,7 +134,14 @@ export function TaskDetail({
       setSaveError(null);
       try {
         const fresh = await apiClient.patchTask(task.id, body);
-        setTask(fresh);
+        // ``patchTask`` returns plain ``Task`` (no children) — keep the
+        // hydrated subtask list we already have so the section doesn't
+        // flash empty after every edit.
+        setTask((prev) =>
+          prev === null
+            ? null
+            : { ...prev, ...fresh, subtasks: prev.subtasks },
+        );
         haptic("success");
         onMutated();
       } catch (err) {
@@ -290,6 +299,53 @@ export function TaskDetail({
             />
           </section>
 
+          {task.subtasks.length > 0 && (
+            <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
+                  Подзадачи
+                </label>
+                <span className="text-[11px] text-tg-hint">
+                  {task.subtasks.filter((s) => s.status === "done").length}/
+                  {task.subtasks.length}
+                </span>
+              </div>
+              <ul className="mt-2 flex flex-col gap-1">
+                {task.subtasks.map((sub) => (
+                  <SubtaskRow
+                    key={sub.id}
+                    sub={sub}
+                    onToggle={async () => {
+                      const newStatus = sub.status === "done" ? "new" : "done";
+                      try {
+                        await apiClient.patchTask(sub.id, { status: newStatus });
+                        haptic("success");
+                        // Patch the local subtask list so the toggle is
+                        // instant without a full refetch.
+                        setTask((prev) =>
+                          prev === null
+                            ? null
+                            : {
+                                ...prev,
+                                subtasks: prev.subtasks.map((s) =>
+                                  s.id === sub.id ? { ...s, status: newStatus } : s,
+                                ),
+                                subtasks_done:
+                                  prev.subtasks_done + (newStatus === "done" ? 1 : -1),
+                              },
+                        );
+                        onMutated();
+                      } catch {
+                        haptic("error");
+                        setSaveError("Не удалось обновить подзадачу");
+                      }
+                    }}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section className="flex flex-col gap-1.5">
             <DetailRow
               icon={CalendarDays}
@@ -411,6 +467,56 @@ interface RowProps {
   onClick: () => void;
   disabled?: boolean;
 }
+
+interface SubtaskRowProps {
+  sub: Task;
+  onToggle: () => void | Promise<void>;
+}
+
+function SubtaskRow({ sub, onToggle }: SubtaskRowProps) {
+  const [busy, setBusy] = useState(false);
+  const isDone = sub.status === "done";
+  return (
+    <li
+      className={
+        "ease-apple flex items-start gap-2 rounded-2xl px-2 py-1.5 transition-colors " +
+        (isDone ? "opacity-60" : "")
+      }
+    >
+      <button
+        type="button"
+        disabled={busy}
+        aria-label={isDone ? "Снять отметку" : "Отметить выполненной"}
+        onClick={async () => {
+          if (busy) return;
+          setBusy(true);
+          try {
+            await onToggle();
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className={
+          "ease-spring mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all duration-200 " +
+          (isDone
+            ? "border-emerald-500 bg-emerald-500 text-white"
+            : "border-tg-hint/40 bg-bento-card hover:border-emerald-400 active:scale-90")
+        }
+      >
+        {isDone && <Check size={12} strokeWidth={3} />}
+      </button>
+      <span
+        className={
+          "min-w-0 break-words pt-0.5 text-[14px] leading-snug " +
+          (isDone ? "text-tg-hint line-through" : "text-tg-text")
+        }
+      >
+        {sub.title}
+      </span>
+    </li>
+  );
+}
+
 
 function DetailRow({ icon, tone, label, value, onClick, disabled }: RowProps) {
   return (

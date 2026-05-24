@@ -187,6 +187,11 @@ class Task(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
+    # PR-Subtasks: nullable self-FK so a Task can be a child of another
+    # Task. ``ON DELETE CASCADE`` is set in the migration so deleting a
+    # parent removes its children with it. Top-level tasks have
+    # ``parent_id IS NULL``.
+    parent_id: int | None = Field(default=None, foreign_key="tasks.id", index=True)
     category_id: int | None = Field(default=None, foreign_key="categories.id")
     horizon_id: int | None = Field(default=None, foreign_key="horizons.id")
     title: str = Field(max_length=256)

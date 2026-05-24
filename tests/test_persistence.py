@@ -525,3 +525,141 @@ async def test_persist_concretize_on_but_no_first_step(session: AsyncSession) ->
     assert isinstance(row, Task)
     assert row.title == "Купить хлеб"
     assert row.title_original is None
+
+
+@pytest.mark.asyncio
+async def test_persist_subtasks_inherits_parent_fields(session: AsyncSession) -> None:
+    """Classifier-proposed subtasks become child Tasks with inherited fields."""
+    user, _ = await get_or_create_user(session, telegram_id=920)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Личное",
+        horizon="week",
+        priority="high",
+        is_task=True,
+        confidence=0.9,
+        title="Организовать день рождения",
+        subtasks=[
+            "Составить список гостей",
+            "Заказать торт",
+            "Купить украшения",
+        ],
+    )
+    parent = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(parent, Task)
+    assert parent.parent_id is None
+
+    children = (await session.exec(select(Task).where(Task.parent_id == parent.id))).all()
+    assert len(children) == 3
+    titles = sorted(c.title for c in children)
+    assert titles == [
+        "Заказать торт",
+        "Купить украшения",
+        "Составить список гостей",
+    ]
+    for c in children:
+        assert c.user_id == parent.user_id
+        assert c.category_id == parent.category_id
+        assert c.horizon_id == parent.horizon_id
+        assert c.priority == parent.priority
+
+
+@pytest.mark.asyncio
+async def test_persist_subtasks_caps_at_five(session: AsyncSession) -> None:
+    """Runaway classifier output is truncated to MAX_SUBTASKS_PER_PARENT."""
+    user, _ = await get_or_create_user(session, telegram_id=921)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Работа",
+        horizon="week",
+        priority="medium",
+        is_task=True,
+        confidence=0.7,
+        title="Большой проект",
+        subtasks=[f"Шаг {i}" for i in range(1, 11)],  # 10 items
+    )
+    parent = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(parent, Task)
+    children = (await session.exec(select(Task).where(Task.parent_id == parent.id))).all()
+    assert len(children) == 5
+
+
+@pytest.mark.asyncio
+async def test_persist_subtasks_dedup_and_skip_blank(session: AsyncSession) -> None:
+    """Duplicate titles and blank strings are dropped before insert."""
+    user, _ = await get_or_create_user(session, telegram_id=922)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Работа",
+        horizon="today",
+        priority="medium",
+        is_task=True,
+        confidence=0.8,
+        title="Проект",
+        subtasks=["Тест", "", "  ", "Тест", "Документация"],
+    )
+    parent = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(parent, Task)
+    children = (await session.exec(select(Task).where(Task.parent_id == parent.id))).all()
+    titles = sorted(c.title for c in children)
+    assert titles == ["Документация", "Тест"]
+
+
+@pytest.mark.asyncio
+async def test_persist_no_subtasks_when_null(session: AsyncSession) -> None:
+    """``subtasks=None`` means atomic task, no children inserted."""
+    user, _ = await get_or_create_user(session, telegram_id=923)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Покупки",
+        horizon="today",
+        priority="low",
+        is_task=True,
+        confidence=0.9,
+        title="Купить молоко",
+        subtasks=None,
+    )
+    parent = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+    )
+    await session.commit()
+
+    assert isinstance(parent, Task)
+    children = (await session.exec(select(Task).where(Task.parent_id == parent.id))).all()
+    assert children == []

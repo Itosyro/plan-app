@@ -64,6 +64,17 @@ class ClassifierResult(BaseModel):
             "Null when the task is already concrete."
         ),
     )
+    # PR-Subtasks: classifier may break a composite task ("организовать
+    # день рождения") into 2–5 atomic subtasks. Each item is just the
+    # subtask title; they inherit the parent's category / horizon /
+    # priority on persist. Null or empty list when the task is atomic.
+    subtasks: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional 2–5 atomic subtask titles for composite tasks. "
+            "Null when the task is already atomic."
+        ),
+    )
 
 
 class ResolvedTime(BaseModel):
