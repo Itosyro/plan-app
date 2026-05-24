@@ -116,13 +116,32 @@ export function TaskCard({ task, tz, onDone, onOpen }: Props) {
                 }
               />
             )}
-            <div
-              className={
-                "font-display min-w-0 break-words pt-0.5 text-[16px] font-medium leading-snug tracking-tight " +
-                (isDone ? "text-tg-hint line-through" : "text-tg-text")
-              }
-            >
-              {task.title}
+            <div className="min-w-0">
+              <div
+                className={
+                  "font-display flex min-w-0 items-start gap-1.5 break-words pt-0.5 text-[16px] font-medium leading-snug tracking-tight " +
+                  (isDone ? "text-tg-hint line-through" : "text-tg-text")
+                }
+              >
+                {task.title_original && (
+                  <span
+                    aria-label="Первый шаг"
+                    title="Первый шаг — конкретное действие, с которого можно начать"
+                    className="shrink-0 select-none pt-px text-[14px] leading-none"
+                  >
+                    🎯
+                  </span>
+                )}
+                <span className="min-w-0 break-words">{task.title}</span>
+              </div>
+              {task.title_original && !isDone && (
+                <div
+                  className="mt-0.5 break-words text-[12px] italic leading-snug text-tg-hint"
+                  title="Оригинальная формулировка"
+                >
+                  {task.title_original}
+                </div>
+              )}
             </div>
           </div>
           {(due || task.category_name) && (

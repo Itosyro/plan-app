@@ -424,3 +424,104 @@ async def test_persist_classification_none_due_at_stays_none(
 
     assert isinstance(row, Task)
     assert row.due_at is None
+
+
+@pytest.mark.asyncio
+async def test_persist_first_step_swap(session: AsyncSession) -> None:
+    """``concretize_tasks=True`` + ``first_step`` → swap title with rewrite.
+
+    The actionable rewrite becomes ``Task.title`` and the user's
+    original abstract phrasing is preserved in ``Task.title_original``
+    so the Mini-App can render the 🎯 badge + subtitle. The redundant
+    "Шаг 1:" description prefix is dropped — the title now carries
+    the first step itself.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=910)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Учёба",
+        horizon="someday",
+        priority="medium",
+        is_task=True,
+        confidence=0.8,
+        title="Разобраться с английским",
+        first_step="Установить Duolingo и пройти один урок",
+    )
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+        concretize_tasks=True,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.title == "Установить Duolingo и пройти один урок"
+    assert row.title_original == "Разобраться с английским"
+    assert row.description is None
+
+
+@pytest.mark.asyncio
+async def test_persist_first_step_off_no_swap(session: AsyncSession) -> None:
+    """``concretize_tasks=False`` → no swap, even if ``first_step`` set."""
+    user, _ = await get_or_create_user(session, telegram_id=911)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Учёба",
+        horizon="someday",
+        priority="medium",
+        is_task=True,
+        confidence=0.8,
+        title="Разобраться с английским",
+        first_step="Установить Duolingo и пройти один урок",
+    )
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+        concretize_tasks=False,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.title == "Разобраться с английским"
+    assert row.title_original is None
+
+
+@pytest.mark.asyncio
+async def test_persist_concretize_on_but_no_first_step(session: AsyncSession) -> None:
+    """``concretize_tasks=True`` but classifier didn't propose a step → no swap."""
+    user, _ = await get_or_create_user(session, telegram_id=912)
+    await session.commit()
+    assert user.id is not None
+
+    cr = ClassifierResult(
+        category_name="Покупки",
+        horizon="today",
+        priority="high",
+        is_task=True,
+        confidence=0.95,
+        title="Купить хлеб",
+        first_step=None,
+    )
+    row = await persist_classification(
+        session,
+        user_id=user.id,
+        cr=cr,
+        due_at=None,
+        inbox_id=None,
+        concretize_tasks=True,
+    )
+    await session.commit()
+
+    assert isinstance(row, Task)
+    assert row.title == "Купить хлеб"
+    assert row.title_original is None

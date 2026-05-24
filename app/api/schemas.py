@@ -58,6 +58,12 @@ class CategoryCreateIn(BaseModel):
 class TaskOut(_ConfiguredModel):
     id: int
     title: str
+    # When the FirstStep rewrite kicked in (user has ``concretize_tasks``
+    # on and the classifier proposed a concrete first action),
+    # ``title`` holds the actionable rewrite and ``title_original``
+    # carries the user's original abstract phrasing. ``None`` when no
+    # rewrite happened — legacy rows and opt-out users.
+    title_original: str | None = None
     description: str | None = None
     priority: TaskPriority
     status: TaskStatus

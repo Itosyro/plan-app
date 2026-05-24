@@ -55,6 +55,7 @@ def _task_to_out(
         {
             "id": task.id,
             "title": task.title,
+            "title_original": task.title_original,
             "description": task.description,
             "priority": task.priority,
             "status": task.status,

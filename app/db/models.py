@@ -190,6 +190,14 @@ class Task(SQLModel, table=True):
     category_id: int | None = Field(default=None, foreign_key="categories.id")
     horizon_id: int | None = Field(default=None, foreign_key="horizons.id")
     title: str = Field(max_length=256)
+    # PR-FirstStep: when the classifier returned a concrete ``first_step``
+    # and the user has ``concretize_tasks`` enabled, we store the original
+    # abstract phrasing here and put the actionable rewrite into
+    # ``title``. Mini-App and bot show the original as a small subtitle
+    # next to a 🎯 badge so the user still sees what they originally
+    # said. ``None`` for tasks that weren't rewritten (legacy rows and
+    # opt-out users).
+    title_original: str | None = Field(default=None, max_length=256)
     description: str | None = Field(default=None)
     priority: str = Field(default="medium", max_length=16)
     due_at: datetime | None = Field(default=None)
