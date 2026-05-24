@@ -387,9 +387,7 @@ def _build_task_description(cr: ClassifierResult, *, concretize: bool) -> str | 
     return None
 
 
-def _resolve_titles(
-    cr: ClassifierResult, *, concretize: bool
-) -> tuple[str, str | None]:
+def _resolve_titles(cr: ClassifierResult, *, concretize: bool) -> tuple[str, str | None]:
     """Return the ``(title, title_original)`` pair to persist.
 
     When ``concretize`` is enabled and the classifier proposed a
