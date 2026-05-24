@@ -373,19 +373,34 @@ FIRST_STEP_PREFIX = "Шаг 1: "
 def _build_task_description(cr: ClassifierResult, *, concretize: bool) -> str | None:
     """Compose ``Task.description`` from the classifier output.
 
-    PR-E "make it concrete": when ``concretize`` is true and the
-    classifier returned a non-empty ``first_step`` for an abstract task,
-    we prepend "Шаг 1: <first_step>" so the user has an obvious starting
-    point in the Mini-App task detail. When the feature is off, or the
-    classifier didn't emit a first step, the column stays ``None`` (we
-    have no other source for ``description`` yet).
+    Pre-FirstStep behaviour: when ``concretize`` was on and the
+    classifier returned a non-empty ``first_step``, we used to prepend
+    "Шаг 1: <first_step>" to ``description``. Since the FirstStep
+    rewrite (PR ``claude/first-step-rewriter``) the actionable phrasing
+    now lives in ``Task.title`` directly (with the original abstract
+    text preserved in ``title_original``), so the description prefix
+    would be redundant. Kept as a no-op for callers that still pass
+    ``concretize``; description stays ``None`` until we have another
+    source for it.
     """
-    if not concretize:
-        return None
-    step = (cr.first_step or "").strip()
-    if not step:
-        return None
-    return f"{FIRST_STEP_PREFIX}{step}"
+    del cr, concretize
+    return None
+
+
+def _resolve_titles(cr: ClassifierResult, *, concretize: bool) -> tuple[str, str | None]:
+    """Return the ``(title, title_original)`` pair to persist.
+
+    When ``concretize`` is enabled and the classifier proposed a
+    concrete ``first_step`` for an abstract goal, we swap: the
+    actionable step becomes the visible title and the original abstract
+    phrasing is stashed in ``title_original`` for UI subtitle display.
+    Otherwise the original title stays put and ``title_original`` is
+    ``None`` (no rewrite happened).
+    """
+    step = (cr.first_step or "").strip() if concretize else ""
+    if step:
+        return step, cr.title
+    return cr.title, None
 
 
 async def persist_classification(
@@ -420,11 +435,13 @@ async def persist_classification(
         # of the schema treats as UTC. See ``docs/REVIEW-2026-05-09.md::C-2``.
         due_at_utc = to_naive_utc(due_at) if due_at is not None else None
         description = _build_task_description(cr, concretize=concretize_tasks)
+        title, title_original = _resolve_titles(cr, concretize=concretize_tasks)
         row: Task | Note = Task(
             user_id=user_id,
             category_id=cat.id,
             horizon_id=hor.id,
-            title=cr.title,
+            title=title,
+            title_original=title_original,
             description=description,
             priority=cr.priority,
             due_at=due_at_utc,

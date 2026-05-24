@@ -230,8 +230,11 @@ export function TaskDetail({
       {task !== null && (
         <>
           <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
-            <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
-              Название
+            <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
+              {task.title_original && (
+                <span aria-hidden className="text-[12px] leading-none">🎯</span>
+              )}
+              {task.title_original ? "Первый шаг" : "Название"}
             </label>
             <textarea
               value={titleDraft}
@@ -251,6 +254,16 @@ export function TaskDetail({
               placeholder="Что нужно сделать?"
               disabled={pending === "title"}
             />
+            {task.title_original && (
+              <div className="mt-2 border-t border-tg-hint/10 pt-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
+                  Изначально
+                </div>
+                <div className="mt-0.5 break-words text-[13px] italic leading-snug text-tg-hint">
+                  {task.title_original}
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">

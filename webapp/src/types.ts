@@ -19,6 +19,10 @@ export interface Category {
 export interface Task {
   id: number;
   title: string;
+  // When the FirstStep rewrite kicked in, ``title`` holds the actionable
+  // rewrite and ``title_original`` carries the user's original abstract
+  // phrasing. Null for tasks that weren't rewritten.
+  title_original: string | null;
   description: string | null;
   priority: TaskPriority;
   status: TaskStatus;
