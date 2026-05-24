@@ -27,6 +27,7 @@ import time
 import uuid
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlmodel import select
 
 from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
@@ -464,12 +465,28 @@ async def _run_pipeline_inner(
                 # PR-I3: update LAST_TASK so the user can refer back.
                 if isinstance(row, Task):
                     touch_last_task(user_id, row.id)
+                # PR-Subtask-Tree: pull just-created child titles so
+                # courier can render a Unicode tree under the
+                # confirmation. Same-session SELECT is cheap and avoids
+                # duplicating the dedup / cap logic from
+                # ``_persist_subtasks``.
+                subtask_titles: tuple[str, ...] = ()
+                if isinstance(row, Task) and cr.subtasks:
+                    child_rows = (
+                        await session.exec(
+                            select(Task.title)
+                            .where(Task.parent_id == row.id)
+                            .order_by(Task.created_at.asc())  # type: ignore[attr-defined]
+                        )
+                    ).all()
+                    subtask_titles = tuple(child_rows)
                 items.append(
                     SummaryItem(
                         kind="task" if isinstance(row, Task) else "note",
                         title=cr.title,
                         category_name=cr.category_name,
                         persisted_id=row.id,
+                        subtask_titles=subtask_titles,
                     )
                 )
             else:
