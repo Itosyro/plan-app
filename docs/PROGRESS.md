@@ -6,6 +6,145 @@
 
 ---
 
+## 2026-05-24 — prompt: classifier + critic эмитят first_step / subtasks (#110)
+
+**Контекст.** Поля `first_step` (#107) и `subtasks` (#108) уже в БД и UI,
+но classifier их почти не возвращал: прежние примеры в промпте были про
+lifestyle-цели («научиться играть на гитаре»), поэтому «создать
+презентацию» / «организовать день рождения» сходили за атомарные задачи
+и фичи не стреляли.
+
+**Сделано.**
+- `app/ai/prompts/classifier.md`: расширил список triggering-глаголов
+  (`создать / сделать / подготовить / написать / разработать /
+  организовать / спланировать / разобраться / научиться / освоить`).
+  Default toward emitting — `null` теперь только для truly atomic.
+- Новая секция **Subtasks** с правилами (max 5, атомарные, не путать
+  с first_step).
+- Новые примеры: «создать презентацию про природу» → first_step;
+  «организовать день рождения» → subtasks; «подготовить презентацию
+  для клиента к среде» → subtasks (4 шага); «до пятницы отчёт» теперь
+  тоже получает first_step.
+- `app/ai/prompts/critic.md`: чек-лист дополнен пунктами 7–8
+  (first_step / subtasks), `corrected` пример теперь содержит оба поля
+  чтобы LLM-корректор не занулил их случайно.
+
+**Верификация.** 449 passed, ruff + mypy clean. Только промпт-файлы,
+кода нет.
+
+**Не сделано / отложено.** Golden evals на 50 фраз — отдельный PR
+(требует ручной разметки эталонов). Пересекается с PR-H.
+
+---
+
+## 2026-05-24 — ui(BottomNav): Telegram-style pill with sliding capsule (#109)
+
+**Контекст.** Юзер просил навбар «как в Telegram» — глубже скругление,
+сильнее blur, плавный переезд active-вкладки.
+
+**Сделано.**
+- Внешний pill: `rounded-3xl → rounded-[28px]`, `backdrop-blur-xl →
+  backdrop-blur-2xl`, opacity 85% → 80%.
+- Внутренние ячейки: `rounded-[22px]`, width фиксирован 76px чтобы
+  капсула могла слайдиться через `translateX(i * 76)`.
+- Абсолютно-позиционированный capsule `bg-tg-button/12` за иконками;
+  слайдится с iOS-spring easing `cubic-bezier(0.32, 0.72, 0.20, 1.05)`.
+- Active icon: `scale-110` + `strokeWidth=2.4`.
+- Per-cell background убран — теперь рендерит только капсула, иначе
+  при слайде получался double-fill flash.
+
+**Верификация.** `tsc --noEmit` clean, `npm run build` clean
+(261.51 kB → не изменился). Без новых deps (framer-motion не понадобился).
+
+**Не сделано.** Тесты на компонент — UI-only, проверка глазами.
+
+---
+
+## 2026-05-24 — feat: Subtasks с parent_id, classifier subtasks[], UI чек-лист (#108)
+
+**Контекст.** Юзер говорит «организовать день рождения» — это не
+атомарная задача, а проект. До этого PR всё ложилось в одну строку
+и юзер сидел уставившись в неподъёмный пункт.
+
+**Сделано.**
+- **БД:** `Task.parent_id: int | None` — self-FK на `tasks.id`,
+  `ON DELETE CASCADE`. Миграция 0013, индекс на `parent_id` для
+  GROUP BY.
+- **Classifier schema:** `subtasks: list[str] | None`.
+- **Persist:** новый `_persist_subtasks` после создания родителя
+  заводит детей с inheritance category/horizon/priority. Cap 5,
+  дедуп пустых, обрезка >256 символов.
+- **API:** `TaskOut.parent_id`, `subtasks_total`, `subtasks_done`
+  (агрегаты считаются одной `GROUP BY` без N+1). Новый `TaskDetailOut`
+  с массивом `subtasks: TaskOut[]` для `GET /tasks/{id}`. Список задач
+  по умолчанию скрывает детей (`parent_id IS NULL`), `?include_subtasks=true`
+  возвращает плоский список.
+- **Mini-App:** `Task` тип расширен, новый `TaskDetail`. `TaskCard`
+  показывает чип `📋 N/M` (зелёный когда все done). `TaskDetail`
+  рендерит секцию «Подзадачи» с прогрессом и чекбоксами; toggle
+  оптимистичный + патч на бэк.
+- **Тесты:** 7 новых (persist inheritance, cap=5, дедуп, null;
+  list скрывает детей и считает агрегаты; детальный hydrated).
+
+**Верификация.** 447 passed (+6), ruff format + check + mypy + tsc
+clean.
+
+**Не сделано / отложено.** Bot-рендер дерева в чате (Unicode ◯/●) —
+отдельный PR. Каскадное завершение (родитель done когда все дети done)
+— UX-добавка, опционально.
+
+---
+
+## 2026-05-24 — feat: FirstStep rewrite — actionable title + 🎯 (#107)
+
+**Контекст.** Поле `first_step` уже было в `ClassifierResult`, но в БД
+лилось как `description="Шаг 1: …"`. В детальной карточке это было
+закопано, в списке не видно вообще — фича не стреляла.
+
+**Сделано.**
+- **БД:** `Task.title_original: str | None`. Миграция 0012, без
+  backfill.
+- **Persist swap:** когда `concretize_tasks=True` и `first_step`
+  непустой — `Task.title` = first_step (actionable), `Task.title_original`
+  = оригинальная абстрактная фраза. `description` префикс «Шаг 1:»
+  убран (стал redundant — title несёт сам шаг).
+- **API:** `TaskOut.title_original` выставлен.
+- **Mini-App:** `Task` тип расширен. `TaskCard` показывает 🎯 + курсив
+  с оригиналом. `TaskDetail` меняет лейбл «Название» → «Первый шаг»
+  и добавляет блок «Изначально» когда rewrite сработал.
+- **Тесты:** 3 новых (swap-on, swap-off, swap-on-no-step).
+
+**Верификация.** 441 passed (+3), ruff/mypy/tsc clean.
+
+**Не сделано / отложено.** Classifier-промпт ещё не учил агрессивно
+эмитить first_step на «создать X» — это закрывает #110.
+
+---
+
+## 2026-05-24 — security: initData TTL 10min + JSON-escape + max_length (#106)
+
+**Контекст.** Из глубокого ревью (`code-review-findings.md` +
+свежий аудит). Три точечные дыры:
+
+**Сделано.**
+- `app/api/auth.py`: `INIT_DATA_MAX_AGE_SECONDS` 24h → 10min. Перехваченный
+  Telegram initData жил сутки — теперь 10 мин. Реальные юзеры не
+  заметят (Mini-App при reopen получает свежий initData).
+- `app/ai/classifier.py`: JSON-escape `intent_text`, `user_categories`,
+  `user_tz` при сборке user-message — защита от prompt injection
+  (юзер не может вшить `\nsystem: ...`).
+- `app/ai/schemas.py`: `max_length` на `ClassifierResult.title` (200),
+  `category_name` (80), `first_step` (200) — runaway LLM не пустит
+  мусор в БД и UI.
+
+**Верификация.** 438 passed, ruff/mypy clean.
+
+**Не сделано / отложено.** Rate limiting и API versioning — отдельная
+hardening-волна. Транзакционность `persist_classification` — обернуть
+в одну `session_scope`, в этот хотфикс не вошло.
+
+---
+
 ## 2026-05-19 — feat: PR-J UX polish (multi-match copy + /reminders all + пагинация)
 
 **Контекст.** HANDOFF v20 §6 оставил три недоделанных UX-куска поверх первого слайса PR-J:

@@ -2,14 +2,21 @@
 
 > Этот файл — **единственное**, что нужно прочитать, чтобы войти в курс дела. Всё остальное (`PLAN.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `IDEAS.md`) — детализация.
 >
-> **Самый свежий контекст:** [`docs/HANDOFF-2026-05-10-v11.md`](HANDOFF-2026-05-10-v11.md)
-> (Phase 7c — Settings page в Mini-App, и фикс трёх багов в reminder-пайплайне: «напомни в 12» теперь реально создаёт reminder row. 323 теста, белая палитра сохранена.)
+> **Самый свежий контекст (2026-05-24, после PR #110):** прочти верхние 5 записей `docs/PROGRESS.md` — это #106..#110 — и шапку `docs/ROADMAP.md` § «Status». Дельта поверх v20 handoff в одной строке:
 >
-> Предыдущий: [`docs/HANDOFF-2026-05-10-v10.md`](HANDOFF-2026-05-10-v10.md) (Phase 7a онбординг + Phase 7b Mini-App design polish).
+> - **#106 security hotfix** — initData TTL 24h → 10min, JSON-escape пользовательского ввода в classifier-промпте, `max_length` на ClassifierResult.
+> - **#107 FirstStep rewrite** — `Task.title_original` (миграция 0012), при `concretize_tasks=True` swap title ↔ first_step, в UI 🎯 + оригинал курсивом.
+> - **#108 Subtasks** — `Task.parent_id` self-FK (миграция 0013), classifier эмитит `subtasks[]`, cap 5, наследование category/horizon/priority. `TaskDetailOut` с hydrated children. В UI чек-лист в детали + N/M чип в карточке.
+> - **#109 BottomNav** — Telegram-style pill: `rounded-[28px]`, `backdrop-blur-2xl`, sliding capsule active-вкладки с iOS-spring easing.
+> - **#110 prompt tuning** — classifier и critic теперь агрессивно эмитят `first_step` / `subtasks` на composite-глаголы («создать», «организовать», «подготовить», «разобраться»).
 >
-> Ещё раньше: [`docs/HANDOFF-2026-05-09-v9.md`](HANDOFF-2026-05-09-v9.md) (Phase 5 + 6.1-6.4 + ops fix).
+> 449 тестов, ruff/mypy clean, последняя миграция 0013. Все 5 PR смержены в `main` и катятся на Render автоматом.
 >
-> Если ты — нейронка, открывшая репо впервые: прочти **v11 целиком** (там дельта поверх v10 + актуальные грабли), потом **v10 целиком** (общий контекст), потом `docs/PROGRESS.md` (верхние 2-3 записи), потом `docs/ROADMAP.md` § «Status» в шапке, потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
+> **Свежий предыдущий handoff:** [`docs/HANDOFF-2026-05-19-v20.md`](HANDOFF-2026-05-19-v20.md) (Phase 7c + PR-J reminder management + PR-K clarification UI).
+>
+> Ещё раньше: [`docs/HANDOFF-2026-05-10-v11.md`](HANDOFF-2026-05-10-v11.md) (Phase 7c Settings page + reminder bugfixes).
+>
+> Если ты — нейронка, открывшая репо впервые: прочти **верхние 5 записей `docs/PROGRESS.md`** (волна #106..#110), потом **v20 целиком** (общий контекст до неё), потом `docs/ROADMAP.md` § «Status» в шапке, потом [`.agents/skills/plan-app-internal/SKILL.md`](../.agents/skills/plan-app-internal/SKILL.md). Этого хватит, чтобы начать.
 
 ---
 
