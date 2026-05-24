@@ -19,6 +19,7 @@ from app.ai.courier import (
     courier_respond,
     flip_item,
     generate_courier_reply,
+    render_subtask_tree,
 )
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult
@@ -355,3 +356,43 @@ async def test_generate_reply_unknown_style_falls_back_to_neutral() -> None:
     router = GroqKeyRouter(keys=_FAKE_KEYS)
     reply = await generate_courier_reply(router, "totally-unknown-style", mode="template_only")
     assert reply in TEMPLATES["neutral"]
+
+
+# ── render_subtask_tree (PR-Subtask-Tree) ─────────────────────────────
+
+
+def test_render_subtask_tree_empty_when_no_children() -> None:
+    """Atomic items produce no tree text — caller can short-circuit."""
+    items = [_item(title="Купить хлеб")]
+    assert render_subtask_tree(items) == ""
+
+
+def test_render_subtask_tree_single_parent_with_children() -> None:
+    items = [
+        SummaryItem(
+            kind="task",
+            title="Организовать день рождения",
+            category_name="Личное",
+            persisted_id=42,
+            subtask_titles=("Составить список гостей", "Заказать торт"),
+        )
+    ]
+    tree = render_subtask_tree(items)
+    assert tree == ("↳ Организовать день рождения:\n  ◯ Составить список гостей\n  ◯ Заказать торт")
+
+
+def test_render_subtask_tree_mixed_skips_atomic_items() -> None:
+    items = [
+        _item(title="Купить молоко"),  # atomic — no children, skipped
+        SummaryItem(
+            kind="task",
+            title="Переехать",
+            category_name="Личное",
+            persisted_id=2,
+            subtask_titles=("Упаковать коробки", "Заказать грузовик"),
+        ),
+    ]
+    tree = render_subtask_tree(items)
+    assert "Купить молоко" not in tree
+    assert tree.startswith("↳ Переехать:")
+    assert tree.count("◯") == 2

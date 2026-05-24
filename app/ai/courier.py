@@ -211,6 +211,12 @@ class SummaryItem:
     category_name: str
     persisted_id: int
     status: Literal["pending", "done"] = "pending"
+    # PR-Subtask-Tree: titles of child Tasks created alongside this
+    # parent (from ``ClassifierResult.subtasks``). Empty tuple for atomic
+    # tasks and notes. Rendered as a Unicode tree below the
+    # confirmation; they're informational only and don't get their own
+    # keyboard rows (the user toggles them from the Mini-App).
+    subtask_titles: tuple[str, ...] = ()
 
 
 TASK_PENDING_PREFIX = "\u2610 "  # ☐
@@ -321,6 +327,34 @@ def _pluralize(n: int) -> str:
     return f"{n} элементов"
 
 
+SUBTASK_BULLET = "◯"  # ◯  empty checkbox (matches Mini-App look)
+
+
+def render_subtask_tree(items: list[SummaryItem]) -> str:
+    """Render a Unicode tree of subtasks for every parent that has them.
+
+    Returns an empty string when no item has subtasks (the common case),
+    so callers can ``if tree: text += '\\n\\n' + tree`` without an extra
+    guard. Format per parent::
+
+        ↳ <parent.title>:
+          ◯ <subtask 1>
+          ◯ <subtask 2>
+
+    The parent row itself stays in the inline keyboard (so the user
+    can still tap to toggle it). Subtasks are informational here —
+    toggling them goes through the Mini-App.
+    """
+    blocks: list[str] = []
+    for item in items:
+        if not item.subtask_titles:
+            continue
+        header = f"↳ {item.title}:"
+        lines = [f"  {SUBTASK_BULLET} {t}" for t in item.subtask_titles]
+        blocks.append("\n".join([header, *lines]))
+    return "\n\n".join(blocks)
+
+
 async def courier_respond(
     router: GroqKeyRouter,
     items: list[SummaryItem],
@@ -331,12 +365,16 @@ async def courier_respond(
     """Build a confirmation phrase + (optional) recognised-card keyboard.
 
     PR-E: returns ``(text, keyboard)``. ``text`` is the confirmation
-    phrase only — the list of recognised items lives in ``keyboard``
-    as togglable rows. When ``items`` is empty (e.g. the splitter
-    returned zero units), ``keyboard`` is ``None`` and only the
-    confirmation goes back to the user.
+    phrase plus an optional Unicode subtask tree (PR-Subtask-Tree) —
+    the list of recognised parent items lives in ``keyboard`` as
+    togglable rows. When ``items`` is empty (e.g. the splitter returned
+    zero units), ``keyboard`` is ``None`` and only the confirmation
+    goes back to the user.
     """
     confirmation = await generate_courier_reply(router, style, mode=mode)
     if not items:
         return confirmation, None
+    tree = render_subtask_tree(items)
+    if tree:
+        confirmation = f"{confirmation}\n\n{tree}"
     return confirmation, build_summary_keyboard(items)
