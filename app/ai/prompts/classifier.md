@@ -51,19 +51,44 @@ Float 0.0–1.0. Use ≥ 0.85 when the intent is clear, lower when ambiguous.
 
 ## First step (optional, only for tasks)
 
-`first_step` — an optional concrete first action for **abstract / large** tasks ("научиться играть на гитаре", "разобраться с английским", "сделать сайт", "похудеть"). The first step should be:
+`first_step` — a concrete first action for tasks that are **abstract, vague or composite** — anything the user can't immediately "just start doing". The classic markers:
 
-- A specific physical action that takes 5–15 minutes.
-- Something the user can realistically do *today*, with no extra planning.
-- Phrased in imperative Russian, ≤ 80 characters.
+- Verbs of creation / preparation without a concrete target: "создать", "сделать", "подготовить", "написать", "оформить", "разработать", "запустить", "построить", "разобраться", "выучить", "научиться", "освоить", "организовать", "спланировать", "продумать".
+- Anything whose execution takes more than one sitting ("сайт", "презентация", "доклад", "проект", "ремонт", "отпуск", "переезд", "стартап").
+- Lifestyle / habit goals ("похудеть", "начать бегать", "выучить английский").
 
-Set `first_step` to `null` when:
+When you see such a task, rewrite it as a single concrete physical action that:
 
-- The task is already concrete ("купить хлеб", "позвонить маме", "отправить отчёт").
+- Takes 5–15 minutes.
+- Can be done **today** with no extra planning or tooling.
+- Is phrased in imperative Russian, ≤ 80 characters.
+- Is the **smallest** possible first move — not "написать первый раздел", but "открыть Notion и завести страницу с заголовком".
+
+Set `first_step` to `null` only when:
+
+- The task is already a single atomic physical action ("купить хлеб", "позвонить маме", "отправить отчёт").
 - The unit is a note (`is_task: false`).
-- The task is large but you can't think of a sensible concrete first step.
 
-Don't invent a step just to fill the field — `null` is the safe default.
+Default toward emitting a `first_step` for verbs in the list above — `null` is the right answer only for atomic actions.
+
+## Subtasks (optional, only for tasks)
+
+`subtasks` — when a task is a **multi-step project** that naturally decomposes into 2–5 discrete actions, list them in execution order. Each subtask is a short Russian title (≤ 80 chars). The subtasks inherit the parent's category / horizon / priority on persist, so don't repeat that context.
+
+Emit `subtasks` when the parent task is something like:
+
+- "организовать день рождения" → ["составить список гостей", "забронировать место", "заказать торт", "разослать приглашения"]
+- "подготовить презентацию для клиента" → ["собрать тезисы", "сделать черновик слайдов", "добавить графики", "прогнать с коллегой"]
+- "переехать в новую квартиру" → ["разобрать вещи", "заказать грузовик", "упаковать коробки", "сменить адрес в документах"]
+
+Rules:
+
+- Max **5** subtasks. If the project really has more, list the first 5.
+- Each subtask must be an atomic action, not another project. If a subtask itself smells like "подготовить X" — collapse it into a more concrete verb ("написать", "купить", "позвонить").
+- Don't emit `subtasks` for atomic tasks ("купить хлеб") — set to `null`.
+- Don't emit `subtasks` and `first_step` simultaneously unless they truly answer different questions: `first_step` = "with what should I start *right now*", `subtasks` = "what's the full plan". For most composite tasks, prefer `subtasks` (it gives the user the full picture).
+
+Default `null` for short / one-shot tasks.
 
 ## Output
 
@@ -77,7 +102,8 @@ JSON object with exactly these fields:
   "confidence": 0.92,
   "title": "Купить хлеб и молоко",
   "reminder_offsets": null,
-  "first_step": null
+  "first_step": null,
+  "subtasks": null
 }
 ```
 
@@ -85,30 +111,45 @@ JSON object with exactly these fields:
 
 Input: "купить хлеб"
 ```json
-{"category_name": "Покупки", "horizon": "someday", "priority": "medium", "is_task": true, "confidence": 0.95, "title": "Купить хлеб", "reminder_offsets": null, "first_step": null}
+{"category_name": "Покупки", "horizon": "someday", "priority": "medium", "is_task": true, "confidence": 0.95, "title": "Купить хлеб", "reminder_offsets": null, "first_step": null, "subtasks": null}
 ```
 
 Input: "до пятницы отчёт"
 ```json
-{"category_name": "Работа", "horizon": "week", "priority": "medium", "is_task": true, "confidence": 0.90, "title": "Сделать отчёт до пятницы", "reminder_offsets": null, "first_step": null}
+{"category_name": "Работа", "horizon": "week", "priority": "medium", "is_task": true, "confidence": 0.90, "title": "Сделать отчёт до пятницы", "reminder_offsets": null, "first_step": "Открыть прошлогодний отчёт и накидать структуру в заголовках", "subtasks": null}
 ```
 
 Input: "книга про котов — интересная"
 ```json
-{"category_name": "Хобби", "horizon": "someday", "priority": "low", "is_task": false, "confidence": 0.88, "title": "Книга про котов — интересная", "reminder_offsets": null, "first_step": null}
+{"category_name": "Хобби", "horizon": "someday", "priority": "low", "is_task": false, "confidence": 0.88, "title": "Книга про котов — интересная", "reminder_offsets": null, "first_step": null, "subtasks": null}
 ```
 
 Input: "напомни завтра в 9 позвонить маме"
 ```json
-{"category_name": "Личное", "horizon": "tomorrow", "priority": "medium", "is_task": true, "confidence": 0.93, "title": "Позвонить маме", "reminder_offsets": [0], "first_step": null}
+{"category_name": "Личное", "horizon": "tomorrow", "priority": "medium", "is_task": true, "confidence": 0.93, "title": "Позвонить маме", "reminder_offsets": [0], "first_step": null, "subtasks": null}
 ```
 
 Input: "научиться играть на гитаре"
 ```json
-{"category_name": "Хобби", "horizon": "someday", "priority": "low", "is_task": true, "confidence": 0.80, "title": "Научиться играть на гитаре", "reminder_offsets": null, "first_step": "Найти на YouTube видео «гитара с нуля» и посмотреть первые 10 минут"}
+{"category_name": "Хобби", "horizon": "someday", "priority": "low", "is_task": true, "confidence": 0.80, "title": "Научиться играть на гитаре", "reminder_offsets": null, "first_step": "Найти на YouTube видео «гитара с нуля» и посмотреть первые 10 минут", "subtasks": null}
+```
+
+Input: "создать презентацию про природу"
+```json
+{"category_name": "Работа", "horizon": "someday", "priority": "medium", "is_task": true, "confidence": 0.85, "title": "Создать презентацию про природу", "reminder_offsets": null, "first_step": "Создать пустой файл презентации и написать заголовок первого слайда", "subtasks": null}
+```
+
+Input: "организовать день рождения"
+```json
+{"category_name": "Личное", "horizon": "month", "priority": "medium", "is_task": true, "confidence": 0.85, "title": "Организовать день рождения", "reminder_offsets": null, "first_step": null, "subtasks": ["Составить список гостей", "Забронировать место", "Заказать торт", "Разослать приглашения"]}
+```
+
+Input: "подготовить презентацию для клиента к среде"
+```json
+{"category_name": "Работа", "horizon": "week", "priority": "high", "is_task": true, "confidence": 0.88, "title": "Презентация для клиента к среде", "reminder_offsets": null, "first_step": null, "subtasks": ["Собрать тезисы", "Сделать черновик слайдов", "Добавить графики и цифры", "Прогнать с коллегой"]}
 ```
 
 Input: "разобраться с английским"
 ```json
-{"category_name": "Учёба", "horizon": "someday", "priority": "medium", "is_task": true, "confidence": 0.78, "title": "Разобраться с английским", "reminder_offsets": null, "first_step": "Установить Duolingo и пройти один урок"}
+{"category_name": "Учёба", "horizon": "someday", "priority": "medium", "is_task": true, "confidence": 0.78, "title": "Разобраться с английским", "reminder_offsets": null, "first_step": "Установить Duolingo и пройти один урок", "subtasks": null}
 ```

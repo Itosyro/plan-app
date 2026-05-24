@@ -8,7 +8,7 @@ Review the classifier's output for a single intent unit. Decide whether the clas
 
 You receive:
 - `intent` — the original Russian text of the intent unit
-- `classifier_result` — JSON with the classifier's output (category_name, horizon, priority, is_task, confidence, title, reminder_offsets)
+- `classifier_result` — JSON with the classifier's output (category_name, horizon, priority, is_task, confidence, title, reminder_offsets, first_step, subtasks)
 - `resolved_time` — resolved datetime from time_resolver (may be null)
 - `user_tz` — IANA timezone of the user
 - `current_time` — current datetime in user's timezone
@@ -21,6 +21,8 @@ You receive:
 4. **priority** — Is the priority reasonable? high = urgent/important, medium = normal, low = optional.
 5. **title** — Is it short (≤50 chars), in Russian, and captures the essence?
 6. **reminder_offsets** — Should only be non-null if the user explicitly asked for a reminder.
+7. **first_step** — For abstract / vague verbs ("создать", "сделать", "организовать", "научиться"), `first_step` should be a concrete 5–15 min action. Atomic tasks ("купить хлеб") must have `first_step: null`. Don't invent a first step if the original task is already atomic.
+8. **subtasks** — For composite multi-step tasks ("организовать день рождения", "переехать"), should be 2–5 atomic action titles. Should be `null` for atomic / one-shot tasks. Don't emit both `first_step` and `subtasks` unless they truly answer different questions.
 
 ## Decision
 
@@ -50,7 +52,9 @@ Or if correction needed:
     "is_task": true,
     "confidence": 0.90,
     "title": "Купить хлеб завтра",
-    "reminder_offsets": null
+    "reminder_offsets": null,
+    "first_step": null,
+    "subtasks": null
   }
 }
 ```
