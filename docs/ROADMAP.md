@@ -2,18 +2,42 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-19, после PR #104):**
+> **Status (на 2026-05-24, после PR #106..#110):**
 > Phase 0..7c + Voice/Text Edit (PR-I серия) + Reminder Management
 > (PR-J серия) + Needs-Clarification UI (PR-K) — **done и в проде**.
+>
+> **Свежая волна (#106–#110, 2026-05-24):**
+> - **#106 security hotfix** — INIT_DATA TTL 24h → 10min, JSON-escape
+>   пользовательского ввода в classifier-промпте, `max_length` на
+>   `ClassifierResult.title/category_name/first_step`.
+> - **#107 FirstStep rewrite** — когда `concretize_tasks=True` и
+>   classifier предложил `first_step`, при persist меняем местами:
+>   `Task.title` = actionable рерайт, `Task.title_original` = оригинал.
+>   Mini-App показывает 🎯 + оригинал курсивом. Миграция 0012.
+> - **#108 Subtasks** — `Task.parent_id` self-FK (cascade), classifier
+>   эмитит `subtasks: list[str]` (cap 5), дети наследуют категорию /
+>   горизонт / приоритет. `GET /tasks/{id}` отдаёт `TaskDetailOut` с
+>   гидрированными детьми, `GET /tasks` скрывает детей по умолчанию
+>   (`include_subtasks=true` чтобы включить плоский режим). В UI —
+>   чип «N/M» на карточке + чек-лист в детали. Миграция 0013.
+> - **#109 BottomNav под Telegram** — `rounded-[28px]`, blur-2xl,
+>   sliding capsule active-вкладки с iOS-spring easing, scale-110 на
+>   active icon. Без новых зависимостей.
+> - **#110 promt tuning** — classifier и critic теперь агрессивно
+>   эмитят `first_step` / `subtasks` для composite-глаголов («создать»,
+>   «организовать», «подготовить», «разобраться»). Новые примеры под
+>   реальные пользовательские кейсы.
+>
 > Работает: голосовое/текстовое сообщение → задачи + заметки +
-> напоминания, утренний/вечерний дайджест (с pinned live-update),
+> напоминания (с автоматическим разбиением на подзадачи и подсказкой
+> первого шага), утренний/вечерний дайджест (с pinned live-update),
 > команды `/today /week /reminders ...`, callback-кнопки, /settings,
-> **Mini-App** на `/app/` в стиле Todoist (lucide-icons + capsule
-> bottom nav + drag-n-drop + per-horizon counts + CloudStorage prefs
-> + Settings page с PATCH /api/me + Trash / soft-delete + Notes tab),
-> **построчная** (streaming) выдача ответов бота, **emoji reactions**,
-> **quote replies**, **онбординг через inline-клавиатуру** (12 CIS
-> часовых поясов).
+> **Mini-App** на `/app/` (lucide-icons + Telegram-style bottom nav +
+> drag-n-drop + per-horizon counts + CloudStorage prefs + Settings
+> page с PATCH /api/me + Trash / soft-delete + Notes tab + subtask
+> checklist), **построчная** (streaming) выдача ответов бота, **emoji
+> reactions**, **quote replies**, **онбординг через inline-клавиатуру**
+> (12 CIS часовых поясов).
 >
 > **Voice/Text Edit Pipeline (PR-I серия):** голосом или текстом
 > можно сказать «отмени звонок», «перенеси отчёт на пятницу»,
@@ -31,14 +55,14 @@
 > + кнопка `[➡️ Ещё]` пагинация + голосовой `cancel_reminder` с
 > локальными временами и склонением.
 >
-> **438 тестов**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
+> **449 тестов**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
 >
 > Все critical (C-1..C-6) и important (I-1..I-8) findings из
 > `docs/REVIEW-2026-05-09-v2.md` — закрыты.
 >
 > **Прод-операция:**
-> - Alembic migrations 0001..0011 накатаны на Neon (последняя —
->   `task_edit_snapshots` под PR-I4 undo).
+> - Alembic migrations 0001..0013 накатаны (последние — 0012
+>   `task_title_original` и 0013 `task_parent_id`).
 > - Render `startCommand` авто-применяет `alembic upgrade head` на
 >   каждом деплое.
 > - Render env: `GROQ_API_KEYS` поддерживает comma-separated список
@@ -46,13 +70,24 @@
 >   на Render (юзер должен сделать).
 >
 > **Что осталось (см. секцию «Next Up» внизу для приоритетов):**
-> - **Phase 7d** (Task detail + inline edit modal в Mini-App) — TODO.
+> - **Bot-рендер дерева подзадач** — после #108 дети есть в БД, но
+>   в чате classifier-summary показывает только родителя. Нужен
+>   Unicode-tree (◯/●) и опциональный «свернуть/развернуть».
+> - **Phase 7d** (Task detail + inline edit modal в Mini-App) — частично
+>   закрыто #108 (детальный API с подзадачами), drag-n-drop / inline-
+>   edit ещё нужны.
+> - **Live-draft (Rumble-аналог)** — SSE/WebSocket стрим черновика
+>   задачи по мере прохождения пайплайна. Требует Phase 7d.
+> - **Rate limiting + API versioning** — из security-ревью, отложено
+>   на отдельную hardening-волну.
+> - **Архивация старых HANDOFF** в `docs/archive/` — гигиена.
 > - **Phase 5.5** (FullCalendar) — полу-готовая ветка
 >   `devin/*-phase5-5-calendar`.
 > - **PR-H Critic refinement** — multi-stage critic, golden-set,
 >   eval-метрика.
 > - **PR-F OpenRouter fallback** — нужен OPENROUTER_API_KEY от юзера.
-> - **LLM golden evals** — пересекается с PR-H.
+> - **LLM golden evals** — пересекается с PR-H, особенно важно после
+>   prompt-tuning из #110.
 > - **Voice Inbox card UX** (новая идея) — карточка распознавания с
 >   `[Подтвердить / Исправить / Разбить]`, развивает PR-K
 >   clarification flow.
@@ -64,8 +99,8 @@
 > - **Phase 8 (Graph view, Obsidian-style)** — future.
 > - Phase 7 polish (наблюдаемость + эвалы) — частично (structlog ✓,
 >   mypy strict ✓; DSPy / backup / Sentry / расширенный README ✗).
-> - **Brand design / design tokens** — ждём go-ahead от юзера, пока
->   белая палитра.
+> - **Brand design / design tokens** — частично закрыто #109 (nav),
+>   глобальные токены / тёмная тема — будущее.
 
 ---
 
