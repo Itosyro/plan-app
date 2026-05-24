@@ -452,6 +452,109 @@ async def test_tasks_delete_then_404(
 
 
 @pytest.mark.asyncio
+async def test_tasks_list_hides_subtasks_by_default(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """Children with non-null ``parent_id`` are excluded from the flat list."""
+    # Seed a parent + 2 children directly so we don't depend on the
+    # classifier path.
+    async with session_scope() as session:
+        cat = await get_or_create_category(session, seeded, "Работа")
+        hor = await get_or_create_horizon(session, seeded, "today")
+        parent = Task(
+            user_id=seeded,
+            category_id=cat.id,
+            horizon_id=hor.id,
+            title="Родитель",
+            priority="medium",
+        )
+        session.add(parent)
+        await session.flush()
+        assert parent.id is not None
+        session.add(
+            Task(
+                user_id=seeded,
+                parent_id=parent.id,
+                category_id=cat.id,
+                horizon_id=hor.id,
+                title="Ребёнок 1",
+                priority="medium",
+            )
+        )
+        session.add(
+            Task(
+                user_id=seeded,
+                parent_id=parent.id,
+                category_id=cat.id,
+                horizon_id=hor.id,
+                title="Ребёнок 2",
+                priority="medium",
+                status="done",
+            )
+        )
+
+    resp = await aclient.get("/api/tasks?horizon=today", headers=auth_headers)
+    assert resp.status_code == 200
+    rows = resp.json()
+    titles = {r["title"] for r in rows}
+    # Parent + the seeded "Тест-задача" appear; children do not.
+    assert "Родитель" in titles
+    assert "Ребёнок 1" not in titles
+    assert "Ребёнок 2" not in titles
+    parent_row = next(r for r in rows if r["title"] == "Родитель")
+    assert parent_row["subtasks_total"] == 2
+    assert parent_row["subtasks_done"] == 1
+    assert parent_row["parent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_tasks_detail_returns_hydrated_subtasks(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``GET /tasks/{id}`` returns ``subtasks`` array with full child rows."""
+    async with session_scope() as session:
+        cat = await get_or_create_category(session, seeded, "Учёба")
+        hor = await get_or_create_horizon(session, seeded, "week")
+        parent = Task(
+            user_id=seeded,
+            category_id=cat.id,
+            horizon_id=hor.id,
+            title="Английский",
+            priority="high",
+        )
+        session.add(parent)
+        await session.flush()
+        assert parent.id is not None
+        for title in ["Duolingo", "Подкаст", "Видео"]:
+            session.add(
+                Task(
+                    user_id=seeded,
+                    parent_id=parent.id,
+                    category_id=cat.id,
+                    horizon_id=hor.id,
+                    title=title,
+                    priority="high",
+                )
+            )
+        parent_id = parent.id
+
+    resp = await aclient.get(f"/api/tasks/{parent_id}", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "Английский"
+    assert body["subtasks_total"] == 3
+    assert body["subtasks_done"] == 0
+    titles = [s["title"] for s in body["subtasks"]]
+    assert titles == ["Duolingo", "Подкаст", "Видео"]
+    for s in body["subtasks"]:
+        assert s["parent_id"] == parent_id
+
+
+@pytest.mark.asyncio
 async def test_tasks_counts_groups_by_horizon(
     aclient: httpx.AsyncClient,
     seeded: int,

@@ -72,6 +72,26 @@ class TaskOut(_ConfiguredModel):
     horizon_slug: HorizonSlug | None = None
     category_id: int | None = None
     category_name: str | None = None
+    # PR-Subtasks: id of the parent Task when this row is a child.
+    # ``None`` for top-level tasks. ``subtasks_total`` / ``subtasks_done``
+    # are populated on list endpoints so the UI can show "1/3" progress
+    # chips without fetching children. Both default to ``0`` for atomic
+    # tasks.
+    parent_id: int | None = None
+    subtasks_total: int = 0
+    subtasks_done: int = 0
+
+
+class TaskDetailOut(TaskOut):
+    """Single-task detail with hydrated children for the Mini-App.
+
+    Returned by ``GET /api/tasks/{id}`` so the detail screen can render
+    the subtask list without a second round-trip. Children are direct
+    ``TaskOut`` rows (no further nesting — we don't support grandchildren
+    yet, classifier never emits a 3-level tree).
+    """
+
+    subtasks: list[TaskOut] = []
 
 
 class TaskUpdateIn(BaseModel):
@@ -278,6 +298,7 @@ __all__ = [
     "NoteOut",
     "NoteUpdateIn",
     "TaskCountsOut",
+    "TaskDetailOut",
     "TaskOut",
     "TaskPriority",
     "TaskStatus",

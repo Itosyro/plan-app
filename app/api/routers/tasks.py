@@ -5,13 +5,15 @@ from __future__ import annotations
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.auth import current_user
 from app.api.schemas import (
     HorizonSlug,
     TaskCountsOut,
+    TaskDetailOut,
     TaskOut,
     TaskStatus,
     TaskUpdateIn,
@@ -41,6 +43,9 @@ def _task_to_out(
     task: Task,
     horizon_slug: str | None,
     category_name: str | None,
+    *,
+    subtasks_total: int = 0,
+    subtasks_done: int = 0,
 ) -> TaskOut:
     """Build a ``TaskOut`` response from a hydrated ORM tuple.
 
@@ -64,6 +69,9 @@ def _task_to_out(
             "horizon_slug": horizon_slug,
             "category_id": task.category_id,
             "category_name": category_name,
+            "parent_id": task.parent_id,
+            "subtasks_total": subtasks_total,
+            "subtasks_done": subtasks_done,
         }
     )
 
@@ -75,6 +83,7 @@ async def list_tasks(
     category_id: int | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     include_done: bool = Query(default=False),
+    include_subtasks: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[TaskOut]:
     """List the user's tasks with optional filters.
@@ -86,6 +95,10 @@ async def list_tasks(
     * ``include_done`` — when no ``status`` is set, controls whether
       completed tasks are returned. Default ``False`` matches the
       Russian inbox semantics (done tasks live in archive, not list).
+    * ``include_subtasks`` — when ``False`` (default), only top-level
+      tasks (``parent_id IS NULL``) are returned. Children are surfaced
+      via the parent's ``GET /tasks/{id}`` detail. Set ``True`` for the
+      legacy flat list (used in a few admin / debug views).
     """
     if user.id is None:
         raise RuntimeError("authenticated user has no id")
@@ -98,6 +111,9 @@ async def list_tasks(
         # ``isouter=True`` so tasks with no horizon (only Notes-likes) still appear.
         stmt = stmt.join(Horizon, Horizon.id == Task.horizon_id, isouter=True)  # type: ignore[arg-type]
         stmt = stmt.join(Category, Category.id == Task.category_id, isouter=True)  # type: ignore[arg-type]
+
+        if not include_subtasks:
+            stmt = stmt.where(Task.parent_id.is_(None))  # type: ignore[union-attr]
 
         if horizon is not None:
             if horizon not in _HORIZON_SLUGS:
@@ -122,10 +138,61 @@ async def list_tasks(
         result = await session.exec(stmt)
         rows = list(result.all())
 
-    return [
-        _task_to_out(task, horizon_slug, category_name)
-        for task, horizon_slug, category_name in rows
-    ]
+        # One aggregate query for subtask counts of the parents we just
+        # fetched. Keeps the endpoint O(1) round-trips regardless of how
+        # many parents have children. Empty parent_ids list → skip the
+        # query entirely.
+        parent_ids = [task.id for task, _h, _c in rows if task.id is not None]
+        counts = await _aggregate_subtask_counts(session, parent_ids)
+
+    out: list[TaskOut] = []
+    for task, horizon_slug, category_name in rows:
+        total, done = counts.get(task.id, (0, 0)) if task.id is not None else (0, 0)
+        out.append(
+            _task_to_out(
+                task,
+                horizon_slug,
+                category_name,
+                subtasks_total=total,
+                subtasks_done=done,
+            )
+        )
+    return out
+
+
+async def _aggregate_subtask_counts(
+    session: AsyncSession, parent_ids: list[int]
+) -> dict[int, tuple[int, int]]:
+    """Return ``{parent_id: (total, done)}`` for non-deleted children.
+
+    One ``GROUP BY`` over ``tasks`` filtered by ``parent_id IN (...)`` —
+    avoids the N+1 the list endpoint would otherwise have. Parents with
+    no children are absent from the result (caller defaults to ``(0, 0)``).
+    """
+    if not parent_ids:
+        return {}
+    # ``SUM(CASE WHEN status='done' THEN 1 ELSE 0 END)`` works on both
+    # Postgres and SQLite. Wrapping in ``COALESCE`` so the empty-bucket
+    # case sums to ``0`` instead of ``NULL``.
+    done_expr = func.coalesce(
+        func.sum(case((Task.status == "done", 1), else_=0)),  # type: ignore[arg-type]
+        0,
+    )
+    stmt = (
+        select(Task.parent_id, func.count(Task.id), done_expr)  # type: ignore[arg-type]
+        .where(
+            Task.parent_id.in_(parent_ids),  # type: ignore[union-attr]
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+        .group_by(Task.parent_id)  # type: ignore[arg-type]
+    )
+    result = await session.exec(stmt)
+    out: dict[int, tuple[int, int]] = {}
+    for parent_id, total, done in result.all():
+        if parent_id is None:
+            continue
+        out[int(parent_id)] = (int(total or 0), int(done or 0))
+    return out
 
 
 @router.get("/counts", response_model=TaskCountsOut)
@@ -195,16 +262,52 @@ async def _load_task_owned(user_id: int, task_id: int) -> tuple[Task, str | None
     return task, horizon_slug, category_name
 
 
-@router.get("/{task_id}", response_model=TaskOut)
+@router.get("/{task_id}", response_model=TaskDetailOut)
 async def get_task(
     task_id: int,
     user: User = Depends(current_user),
-) -> TaskOut:
-    """Return one task by id (404 if missing or owned by another user)."""
+) -> TaskDetailOut:
+    """Return one task by id with hydrated subtasks.
+
+    404 when missing or owned by another user. Children are returned
+    in the ``subtasks`` array, each as a full ``TaskOut`` so the
+    Mini-App can render checkboxes / titles / status without a second
+    fetch. The parent's ``subtasks_total`` and ``subtasks_done`` are
+    populated from the same list so the UI shows "1/3 готово" without
+    re-counting client-side.
+    """
     if user.id is None:
         raise RuntimeError("authenticated user has no id")
     task, horizon_slug, category_name = await _load_task_owned(user.id, task_id)
-    return _task_to_out(task, horizon_slug, category_name)
+
+    async with session_scope() as session:
+        if task.id is None:
+            raise RuntimeError("Task without id passed to get_task")
+        child_stmt = (
+            select(Task, Horizon.slug, Category.name)
+            .where(
+                Task.parent_id == task.id,
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
+            .join(Horizon, Horizon.id == Task.horizon_id, isouter=True)  # type: ignore[arg-type]
+            .join(Category, Category.id == Task.category_id, isouter=True)  # type: ignore[arg-type]
+            .order_by(Task.created_at.asc())  # type: ignore[attr-defined]
+        )
+        child_rows = list((await session.exec(child_stmt)).all())
+
+    children = [_task_to_out(c, cslug, cname) for c, cslug, cname in child_rows]
+    total = len(children)
+    done = sum(1 for c in children if c.status == "done")
+    parent = _task_to_out(
+        task,
+        horizon_slug,
+        category_name,
+        subtasks_total=total,
+        subtasks_done=done,
+    )
+    return TaskDetailOut.model_validate(
+        {**parent.model_dump(), "subtasks": [c.model_dump() for c in children]}
+    )
 
 
 @router.patch("/{task_id}", response_model=TaskOut)
