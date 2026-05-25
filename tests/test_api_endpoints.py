@@ -400,6 +400,72 @@ async def test_tasks_patch_moves_horizon(
 
 
 @pytest.mark.asyncio
+async def test_tasks_patch_sets_category(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    # New category to move the card into (kanban drop = recategorize).
+    new_cat = await aclient.post(
+        "/api/categories",
+        headers=auth_headers,
+        json={"name": "Учёба"},
+    )
+    cat_id = new_cat.json()["id"]
+    list_resp = await aclient.get("/api/tasks?horizon=today", headers=auth_headers)
+    task_id = list_resp.json()[0]["id"]
+    resp = await aclient.patch(
+        f"/api/tasks/{task_id}",
+        headers=auth_headers,
+        json={"category_id": cat_id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_id"] == cat_id
+    assert resp.json()["category_name"] == "Учёба"
+
+
+@pytest.mark.asyncio
+async def test_tasks_patch_clears_category(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    # Dropping a card into the "Без категории" kanban column clears the
+    # category. An *explicit* null in the PATCH body must clear it; an
+    # omitted key still means "no change".
+    list_resp = await aclient.get("/api/tasks?horizon=today", headers=auth_headers)
+    task = list_resp.json()[0]
+    assert task["category_id"] is not None  # seeded with «Работа»
+    resp = await aclient.patch(
+        f"/api/tasks/{task['id']}",
+        headers=auth_headers,
+        json={"category_id": None},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_id"] is None
+    assert resp.json()["category_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_tasks_patch_omitted_category_unchanged(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    # Omitting category_id must not wipe the existing category.
+    list_resp = await aclient.get("/api/tasks?horizon=today", headers=auth_headers)
+    task = list_resp.json()[0]
+    resp = await aclient.patch(
+        f"/api/tasks/{task['id']}",
+        headers=auth_headers,
+        json={"priority": "high"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_id"] == task["category_id"]
+    assert resp.json()["category_name"] == "Работа"
+
+
+@pytest.mark.asyncio
 async def test_tasks_patch_marks_done(
     aclient: httpx.AsyncClient,
     seeded: int,

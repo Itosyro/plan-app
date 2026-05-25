@@ -123,7 +123,7 @@ export interface TaskUpdate {
   status?: TaskStatus;
   priority?: TaskPriority;
   horizon_slug?: HorizonSlug;
-  category_id?: number;
+  category_id?: number | null;
   due_at?: string | null;
 }
 

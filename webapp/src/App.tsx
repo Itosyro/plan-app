@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  closestCorners,
   DndContext,
+  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { LayoutGrid, ListTodo, Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
-import { KanbanView } from "./components/KanbanView";
+import {
+  KanbanView,
+  KanbanCardView,
+  KCAT_PREFIX,
+  KCAT_NONE,
+} from "./components/KanbanView";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
@@ -81,6 +89,9 @@ export default function App() {
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
+  // Snapshot of the card being dragged on the kanban board, rendered in
+  // the DragOverlay portal (#7e/A fix).
+  const [activeDragTask, setActiveDragTask] = useState<Task | null>(null);
   const tz = me?.tz ?? "Europe/Moscow";
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
@@ -298,6 +309,33 @@ export default function App() {
     [activeHorizon, selectedCategory, loadTasks, loadCounts],
   );
 
+  // Kanban drop: re-assign the task's category (null = "Без категории"
+  // column). The board owns its own task list, so we just patch + bump
+  // ``boardRefresh`` to re-pull every column.
+  const handleSetCategory = useCallback(
+    async (id: number, categoryId: number | null) => {
+      try {
+        await apiClient.patchTask(id, { category_id: categoryId });
+        void loadCounts();
+        void refreshCategories();
+        setBoardRefresh((n) => n + 1);
+      } catch (err) {
+        setBoardRefresh((n) => n + 1);
+        console.error("set category failed", err);
+      }
+    },
+    [loadCounts, refreshCategories],
+  );
+
+  // "+ Раздел" on the board creates a category = new column.
+  const handleCreateCategoryColumn = useCallback(
+    async (name: string) => {
+      await apiClient.createCategory(name);
+      await refreshCategories();
+    },
+    [refreshCategories],
+  );
+
   const handleOpenTask = useCallback((id: number) => {
     haptic("select");
     navigate(`/task/${id}`);
@@ -353,13 +391,31 @@ export default function App() {
     [loadCounts],
   );
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const data = event.active.data.current as { task?: Task } | undefined;
+    setActiveDragTask(data?.task ?? null);
+  }, []);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      setActiveDragTask(null);
       if (over === null) return;
       const taskId = Number(active.id);
       if (!Number.isFinite(taskId) || taskId <= 0) return;
       const overId = String(over.id);
+
+      // Kanban column drop (Phase 7e/A): re-assign category. The drag
+      // payload carries the card's current category to skip no-op drops.
+      if (overId.startsWith(KCAT_PREFIX)) {
+        const targetCat = overId === KCAT_NONE ? null : Number(overId.slice(KCAT_PREFIX.length));
+        const dragData = active.data.current as { categoryId?: number | null } | undefined;
+        const currentCat = dragData?.categoryId ?? null;
+        if (currentCat === targetCat) return; // dropped back in same column
+        haptic("success");
+        void handleSetCategory(taskId, targetCat);
+        return;
+      }
 
       // Calendar day drop (Phase 7d): shift the task's due_at to the
       // target day, preserving its local time-of-day. The dragged row
@@ -381,19 +437,17 @@ export default function App() {
         return;
       }
 
-      // Horizon drop — pill (Phase 5.4b, list view) or kanban column
-      // (Phase 7d, board view). Both use the horizon slug as drop id.
+      // Horizon drop — pill in list view (Phase 5.4b). The drop id is a
+      // bare horizon slug.
       const targetSlug = overId;
       if (!VALID_HORIZONS.has(targetSlug as HorizonSlug)) return;
-      // Board cards aren't in App's ``tasks`` list, so fall back to the
-      // current slug carried in the drag payload to detect no-op drops.
       const dragData = active.data.current as { horizonSlug?: string } | undefined;
       const currentSlug = tasks.find((t) => t.id === taskId)?.horizon_slug ?? dragData?.horizonSlug;
       if (currentSlug === targetSlug) return; // no-op same horizon
       haptic("success");
       void handleMove(taskId, targetSlug as HorizonSlug);
     },
-    [tasks, handleMove, handleReschedule, tz],
+    [tasks, handleMove, handleReschedule, handleSetCategory, tz],
   );
 
   if (loading) {
@@ -493,7 +547,13 @@ export default function App() {
       : categories.find((c) => c.id === selectedCategory)?.name;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveDragTask(null)}
+    >
       <div
         className="mx-auto max-w-md px-4"
         style={{
@@ -533,10 +593,11 @@ export default function App() {
             />
             {tasksView === "board" ? (
               <KanbanView
-                horizons={horizons}
+                categories={categories}
                 refreshSignal={boardRefresh}
                 onOpen={handleOpenTask}
                 onDone={handleDone}
+                onCreateCategory={handleCreateCategoryColumn}
               />
             ) : (
               <>
@@ -590,6 +651,9 @@ export default function App() {
         onChange={handleCategoryChange}
       />
       <BottomNav active={activeTab} onChange={setActiveTab} />
+      <DragOverlay dropAnimation={null}>
+        {activeDragTask ? <KanbanCardView task={activeDragTask} overlay /> : null}
+      </DragOverlay>
     </DndContext>
   );
 }

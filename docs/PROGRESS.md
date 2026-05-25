@@ -6,6 +6,55 @@
 
 ---
 
+## 2026-05-25 — feat: Phase 7e/A — рабочий канбан: колонки = категории, фикс DnD
+
+**Контекст.** Workstream A плана 7e (главная боль юзера). Канбан #118
+был сломан: карточка «зажималась», но не перетаскивалась между колонками,
+а колонки были по горизонтам (Сегодня/Завтра/…) — юзер просил **категории/
+разделы** (как Todoist «+ Добавить раздел»). Root-cause (диагностика в плане,
+§A0): нет `touch-action:none` (горизонтальный скролл крал тач-жест), нет
+`DragOverlay` (карточка двигалась CSS-трансформом, оставаясь в исходной
+колонке → дефолтная коллизия резолвила дроп обратно), дефолтная
+collisionDetection.
+
+**Сделано (бэк, TDD).**
+- `update_task_category` принимает `None` (очистка категории).
+- `PATCH /api/tasks/{id}` различает явный `category_id: null` (очистить —
+  дроп в «Без категории») от отсутствия ключа (без изменений) через
+  `model_fields_set`. Раньше `is not None` не давал очистить категорию.
+- 3 теста: смена категории, очистка явным null, omitted-ключ не стирает.
+
+**Сделано (фронт).**
+- `KanbanView.tsx` переписан: колонки = **категории** (проп `categories`)
+  + служебная «Без категории» (`category_id === null`). Дроп карточки →
+  `PATCH category_id` (или null). Дроп-таргеты с префиксом `kcat:` (не
+  пересекаются с горизонт-пилюлями списка). Карточка вынесена в
+  презентационный `KanbanCardView` (общий с DragOverlay).
+- DnD-фикс: `touch-action:none` на карточке; `DragOverlay` (рендерит
+  «снимок» карточки в портале, оригинал затемняется `opacity-40`);
+  `collisionDetection={closestCorners}` на App-`DndContext`;
+  `onDragStart` сохраняет активную задачу. Колонка подсвечивается `isOver`.
+- «+ Добавить раздел» в хвосте доски — inline-инпут, создаёт категорию
+  (`apiClient.createCategory`) = новую колонку.
+- `App.tsx`: `handleSetCategory(id, catId|null)`, `handleCreateCategoryColumn`,
+  канбан-ветка в `handleDragEnd`, `DragOverlay` в портале.
+- `types.ts`: `TaskUpdate.category_id?: number | null`.
+- Горизонтальный snap-скролл (`snap-x snap-mandatory`).
+
+**Верификация.** `ruff format --check` + `ruff` + `mypy` clean, **465 pytest
+passed** (462 → +3). `tsc --noEmit` + `npm run build` clean. E2e: подняты
+реальные FastAPI (SQLite) + Vite, инжектнут валидный initData, Playwright
+протащил карточку «Купить продукты» из «Дом» в «Работа» — `PATCH
+/api/tasks/3 {category_id:1}` → 200, БД подтверждает, доска перерисовалась
+(Дом 1→0 «Пусто», Работа 2→3). Скриншоты до/после в PR.
+
+**Не сделано / отложено.** Тач-проверка в реальном Telegram WebView (ручная);
+визуальная полировка карточек/колонок (приоритет-флажок, due-чип) — в
+Workstream E; кастомные колонки-`BoardSection` отдельно от категорий —
+Phase 7f, если попросят.
+
+---
+
 ## 2026-05-25 — feat: Phase 7e/D — SegmentedControl + редизайн BottomSheetSelect
 
 **Контекст.** Workstream D плана 7e. Симптомы юзера: сегмент-контрол

@@ -654,10 +654,14 @@ async def update_task_horizon(
 async def update_task_category(
     session: AsyncSession,
     task: Task,
-    new_category_id: int,
+    new_category_id: int | None,
     user_id: int,
 ) -> Task:
-    """Move a task to a different category and log the event."""
+    """Move a task to a different category (or clear it) and log the event.
+
+    ``new_category_id=None`` clears the category — used by the kanban
+    "Без категории" column drop.
+    """
     old_category_id = task.category_id
     task.category_id = new_category_id
     session.add(task)

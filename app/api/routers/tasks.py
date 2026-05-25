@@ -363,14 +363,21 @@ async def patch_task(
         if body.horizon_slug is not None:
             await update_task_horizon(session, task, body.horizon_slug, user.id)
 
-        if body.category_id is not None:
-            cat_check = await session.exec(
-                select(Category).where(Category.id == body.category_id, Category.user_id == user.id)
-            )
-            if cat_check.first() is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="category not found"
+        # ``category_id`` distinguishes an explicit null (clear the
+        # category — kanban "Без категории" drop) from an omitted key
+        # (no change). ``model_fields_set`` carries that intent that a
+        # bare ``is not None`` check would lose.
+        if "category_id" in body.model_fields_set:
+            if body.category_id is not None:
+                cat_check = await session.exec(
+                    select(Category).where(
+                        Category.id == body.category_id, Category.user_id == user.id
+                    )
                 )
+                if cat_check.first() is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND, detail="category not found"
+                    )
             await update_task_category(session, task, body.category_id, user.id)
 
         # Persist any unrelated direct-attribute mutations (title/priority/due_at).
