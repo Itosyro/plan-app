@@ -839,12 +839,61 @@ async def get_categories_with_counts(
     return [(cat, int(count)) for cat, count in result.all()]
 
 
+async def _active_sibling_count(session: AsyncSession, parent_id: int) -> int:
+    """Count non-deleted children of *parent_id* that are not yet done."""
+    result = await session.exec(
+        select(func.count(Task.id)).where(  # type: ignore[arg-type]
+            Task.parent_id == parent_id,
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            Task.status != "done",
+        )
+    )
+    return int(result.one())
+
+
+async def _maybe_complete_parent(session: AsyncSession, child: Task, user_id: int) -> Task | None:
+    """Auto-complete the parent when its last open subtask is done.
+
+    PR-Subtasks UX: finishing the final child of a project should close
+    the project itself — otherwise the parent lingers as "open" with
+    a full 3/3 progress chip, which reads as a bug. Returns the parent
+    Task if it was just auto-completed (so callers can surface "проект
+    закрыт"), else ``None``. Only one level deep — we don't support
+    grandchildren.
+    """
+    if child.parent_id is None:
+        return None
+    if await _active_sibling_count(session, child.parent_id) > 0:
+        return None
+    parent = await session.get(Task, child.parent_id)
+    if parent is None or parent.status == "done" or parent.deleted_at is not None:
+        return None
+    parent.status = "done"
+    session.add(parent)
+    await session.flush()
+    if parent.id is not None:
+        session.add(
+            TaskEvent(
+                task_id=parent.id,
+                kind="completed",
+                payload_json={"source": "subtask_cascade"},
+            ),
+        )
+        await session.flush()
+    logger.info("task.parent_auto_completed", parent_id=parent.id, user_id=user_id)
+    return parent
+
+
 async def mark_task_done(
     session: AsyncSession,
     task: Task,
     user_id: int,
 ) -> Task:
-    """Mark a task as done and log the event."""
+    """Mark a task as done and log the event.
+
+    When *task* is the last open subtask of a parent, the parent is
+    auto-completed too (see :func:`_maybe_complete_parent`).
+    """
     task.status = "done"
     session.add(task)
     await session.flush()
@@ -858,6 +907,8 @@ async def mark_task_done(
             ),
         )
         await session.flush()
+
+    await _maybe_complete_parent(session, task, user_id)
 
     logger.info("task.completed", task_id=task.id, user_id=user_id)
     return task
@@ -889,6 +940,25 @@ async def mark_task_undone(
             ),
         )
         await session.flush()
+
+    # If this child was reopened, its parent is no longer fully complete —
+    # reopen the parent too if it had been auto-completed by the cascade.
+    if task.parent_id is not None:
+        parent = await session.get(Task, task.parent_id)
+        if parent is not None and parent.status == "done" and parent.deleted_at is None:
+            parent.status = "new"
+            session.add(parent)
+            await session.flush()
+            if parent.id is not None:
+                session.add(
+                    TaskEvent(
+                        task_id=parent.id,
+                        kind="reopened",
+                        payload_json={"source": "subtask_cascade"},
+                    ),
+                )
+                await session.flush()
+            logger.info("task.parent_auto_reopened", parent_id=parent.id, user_id=user_id)
 
     logger.info("task.reopened", task_id=task.id, user_id=user_id)
     return task
