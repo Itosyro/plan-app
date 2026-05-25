@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
+  CheckCircle2,
   ChevronRight,
   Globe,
   Languages,
@@ -293,6 +294,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
       </SettingsSection>
 
       <SettingsSection title="Данные" index={5}>
+        <CompletedRow />
         <TrashRow trashCounts={trashCounts} />
       </SettingsSection>
     </div>
@@ -432,6 +434,22 @@ function BellRow() {
       <span className="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600">
         Включены
       </span>
+    </Row>
+  );
+}
+
+// ── Completed row (history of done tasks, ≠ Trash) ──────────────────
+
+function CompletedRow() {
+  return (
+    <Row as="button" onClick={() => navigate("/completed")}>
+      <RowLabel
+        icon={CheckCircle2}
+        tone="emerald"
+        label="Выполненные"
+        hint="История завершённых задач"
+      />
+      <ChevronRight size={16} strokeWidth={2.25} className="shrink-0 text-tg-hint" aria-hidden />
     </Row>
   );
 }
