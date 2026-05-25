@@ -82,9 +82,17 @@ const WEEK_DUE_SEMANTIC_OPTIONS: { value: string; label: string }[] = [
 // ``first_step`` hint. Values are stringified booleans because
 // ``BottomSheetSelect`` works on strings; the patch handler converts
 // the picked option to a real bool before sending over the wire.
-const CONCRETIZE_OPTIONS: { value: string; label: string }[] = [
-  { value: "on", label: "Добавлять" },
-  { value: "off", label: "Не трогать" },
+const CONCRETIZE_OPTIONS: { value: string; label: string; hint?: string }[] = [
+  {
+    value: "on",
+    label: "Добавлять",
+    hint: "Абстрактную задачу превращаю в конкретный первый шаг 🎯 — «создать презентацию» станет «сделать первый слайд».",
+  },
+  {
+    value: "off",
+    label: "Не трогать",
+    hint: "Сохраняю формулировку ровно так, как ты сказал.",
+  },
 ];
 
 interface Props {
@@ -412,7 +420,7 @@ interface SelectRowProps {
   tone: TileTone;
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; hint?: string }[];
   disabled: boolean;
   onChange: (value: string) => void;
 }
