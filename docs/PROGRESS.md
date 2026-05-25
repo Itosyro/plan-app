@@ -6,6 +6,38 @@
 
 ---
 
+## 2026-05-25 — feat: Phase 7e/C (бэк) — Task.completed_at + сортировка «Выполненных»
+
+**Контекст.** Workstream C плана 7e, бэкенд-часть (TDD). Выполненной задаче
+нужен таймстамп завершения — для будущего экрана «Выполненные» и linger-
+зачёркивания в Mini-App. Фронт-часть (экран CompletedPage, linger, роут
+`/completed`) — следующим PR.
+
+**Сделано (бэк, TDD).**
+- Миграция `0014_task_completed_at` — колонка `tasks.completed_at`
+  (`DateTime`, nullable, индекс `ix_tasks_completed_at`), `batch_alter_table`
+  (SQLite-safe), без бэкафилла. 0014 — единственный head.
+- `Task.completed_at: datetime | None` (indexed).
+- `mark_task_done` ставит `completed_at = utcnow_naive()`; каскад родителя
+  (`_maybe_complete_parent`) — тоже. `mark_task_undone` обнуляет (и у
+  авто-переоткрытого родителя).
+- `TaskOut.completed_at` отдаётся в API; `_task_to_out` маппит поле.
+- `GET /tasks?status=done` сортируется по `completed_at DESC NULLS LAST`,
+  затем `created_at DESC` (legacy done без completed_at — в конце).
+- 2 теста: done ставит/undone стирает completed_at; каскад родителя
+  ставит/обнуляет.
+
+**Верификация.** `ruff format --check` + `ruff` + `mypy` clean, **467 pytest
+passed** (465 → +2). Миграция в цепочке (`alembic history`/`heads`). Фронт
+не тронут.
+
+**Не сделано / отложено (фронт C, следующий PR).** `CompletedPage.tsx`
+(список выполненных, группировка по дню, «вернуть в работу»); linger-
+зачёркивание в `App.handleDone` (не убирать done сразу, пока `completed_at`
+< 24ч); роут `/completed` + строка в Настройках; `types.ts Task.completed_at`.
+
+---
+
 ## 2026-05-25 — feat: Phase 7e/E2 — Настройки в Mira-стиле: grouped-карточки + iOS-тумблер
 
 **Контекст.** Прямая просьба юзера (со скринами бота Mira): сделать раздел

@@ -751,3 +751,43 @@ async def test_completing_atomic_task_does_not_touch_parent(session: AsyncSessio
     updated = await mark_task_done(session, task, user.id)
     assert updated.status == "done"
     assert updated.parent_id is None
+
+
+@pytest.mark.asyncio
+async def test_mark_done_sets_and_clears_completed_at(session: AsyncSession) -> None:
+    """completed_at is stamped on done, cleared on reopen (Phase 7e/C)."""
+    user, _ = await get_or_create_user(session, telegram_id=940)
+    await session.commit()
+    assert user.id is not None
+    hor = await get_or_create_horizon(session, user.id, "today")
+    task = Task(user_id=user.id, horizon_id=hor.id, title="Задача", priority="medium")
+    session.add(task)
+    await session.commit()
+    assert task.completed_at is None
+
+    await mark_task_done(session, task, user.id)
+    await session.commit()
+    assert task.completed_at is not None
+
+    await mark_task_undone(session, task, user.id)
+    await session.commit()
+    assert task.completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_parent_cascade_sets_completed_at(session: AsyncSession) -> None:
+    """Auto-completing the parent stamps its completed_at; reopen clears it."""
+    parent, children = await _make_parent_with_children(session, 941, 2)
+
+    await mark_task_done(session, children[0], parent.user_id)
+    await mark_task_done(session, children[1], parent.user_id)
+    await session.commit()
+    refreshed = await session.get(Task, parent.id)
+    assert refreshed is not None and refreshed.status == "done"
+    assert refreshed.completed_at is not None
+
+    await mark_task_undone(session, children[0], parent.user_id)
+    await session.commit()
+    refreshed = await session.get(Task, parent.id)
+    assert refreshed is not None and refreshed.status == "new"
+    assert refreshed.completed_at is None
