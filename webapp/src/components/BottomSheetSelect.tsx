@@ -67,7 +67,7 @@ export function BottomSheetSelect({
                     {opt.label}
                   </span>
                   {opt.hint && (
-                    <span className="mt-0.5 block truncate text-[12px] text-tg-hint">
+                    <span className="mt-0.5 block text-[12px] leading-snug text-tg-hint">
                       {opt.hint}
                     </span>
                   )}
