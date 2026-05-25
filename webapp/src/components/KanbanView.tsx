@@ -114,25 +114,28 @@ function KanbanColumn({ categoryId, label, tasks, onOpen, onDone }: ColumnProps)
     id: kcatId(categoryId),
     data: { kind: "kanban-col", categoryId },
   });
+  // The column is a white panel on the tinted page (cards inside are
+  // tinted tiles) — a clear three-level depth so neighbouring columns
+  // never blend (the old all-grey columns merged with the page).
   return (
     <div
       ref={setNodeRef}
       className={
-        "flex w-[78vw] max-w-[280px] shrink-0 snap-start flex-col rounded-3xl p-2 transition-colors duration-150 " +
-        (isOver ? "bg-tg-button/10 ring-2 ring-tg-button/40" : "bg-bento")
+        "flex w-[80vw] max-w-[290px] shrink-0 snap-start flex-col rounded-3xl bg-bento-card p-2.5 shadow-bento ring-1 transition-colors duration-150 " +
+        (isOver ? "ring-2 ring-tg-button/50" : "ring-black/[0.06]")
       }
     >
-      <div className="flex items-center justify-between px-2 py-1.5">
+      <div className="mb-1 flex items-center justify-between border-b border-tg-divider/50 px-1.5 pb-2 pt-0.5">
         <span className="font-display truncate text-[14px] font-semibold tracking-tight text-tg-text">
           {label}
         </span>
-        <span className="ml-2 shrink-0 rounded-full bg-bento-card px-2 py-0.5 text-[11px] font-medium text-tg-hint">
+        <span className="ml-2 shrink-0 rounded-full bg-bento px-2 py-0.5 text-[11px] font-semibold text-tg-hint tabular">
           {tasks.length}
         </span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 pt-1">
         {tasks.length === 0 ? (
-          <p className="px-2 py-4 text-center text-[12px] text-tg-hint/70">Пусто</p>
+          <p className="px-2 py-6 text-center text-[12px] text-tg-hint/60">Пусто</p>
         ) : (
           tasks.map((t) => (
             <DraggableCard
@@ -194,11 +197,15 @@ interface CardViewProps {
 // DragOverlay snapshot.
 export function KanbanCardView({ task, onOpen, onDone, overlay = false }: CardViewProps) {
   const isDone = task.status === "done";
+  // Tinted tile inside the white column. The drag overlay snapshot pops
+  // to a solid white lifted card for clear "picked up" feedback.
   return (
     <div
       className={
-        "ease-apple rounded-2xl bg-bento-card p-3 ring-1 ring-black/5 transition-shadow duration-150 " +
-        (overlay ? "shadow-bento-lg rotate-[1.5deg] scale-[1.03]" : "shadow-bento")
+        "ease-apple rounded-2xl p-3 ring-1 transition-shadow duration-150 " +
+        (overlay
+          ? "bg-bento-card shadow-bento-lg ring-black/5 rotate-[1.5deg] scale-[1.03]"
+          : "bg-bento ring-black/[0.05]")
       }
     >
       <div className="flex items-start gap-2">
@@ -271,7 +278,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="ease-apple flex h-[44px] w-[60vw] max-w-[200px] shrink-0 snap-start items-center gap-2 rounded-3xl bg-bento px-4 text-[14px] font-medium text-tg-hint ring-1 ring-black/[0.04] transition-all duration-200 hover:text-tg-text active:scale-[0.98]"
+        className="ease-apple flex h-[52px] w-[62vw] max-w-[210px] shrink-0 snap-start items-center gap-2 rounded-3xl border-2 border-dashed border-tg-hint/25 bg-bento-card/40 px-4 text-[14px] font-medium text-tg-hint transition-all duration-200 hover:border-tg-button/40 hover:text-tg-text active:scale-[0.98]"
       >
         <Plus size={18} strokeWidth={2.4} aria-hidden />
         Добавить раздел
@@ -280,7 +287,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
   }
 
   return (
-    <div className="flex w-[78vw] max-w-[280px] shrink-0 snap-start flex-col gap-2 rounded-3xl bg-bento p-2">
+    <div className="flex w-[80vw] max-w-[290px] shrink-0 snap-start flex-col gap-2 rounded-3xl bg-bento-card p-2.5 shadow-bento ring-1 ring-black/[0.06]">
       <div className="flex items-center gap-1.5">
         <input
           autoFocus

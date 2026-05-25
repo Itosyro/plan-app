@@ -9,18 +9,33 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
-  /* Bento background: a soft tinted grey. We default to iOS-style
-     systemGroupedBackground (#F2F2F7) and let Telegram override via
-     the secondary-bg-color when the client provides it. */
-  --bento-bg: var(--tg-theme-secondary-bg-color, #f2f2f7);
+  /* Bento background: a soft, slightly blue-tinted "sandy" grey so the
+     white cards lift off it instead of blending (was a flat #f2f2f7
+     that merged with white surfaces). We keep a fixed tint for our
+     own Telegram-native look rather than inheriting the client's
+     secondary-bg, which is white in some themes (cards would vanish).
+     A faint top-down gradient adds depth toward the bottom nav. */
+  --bento-bg: #e6eaf2;
+  --bento-bg-soft: #eef1f7;
   --bento-card: var(--tg-theme-bg-color, #ffffff);
+}
+
+html.dark {
+  /* Dark mode: deep blue-charcoal page, slightly lighter cards. */
+  --bento-bg: #0e1320;
+  --bento-bg-soft: #131a29;
+  --bento-card: var(--tg-theme-bg-color, #1a2233);
 }
 
 html,
 body,
 #root {
   height: 100%;
+  /* Soft vertical gradient (sandy-blue → lighter at top) for subtle
+     depth; falls back to the flat tint on old engines. */
   background-color: var(--bento-bg);
+  background-image: linear-gradient(180deg, var(--bento-bg-soft) 0%, var(--bento-bg) 38%);
+  background-attachment: fixed;
   color: var(--tg-theme-text-color, #0f172a);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
