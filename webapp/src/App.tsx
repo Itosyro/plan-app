@@ -11,6 +11,7 @@ import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
+import { KanbanView } from "./components/KanbanView";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
@@ -53,6 +54,45 @@ const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
   "someday",
 ]);
 
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: "list" | "board";
+  onChange: (v: "list" | "board") => void;
+}) {
+  const opts: { id: "list" | "board"; label: string }[] = [
+    { id: "list", label: "Список" },
+    { id: "board", label: "Доска" },
+  ];
+  return (
+    <div className="mb-3 flex gap-1 rounded-2xl bg-bento p-1">
+      {opts.map((o) => {
+        const active = o.id === value;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => {
+              if (active) return;
+              haptic("select");
+              onChange(o.id);
+            }}
+            className={
+              "ease-apple flex-1 rounded-xl py-1.5 text-[13px] font-medium tracking-tight transition-all duration-150 " +
+              (active
+                ? "bg-bento-card text-tg-text shadow-bento"
+                : "text-tg-hint")
+            }
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [horizons, setHorizons] = useState<Horizon[]>([]);
@@ -72,6 +112,8 @@ export default function App() {
   const route = useRoute();
   const [notesRefresh, setNotesRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
+  const [boardRefresh, setBoardRefresh] = useState(0);
+  const [tasksView, setTasksView] = useState<"list" | "board">("list");
   const tz = me?.tz ?? "Europe/Moscow";
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
@@ -254,6 +296,7 @@ export default function App() {
         void loadCounts();
         void refreshCategories();
         setCalendarRefresh((n) => n + 1);
+        setBoardRefresh((n) => n + 1);
       } catch (err) {
         // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
@@ -274,8 +317,10 @@ export default function App() {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }
         void loadCounts();
+        setBoardRefresh((n) => n + 1);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
+        setBoardRefresh((n) => n + 1);
         console.error("move failed", err);
       }
     },
@@ -365,12 +410,15 @@ export default function App() {
         return;
       }
 
-      // Horizon pill drop (Phase 5.4b).
+      // Horizon drop — pill (Phase 5.4b, list view) or kanban column
+      // (Phase 7d, board view). Both use the horizon slug as drop id.
       const targetSlug = overId;
       if (!VALID_HORIZONS.has(targetSlug as HorizonSlug)) return;
-      const task = tasks.find((t) => t.id === taskId);
-      if (task === undefined) return;
-      if (task.horizon_slug === targetSlug) return; // no-op same horizon
+      // Board cards aren't in App's ``tasks`` list, so fall back to the
+      // current slug carried in the drag payload to detect no-op drops.
+      const dragData = active.data.current as { horizonSlug?: string } | undefined;
+      const currentSlug = tasks.find((t) => t.id === taskId)?.horizon_slug ?? dragData?.horizonSlug;
+      if (currentSlug === targetSlug) return; // no-op same horizon
       haptic("success");
       void handleMove(taskId, targetSlug as HorizonSlug);
     },
@@ -502,32 +550,44 @@ export default function App() {
         />
         {activeTab === "tasks" ? (
           <>
-            <HorizonTabs
-              horizons={horizons}
-              active={activeHorizon}
-              counts={counts}
-              onChange={handleHorizonChange}
-            />
-            {tasks.length === 0 ? (
-              <EmptyState
-                icon={Sparkles}
-                tone="emerald"
-                title="Ничего на горизонте"
-                hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+            <ViewToggle value={tasksView} onChange={setTasksView} />
+            {tasksView === "board" ? (
+              <KanbanView
+                horizons={horizons}
+                refreshSignal={boardRefresh}
+                onOpen={handleOpenTask}
+                onDone={handleDone}
               />
             ) : (
-              <ul className="flex flex-col gap-2">
-                {tasks.map((task) => (
-                  <li key={task.id}>
-                    <TaskCard
-                      task={task}
-                      tz={tz}
-                      onDone={handleDone}
-                      onOpen={handleOpenTask}
-                    />
-                  </li>
-                ))}
-              </ul>
+              <>
+                <HorizonTabs
+                  horizons={horizons}
+                  active={activeHorizon}
+                  counts={counts}
+                  onChange={handleHorizonChange}
+                />
+                {tasks.length === 0 ? (
+                  <EmptyState
+                    icon={Sparkles}
+                    tone="emerald"
+                    title="Ничего на горизонте"
+                    hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+                  />
+                ) : (
+                  <ul className="flex flex-col gap-2">
+                    {tasks.map((task) => (
+                      <li key={task.id}>
+                        <TaskCard
+                          task={task}
+                          tz={tz}
+                          onDone={handleDone}
+                          onOpen={handleOpenTask}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </>
         ) : activeTab === "notes" ? (
