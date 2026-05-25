@@ -6,6 +6,41 @@
 
 ---
 
+## 2026-05-25 — feat: Phase 7e/D — SegmentedControl + редизайн BottomSheetSelect
+
+**Контекст.** Workstream D плана 7e. Симптомы юзера: сегмент-контрол
+«Список/Доска» не читался как кнопки (нет ховера/активной обводки);
+bottom-sheet выбора — «белый фон, текст по центру», опции не выглядели
+тапабельными. Этот поток разблокирует A/B/F (переиспользуют сегмент-контрол).
+
+**Сделано.**
+- Новый `webapp/src/components/SegmentedControl.tsx` — переиспользуемый
+  iOS/Telegram-style сегмент-контрол: трек `bg-bento` + hairline-ring,
+  одна **анимированная sliding-капсула** активного сегмента (тот же приём
+  translateX, что в BottomNav #109, soft-spring cubic-bezier), ховер на
+  неактивных, поддержка иконок (lucide), generic по value-типу,
+  тач-таргеты ≥44px (size=md). Заменил инлайновый `ViewToggle` в `App.tsx`
+  (List/Board теперь с иконками ListTodo/LayoutGrid). Готов к F1
+  (Список/Доска/Календарь) и B (режимы календаря).
+- Редизайн `webapp/src/components/BottomSheetSelect.tsx` — опции теперь
+  **карточки-кнопки**: поверхность `bg-bento`, hairline-ring, ≥44px,
+  чёткий ховер (tint + усиление обводки), `active:scale`; активная опция —
+  акцентная заливка `bg-tg-button/10` + ring + лейбл акцентом/semibold +
+  круглая синяя галка. Stagger-анимация появления строк
+  (`sheet-row-in` keyframe в `index.css`, per-row delay). Добавлен
+  опциональный проп `hint` (подзаголовок листа).
+
+**Верификация.** `tsc --noEmit` clean, `npm run build` clean. Изолированный
+Playwright-harness (chromium /opt/pw-browsers) — скриншоты bottom-sheet и
+обоих сегмент-контролов (2- и 3-сегментный, со слайдом капсулы) в PR.
+Python не тронут.
+
+**Не сделано / отложено.** Применение `SegmentedControl` в календаре (B) и
+поповере «Раскладка» (F1) — в своих потоках. Десктоп-поповер-вариант листа
+(F) — позже.
+
+---
+
 ## 2026-05-25 — feat: Phase 7d — выбор «Список/Доска» сохраняется в prefs
 
 **Контекст.** Тумблер List/Board (#118) сбрасывался на «Список» при
