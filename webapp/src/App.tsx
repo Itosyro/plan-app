@@ -9,7 +9,7 @@ import {
 import { Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
-import { CalendarView } from "./components/CalendarView";
+import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
@@ -20,6 +20,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
 import { TrashPage } from "./components/TrashPage";
+import { localDateKey } from "./lib/format";
 import { haptic } from "./lib/telegram";
 import { navigate, navigateHome, useRoute } from "./lib/router";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
@@ -71,6 +72,7 @@ export default function App() {
   const route = useRoute();
   const [notesRefresh, setNotesRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
+  const tz = me?.tz ?? "Europe/Moscow";
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
     const raw = route.params.id;
@@ -321,13 +323,50 @@ export default function App() {
     }),
   );
 
+  const handleReschedule = useCallback(
+    async (id: number, dueAtIso: string) => {
+      try {
+        await apiClient.patchTask(id, { due_at: dueAtIso });
+        setCalendarRefresh((n) => n + 1);
+        void loadCounts();
+      } catch (err) {
+        console.error("reschedule failed", err);
+        setCalendarRefresh((n) => n + 1); // refetch to revert optimistic UI
+      }
+    },
+    [loadCounts],
+  );
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (over === null) return;
       const taskId = Number(active.id);
-      const targetSlug = String(over.id);
       if (!Number.isFinite(taskId) || taskId <= 0) return;
+      const overId = String(over.id);
+
+      // Calendar day drop (Phase 7d): shift the task's due_at to the
+      // target day, preserving its local time-of-day. The dragged row
+      // carries its current due_at in the drag payload.
+      if (overId.startsWith(CALDAY_PREFIX)) {
+        const newKey = overId.slice(CALDAY_PREFIX.length);
+        const dueAt = (active.data.current as { dueAt?: string | null } | undefined)?.dueAt;
+        if (!dueAt) return;
+        const oldKey = localDateKey(dueAt, tz);
+        if (!oldKey || oldKey === newKey) return;
+        const deltaDays = Math.round(
+          (Date.parse(`${newKey}T00:00:00Z`) - Date.parse(`${oldKey}T00:00:00Z`)) / 86_400_000,
+        );
+        if (deltaDays === 0) return;
+        const utc = dueAt.endsWith("Z") || dueAt.includes("+") ? dueAt : dueAt + "Z";
+        const shifted = new Date(Date.parse(utc) + deltaDays * 86_400_000).toISOString();
+        haptic("success");
+        void handleReschedule(taskId, shifted);
+        return;
+      }
+
+      // Horizon pill drop (Phase 5.4b).
+      const targetSlug = overId;
       if (!VALID_HORIZONS.has(targetSlug as HorizonSlug)) return;
       const task = tasks.find((t) => t.id === taskId);
       if (task === undefined) return;
@@ -335,7 +374,7 @@ export default function App() {
       haptic("success");
       void handleMove(taskId, targetSlug as HorizonSlug);
     },
-    [tasks, handleMove],
+    [tasks, handleMove, handleReschedule, tz],
   );
 
   if (loading) {
@@ -355,8 +394,6 @@ export default function App() {
       </div>
     );
   }
-
-  const tz = me?.tz ?? "Europe/Moscow";
 
   // Detail page is a full-bleed overlay. We render it inside the same
   // DndContext so any open sheets share haptic/keyboard handling
