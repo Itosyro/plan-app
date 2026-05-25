@@ -17,6 +17,7 @@ from app.ai.whisper import transcribe_voice
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.quote_replies import reply_to
+from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
@@ -53,6 +54,15 @@ def create_router() -> Router:
     async def handle_voice(message: Message) -> None:
         """Transcribe voice, run full pipeline, reply."""
         if message.from_user is None or message.voice is None:
+            return
+
+        # Throttle per user (CRIT-2): voice is even costlier than text
+        # (Whisper + the full pipeline), so gate it the same way.
+        if not get_rate_limiter().allow(message.from_user.id):
+            logger.info("ratelimit.voice_throttled", tg_user_id=message.from_user.id)
+            await message.answer(
+                "Слишком много сообщений подряд — дай мне пару секунд разгрести. Попробуй ещё раз чуть позже."
+            )
             return
 
         async with session_scope() as session:

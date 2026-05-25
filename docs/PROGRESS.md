@@ -6,6 +6,37 @@
 
 ---
 
+## 2026-05-24 — feat: per-user rate limiting на LLM-пайплайн (CRIT-2)
+
+**Контекст.** Из security-ревью: один юзер (или утёкший токен) мог
+заспамить сотни сообщений в минуту → сотни Groq-вызовов → реальные
+деньги (denial-of-wallet). Точка входа `text.py` / `voice.py` дёргала
+пайплайн без всякого throttle.
+
+**Сделано.**
+- Новый `app/bot/rate_limit.py` — token-bucket в памяти процесса,
+  keyed по telegram user_id. `capacity = rate_limit_burst`, refill
+  `rate_limit_per_minute / 60` токенов/сек. Lock-free (asyncio
+  кооперативный, один поток). `prune()` чистит полностью-наполненные
+  idle-бакеты чтобы память не росла.
+- `app/shared/config.py`: `rate_limit_per_minute=20`, `rate_limit_burst=10`.
+  `per_minute=0` полностью выключает.
+- `text.py` + `voice.py`: перед DB/Groq дёргают `get_rate_limiter().allow(uid)`;
+  при отказе — мягкий ответ «слишком много сообщений подряд» и ранний
+  return, лог `ratelimit.{text,voice}_throttled`.
+- 7 тестов: disabled-режим, burst→throttle, refill во времени,
+  per-user изоляция, cap на refill, prune, singleton.
+
+**Верификация.** 459 passed (+7), ruff + mypy clean.
+
+**Не сделано / отложено.** Перенос в Redis при масштабировании на
+несколько воркеров (сейчас один Render-процесс — dict достаточно).
+API-rate-limiting на `/api/*` эндпоинты — отдельно, там initData-auth
+уже отсекает анонимов. Периодический вызов `prune()` из scheduler —
+опционально, память и так bounded числом активных юзеров.
+
+---
+
 ## 2026-05-24 — prompt: classifier + critic эмитят first_step / subtasks (#110)
 
 **Контекст.** Поля `first_step` (#107) и `subtasks` (#108) уже в БД и UI,
