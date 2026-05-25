@@ -8,11 +8,16 @@
 // bumps ``refreshSignal`` after a mutation.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { apiClient } from "../api/client";
 import { localDateKey, localTime } from "../lib/format";
 import { haptic } from "../lib/telegram";
 import type { Task } from "../types";
+
+// Droppable id prefix for a calendar day cell. App.tsx::handleDragEnd
+// recognises this to reschedule a dragged task onto the target day.
+export const CALDAY_PREFIX = "calday:";
 
 interface Props {
   tz: string;
@@ -159,46 +164,21 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
         <div className="grid grid-cols-7 gap-1">
           {cells.map((cell) => {
             const dayTasks = byDay.get(cell.key) ?? [];
-            const hasTasks = dayTasks.length > 0;
-            const isToday = cell.key === tKey;
-            const isSelected = cell.key === selectedKey;
-            const allDone = hasTasks && dayTasks.every((t) => t.status === "done");
             return (
-              <button
+              <DayCell
                 key={cell.key}
-                type="button"
-                onClick={() => {
+                dateKey={cell.key}
+                dayNumber={cell.date.getDate()}
+                inMonth={cell.inMonth}
+                isToday={cell.key === tKey}
+                isSelected={cell.key === selectedKey}
+                hasTasks={dayTasks.length > 0}
+                allDone={dayTasks.length > 0 && dayTasks.every((t) => t.status === "done")}
+                onSelect={() => {
                   haptic("select");
                   setSelectedKey(cell.key);
                 }}
-                className={
-                  "ease-apple relative flex aspect-square flex-col items-center justify-center rounded-2xl text-[14px] transition-all duration-150 active:scale-90 " +
-                  (isSelected
-                    ? "bg-tg-button/15 font-semibold text-tg-button"
-                    : cell.inMonth
-                      ? "text-tg-text hover:bg-bento"
-                      : "text-tg-hint/40")
-                }
-              >
-                <span
-                  className={
-                    isToday && !isSelected
-                      ? "flex h-6 w-6 items-center justify-center rounded-full bg-tg-button/15 text-tg-button"
-                      : ""
-                  }
-                >
-                  {cell.date.getDate()}
-                </span>
-                {hasTasks && (
-                  <span
-                    aria-hidden
-                    className={
-                      "absolute bottom-1 h-1.5 w-1.5 rounded-full " +
-                      (allDone ? "bg-emerald-500/60" : "bg-tg-button")
-                    }
-                  />
-                )}
-              </button>
+              />
             );
           })}
         </div>
@@ -213,33 +193,123 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
           selectedTasks
             .slice()
             .sort((a, b) => (a.due_at ?? "").localeCompare(b.due_at ?? ""))
-            .map((t) => {
-              const time = localTime(t.due_at, tz);
-              const isDone = t.status === "done";
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => onOpen(t.id)}
-                  className="ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left shadow-bento ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99]"
-                >
-                  <span className="flex w-12 shrink-0 items-center gap-1 text-[12px] font-medium text-tg-hint">
-                    <Clock size={12} strokeWidth={2} aria-hidden />
-                    {time ?? "—"}
-                  </span>
-                  <span
-                    className={
-                      "min-w-0 flex-1 truncate text-[15px] " +
-                      (isDone ? "text-tg-hint line-through" : "text-tg-text")
-                    }
-                  >
-                    {t.title}
-                  </span>
-                </button>
-              );
-            })
+            .map((t) => (
+              <DraggableTaskRow
+                key={t.id}
+                task={t}
+                time={localTime(t.due_at, tz)}
+                onOpen={onOpen}
+              />
+            ))
         )}
       </div>
     </div>
+  );
+}
+
+interface DayCellProps {
+  dateKey: string;
+  dayNumber: number;
+  inMonth: boolean;
+  isToday: boolean;
+  isSelected: boolean;
+  hasTasks: boolean;
+  allDone: boolean;
+  onSelect: () => void;
+}
+
+function DayCell({
+  dateKey,
+  dayNumber,
+  inMonth,
+  isToday,
+  isSelected,
+  hasTasks,
+  allDone,
+  onSelect,
+}: DayCellProps) {
+  const { isOver, setNodeRef } = useDroppable({ id: CALDAY_PREFIX + dateKey });
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={onSelect}
+      className={
+        "ease-apple relative flex aspect-square flex-col items-center justify-center rounded-2xl text-[14px] transition-all duration-150 active:scale-90 " +
+        (isOver
+          ? "bg-tg-button/25 ring-2 ring-tg-button"
+          : isSelected
+            ? "bg-tg-button/15 font-semibold text-tg-button"
+            : inMonth
+              ? "text-tg-text hover:bg-bento"
+              : "text-tg-hint/40")
+      }
+    >
+      <span
+        className={
+          isToday && !isSelected
+            ? "flex h-6 w-6 items-center justify-center rounded-full bg-tg-button/15 text-tg-button"
+            : ""
+        }
+      >
+        {dayNumber}
+      </span>
+      {hasTasks && (
+        <span
+          aria-hidden
+          className={
+            "absolute bottom-1 h-1.5 w-1.5 rounded-full " +
+            (allDone ? "bg-emerald-500/60" : "bg-tg-button")
+          }
+        />
+      )}
+    </button>
+  );
+}
+
+interface DraggableTaskRowProps {
+  task: Task;
+  time: string | null;
+  onOpen: (id: number) => void;
+}
+
+function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
+  const isDone = task.status === "done";
+  // Attach the current ``due_at`` so App.tsx::handleDragEnd can shift it
+  // to the drop-target day while preserving the local time-of-day.
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+    data: { kind: "caltask", dueAt: task.due_at },
+    disabled: isDone,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 }
+    : undefined;
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      type="button"
+      onClick={() => onOpen(task.id)}
+      className={
+        "ease-apple flex touch-manipulation items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99] " +
+        (isDragging ? "shadow-bento-lg" : "shadow-bento")
+      }
+    >
+      <span className="flex w-12 shrink-0 items-center gap-1 text-[12px] font-medium text-tg-hint">
+        <Clock size={12} strokeWidth={2} aria-hidden />
+        {time ?? "—"}
+      </span>
+      <span
+        className={
+          "min-w-0 flex-1 truncate text-[15px] " +
+          (isDone ? "text-tg-hint line-through" : "text-tg-text")
+        }
+      >
+        {task.title}
+      </span>
+    </button>
   );
 }
