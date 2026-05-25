@@ -6,11 +6,11 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { CalendarDays, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
+import { CalendarView } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
-import { ComingSoon } from "./components/ComingSoon";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
@@ -70,6 +70,7 @@ export default function App() {
 
   const route = useRoute();
   const [notesRefresh, setNotesRefresh] = useState(0);
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
     const raw = route.params.id;
@@ -250,6 +251,7 @@ export default function App() {
         }, 350);
         void loadCounts();
         void refreshCategories();
+        setCalendarRefresh((n) => n + 1);
       } catch (err) {
         // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
@@ -291,6 +293,7 @@ export default function App() {
     void loadTasks(activeHorizon, selectedCategory);
     void loadCounts();
     void refreshCategories();
+    setCalendarRefresh((n) => n + 1);
   }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
 
   const handleOpenNote = useCallback((id: number) => {
@@ -493,11 +496,10 @@ export default function App() {
         ) : activeTab === "notes" ? (
           <NotesList refreshSignal={notesRefresh} onOpen={handleOpenNote} />
         ) : activeTab === "calendar" ? (
-          <ComingSoon
-            icon={CalendarDays}
-            tone="violet"
-            title="Календарь скоро"
-            description="Задачи с датами в сетке на месяц и неделю с drag-n-drop."
+          <CalendarView
+            tz={tz}
+            refreshSignal={calendarRefresh}
+            onOpen={handleOpenTask}
           />
         ) : me ? (
           <SettingsPage me={me} onUpdated={setMe} />
