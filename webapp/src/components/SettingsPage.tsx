@@ -1,4 +1,4 @@
-// Phase 7c: Mini-App Settings page.
+// Phase 7c → 7e/E2: Mini-App Settings page.
 //
 // Mirrors the bot's ``/settings`` keyboard surface: same fields, same
 // allow-listed values, same defaults. Server-side validation lives in
@@ -8,6 +8,11 @@
 // All mutations go through PATCH /api/me, which updates ``User.tz``,
 // ``User.display_name`` and ``UserSettings`` in one transaction and
 // returns the fresh ``Me`` payload — no extra GET round-trip.
+//
+// Visual language (7e/E2, Mira-inspired Telegram-native): rows are
+// grouped into a single rounded card per section (iOS grouped list),
+// with an accent-colored section header above. Boolean prefs use an
+// iOS toggle Switch; multi-choice prefs open a bottom-sheet picker.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -32,6 +37,7 @@ import { navigate } from "../lib/router";
 import type { Me, TrashCounts, Timezone } from "../types";
 import { BottomSheetSelect } from "./BottomSheetSelect";
 import { IconTile, type TileTone } from "./IconTile";
+import { Switch } from "./Switch";
 
 // Option vocabularies. These match the labels used in
 // app/bot/routers/settings.py::SETTING_OPTIONS so the bot and the
@@ -76,23 +82,6 @@ const WEEK_DUE_SEMANTIC_OPTIONS: { value: string; label: string }[] = [
   { value: "deadline_sunday", label: "Дедлайн воскресенье" },
   { value: "deadline_saturday", label: "Дедлайн суббота" },
   { value: "spread_evenly", label: "Равномерно" },
-];
-
-// PR-E "make it concrete": opt-in toggle for the classifier's optional
-// ``first_step`` hint. Values are stringified booleans because
-// ``BottomSheetSelect`` works on strings; the patch handler converts
-// the picked option to a real bool before sending over the wire.
-const CONCRETIZE_OPTIONS: { value: string; label: string; hint?: string }[] = [
-  {
-    value: "on",
-    label: "Добавлять",
-    hint: "Абстрактную задачу превращаю в конкретный первый шаг 🎯 — «создать презентацию» станет «сделать первый слайд».",
-  },
-  {
-    value: "off",
-    label: "Не трогать",
-    hint: "Сохраняю формулировку ровно так, как ты сказал.",
-  },
 ];
 
 interface Props {
@@ -164,14 +153,14 @@ export function SettingsPage({ me, onUpdated }: Props) {
   const settings = me.settings;
 
   return (
-    <div className="flex flex-col gap-5 pb-4">
+    <div className="flex flex-col gap-6 pb-4">
       {error && (
         <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100">
           {error}
         </div>
       )}
 
-      <SettingsSection title="Основные">
+      <SettingsSection title="Профиль" index={0}>
         <SettingsTextRow
           icon={User}
           tone="indigo"
@@ -215,7 +204,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection title="Дайджест">
+      <SettingsSection title="Дайджест" index={1}>
         <SettingsSelectRow
           icon={Sun}
           tone="orange"
@@ -240,7 +229,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection title="Ответы бота">
+      <SettingsSection title="Ответы бота" index={2}>
         <SettingsSelectRow
           icon={Languages}
           tone="teal"
@@ -265,7 +254,18 @@ export function SettingsPage({ me, onUpdated }: Props) {
         />
       </SettingsSection>
 
-      <SettingsSection title="Поведение">
+      <SettingsSection title="Поведение" index={3}>
+        <SettingsToggleRow
+          icon={ListChecks}
+          tone="sky"
+          label="Первый шаг"
+          hint="Абстрактную задачу превращаю в конкретный первый шаг 🎯"
+          checked={settings?.concretize_tasks ?? false}
+          disabled={pending === "concretize_tasks"}
+          onChange={(next) =>
+            patch("concretize_tasks", { settings: { concretize_tasks: next } })
+          }
+        />
         <SettingsSelectRow
           icon={ShieldCheck}
           tone="violet"
@@ -286,24 +286,13 @@ export function SettingsPage({ me, onUpdated }: Props) {
             patch("week_due_semantic", { settings: { week_due_semantic: value } })
           }
         />
-        <SettingsSelectRow
-          icon={ListChecks}
-          tone="sky"
-          label="Первый шаг"
-          value={settings?.concretize_tasks ? "on" : "off"}
-          options={CONCRETIZE_OPTIONS}
-          disabled={pending === "concretize_tasks"}
-          onChange={(value) =>
-            patch("concretize_tasks", { settings: { concretize_tasks: value === "on" } })
-          }
-        />
       </SettingsSection>
 
-      <SettingsSection title="Уведомления">
+      <SettingsSection title="Уведомления" index={4}>
         <BellRow />
       </SettingsSection>
 
-      <SettingsSection title="Данные">
+      <SettingsSection title="Данные" index={5}>
         <TrashRow trashCounts={trashCounts} />
       </SettingsSection>
     </div>
@@ -312,77 +301,138 @@ export function SettingsPage({ me, onUpdated }: Props) {
 
 // ── Section wrapper ─────────────────────────────────────────────────
 //
-// Each section now renders its rows as **independent bento cards**
-// separated by a small gap, rather than one card with internal
-// dividers. The section title sits above the cards, in the same
-// hint-color uppercase style that iOS Settings uses.
+// Mira-style grouped list: one rounded card per section holding all its
+// rows with hairline dividers between them, an accent-colored header
+// above. The card cascades in with a small staggered slide-up.
 
 interface SectionProps {
   title: string;
+  index: number;
   children: React.ReactNode;
 }
 
-function SettingsSection({ title, children }: SectionProps) {
+function SettingsSection({ title, index, children }: SectionProps) {
   return (
-    <section>
-      <header className="mb-2 px-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
+    <section
+      style={{
+        animation: "sheet-row-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both",
+        animationDelay: `${index * 55}ms`,
+      }}
+    >
+      <header className="mb-2 px-4 text-[13px] font-semibold tracking-tight text-tg-link">
         {title}
       </header>
-      <div className="flex flex-col gap-1.5">{children}</div>
+      <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+        <div className="divide-y divide-tg-divider/40">{children}</div>
+      </div>
     </section>
   );
 }
 
-// ── Card row primitive ──────────────────────────────────────────────
+// ── Grouped-list row primitive ──────────────────────────────────────
 
-interface CardRowProps {
+interface RowProps {
   children: React.ReactNode;
-  as?: "div" | "label" | "button" | "form";
+  as?: "div" | "button";
   disabled?: boolean;
   onClick?: () => void;
+  ariaPressed?: boolean;
 }
 
-function CardRow({ children, as = "div", disabled, onClick }: CardRowProps) {
+function Row({ children, as = "div", disabled, onClick, ariaPressed }: RowProps) {
   const className =
-    "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-black/5 transition-all duration-200 " +
+    "ease-apple flex min-h-[56px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-150 " +
     (disabled ? "opacity-60 " : "") +
-    (onClick && !disabled ? "active:scale-[0.99] hover:bg-bento-card/90" : "");
+    (onClick && !disabled ? "hover:bg-bento/60 active:bg-bento" : "");
   if (as === "button") {
     return (
       <button
         type="button"
-        className={"text-left " + className}
+        className={className}
         onClick={onClick}
         disabled={disabled}
+        aria-pressed={ariaPressed}
       >
         {children}
       </button>
     );
   }
-  if (as === "label") {
-    return <label className={className}>{children}</label>;
-  }
   return <div className={className}>{children}</div>;
+}
+
+// Label cell: icon tile + (label / optional hint).
+function RowLabel({
+  icon,
+  tone,
+  label,
+  hint,
+}: {
+  icon: LucideIcon;
+  tone: TileTone;
+  label: string;
+  hint?: string;
+}) {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-3 text-[15px] text-tg-text">
+      <IconTile icon={icon} tone={tone} size="md" />
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{label}</span>
+        {hint && (
+          <span className="mt-0.5 block truncate text-[12px] leading-snug text-tg-hint">
+            {hint}
+          </span>
+        )}
+      </span>
+    </span>
+  );
+}
+
+// ── Toggle row (boolean prefs) ──────────────────────────────────────
+
+interface ToggleRowProps {
+  icon: LucideIcon;
+  tone: TileTone;
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (next: boolean) => void;
+}
+
+function SettingsToggleRow({
+  icon,
+  tone,
+  label,
+  hint,
+  checked,
+  disabled,
+  onChange,
+}: ToggleRowProps) {
+  // The whole row toggles; the Switch renders presentational so we don't
+  // nest a button inside a button.
+  return (
+    <Row
+      as="button"
+      disabled={disabled}
+      ariaPressed={checked}
+      onClick={() => onChange(!checked)}
+    >
+      <RowLabel icon={icon} tone={tone} label={label} hint={hint} />
+      <Switch checked={checked} presentational />
+    </Row>
+  );
 }
 
 // ── Bell info row (static for now) ──────────────────────────────────
 
 function BellRow() {
   return (
-    <CardRow>
-      <span className="flex min-w-0 flex-1 items-center gap-3 text-[15px] text-tg-text">
-        <IconTile icon={Bell} tone="rose" size="md" />
-        <span className="min-w-0">
-          <span className="block truncate font-medium">Напоминания</span>
-          <span className="block truncate text-[12px] text-tg-hint">
-            Управляются ботом / голосом
-          </span>
-        </span>
-      </span>
+    <Row>
+      <RowLabel icon={Bell} tone="rose" label="Напоминания" hint="Управляются ботом / голосом" />
       <span className="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600">
         Включены
       </span>
-    </CardRow>
+    </Row>
   );
 }
 
@@ -391,7 +441,7 @@ function BellRow() {
 function TrashRow({ trashCounts }: { trashCounts: TrashCounts | null }) {
   const total = trashCounts ? trashCounts.tasks + trashCounts.notes : 0;
   return (
-    <CardRow as="button" onClick={() => navigate("/trash")}>
+    <Row as="button" onClick={() => navigate("/trash")}>
       <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
         <IconTile icon={Trash2} tone="slate" size="md" />
         <span className="truncate font-medium">Корзина</span>
@@ -402,18 +452,15 @@ function TrashRow({ trashCounts }: { trashCounts: TrashCounts | null }) {
             {total}
           </span>
         )}
-        <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+        <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
       </span>
-    </CardRow>
+    </Row>
   );
 }
 
 // ── Generic select row ──────────────────────────────────────────────
 //
 // Tapping the row opens a BottomSheet picker (BottomSheetSelect).
-// The native ``<select>`` is gone — it rendered as a Material
-// dropdown on Android, didn't honor our font/theme, and was a
-// notable complaint in v13 UX feedback.
 
 interface SelectRowProps {
   icon: LucideIcon;
@@ -439,7 +486,7 @@ function SettingsSelectRow({
   const currentLabel = current?.label ?? value;
   return (
     <>
-      <CardRow as="button" disabled={disabled} onClick={() => setOpen(true)}>
+      <Row as="button" disabled={disabled} onClick={() => setOpen(true)}>
         <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
           <IconTile icon={icon} tone={tone} size="md" />
           <span className="truncate font-medium">{label}</span>
@@ -448,9 +495,9 @@ function SettingsSelectRow({
           <span className="font-display max-w-[160px] truncate font-medium tracking-tight text-tg-text/80">
             {currentLabel}
           </span>
-          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+          <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
         </span>
-      </CardRow>
+      </Row>
       <BottomSheetSelect
         open={open}
         onClose={() => setOpen(false)}
@@ -497,25 +544,23 @@ function SettingsTextRow({
 
   if (!editing) {
     return (
-      <CardRow as="button" disabled={pending} onClick={onEdit}>
+      <Row as="button" disabled={pending} onClick={onEdit}>
         <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
           <IconTile icon={icon} tone={tone} size="md" />
           <span className="truncate font-medium">{label}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
-          <span className="max-w-[160px] truncate">
-            {value || placeholder}
-          </span>
+          <span className="max-w-[160px] truncate">{value || placeholder}</span>
           <Pencil size={13} strokeWidth={2.25} aria-hidden />
-          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+          <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
         </span>
-      </CardRow>
+      </Row>
     );
   }
 
   return (
     <form
-      className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
+      className="flex items-center gap-2 px-4 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         void onSubmit(draft);
@@ -587,10 +632,8 @@ function SettingsTimezoneRow({
   onSubmit,
 }: TimezoneRowProps) {
   // Two surfaces: a tap on the row opens the popular-zones picker
-  // (BottomSheetSelect). A small "Указать другой" link inside the
-  // sheet's footer area is not natively supported, so we expose a
-  // separate "free-text" sub-row when ``editing`` is true and the
-  // user explicitly entered custom mode.
+  // (BottomSheetSelect). A small "Указать другой" link switches to a
+  // free-text input for arbitrary IANA zones.
   const popularContains = timezones.some((t) => t.iana === currentIana);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [customMode, setCustomMode] = useState(false);
@@ -609,7 +652,7 @@ function SettingsTimezoneRow({
 
   if (!editing) {
     return (
-      <CardRow as="button" disabled={pending} onClick={onEdit}>
+      <Row as="button" disabled={pending} onClick={onEdit}>
         <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
           <IconTile icon={icon} tone={tone} size="md" />
           <span className="truncate font-medium">{label}</span>
@@ -617,19 +660,18 @@ function SettingsTimezoneRow({
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
           <span className="max-w-[160px] truncate">{currentLabel}</span>
           <Pencil size={13} strokeWidth={2.25} aria-hidden />
-          <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+          <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
         </span>
-      </CardRow>
+      </Row>
     );
   }
 
-  // Editing surface: bento card with an IconTile, the current
-  // picker (either tappable row → sheet OR free-text input), and
-  // Cancel/Save row.
+  // Editing surface: a cell with an IconTile, the current picker (either
+  // a tappable row → sheet OR a free-text input), and Cancel/Save.
   return (
     <>
       <form
-        className="ease-apple flex flex-col gap-2 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-button/30 transition-all duration-200"
+        className="flex flex-col gap-2 px-4 py-3"
         onSubmit={(e) => {
           e.preventDefault();
           void onSubmit(draft);
@@ -665,7 +707,7 @@ function SettingsTimezoneRow({
               <span className="truncate">
                 {timezones.find((t) => t.iana === draft)?.label ?? draft}
               </span>
-              <ChevronRight size={14} strokeWidth={2.25} aria-hidden />
+              <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
             </button>
           )}
         </div>
