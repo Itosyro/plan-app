@@ -105,8 +105,14 @@ export const apiClient = {
   categories: () => api<Category[]>("/categories"),
   createCategory: (name: string) =>
     api<Category>("/categories", { method: "POST", body: { name } }),
-  tasks: (q?: { horizon?: string; category_id?: number; status?: string; include_done?: boolean }) =>
-    api<Task[]>("/tasks", { query: q }),
+  tasks: (q?: {
+    horizon?: string;
+    category_id?: number;
+    status?: string;
+    include_done?: boolean;
+    include_subtasks?: boolean;
+    limit?: number;
+  }) => api<Task[]>("/tasks", { query: q }),
   taskCounts: () => api<TaskCounts>("/tasks/counts"),
   task: (id: number) => api<TaskDetail>(`/tasks/${id}`),
   patchTask: (id: number, body: TaskUpdate) =>
