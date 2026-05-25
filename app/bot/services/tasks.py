@@ -873,6 +873,7 @@ async def _maybe_complete_parent(session: AsyncSession, child: Task, user_id: in
     if parent is None or parent.status == "done" or parent.deleted_at is not None:
         return None
     parent.status = "done"
+    parent.completed_at = utcnow_naive()
     session.add(parent)
     await session.flush()
     if parent.id is not None:
@@ -899,6 +900,7 @@ async def mark_task_done(
     auto-completed too (see :func:`_maybe_complete_parent`).
     """
     task.status = "done"
+    task.completed_at = utcnow_naive()
     session.add(task)
     await session.flush()
 
@@ -932,6 +934,7 @@ async def mark_task_undone(
     event so the audit trail mirrors :func:`mark_task_done`.
     """
     task.status = "new"
+    task.completed_at = None
     session.add(task)
     await session.flush()
 
@@ -951,6 +954,7 @@ async def mark_task_undone(
         parent = await session.get(Task, task.parent_id)
         if parent is not None and parent.status == "done" and parent.deleted_at is None:
             parent.status = "new"
+            parent.completed_at = None
             session.add(parent)
             await session.flush()
             if parent.id is not None:

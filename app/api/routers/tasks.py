@@ -66,6 +66,7 @@ def _task_to_out(
             "status": task.status,
             "due_at": task.due_at,
             "created_at": task.created_at,
+            "completed_at": task.completed_at,
             "horizon_slug": horizon_slug,
             "category_id": task.category_id,
             "category_name": category_name,
@@ -134,7 +135,16 @@ async def list_tasks(
         elif not include_done:
             stmt = stmt.where(Task.status != "done")
 
-        stmt = stmt.order_by(Task.created_at.desc()).limit(limit)  # type: ignore[attr-defined]
+        # The "Выполненные" screen asks status=done — order by when they
+        # were completed (most recent first), falling back to created_at
+        # for legacy done rows with a NULL completed_at.
+        if status_filter == "done":
+            stmt = stmt.order_by(
+                Task.completed_at.desc().nullslast(),  # type: ignore[union-attr]
+                Task.created_at.desc(),  # type: ignore[attr-defined]
+            ).limit(limit)
+        else:
+            stmt = stmt.order_by(Task.created_at.desc()).limit(limit)  # type: ignore[attr-defined]
         result = await session.exec(stmt)
         rows = list(result.all())
 

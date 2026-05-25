@@ -73,6 +73,12 @@ Telegram WebApp CloudStorage; FastAPI, SQLModel, Alembic, pytest.
 
 ---
 
+> **СТАТУС (2026-05-25):** D ✅ (#123 SegmentedControl + BottomSheet),
+> A ✅ (#124 канбан=категории + фикс DnD), E2 ✅ (#125 Настройки в Mira-стиле),
+> C 🟡 бэк готов (completed_at + миграция 0014 + сортировка done), C-фронт
+> (CompletedPage / linger / роут `/completed`) — **TODO следующим**. Дальше:
+> C-фронт → F1 → B → остальной E → G.
+
 ## Workstream A — Починить и переосмыслить Канбан
 
 **Симптомы от юзера:** карточка «зажимается, отображается», но не
