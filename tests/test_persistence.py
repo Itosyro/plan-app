@@ -18,6 +18,8 @@ from app.bot.services import (
     get_or_create_user,
     get_user_categories,
     log_ai_run,
+    mark_task_done,
+    mark_task_undone,
     persist_classification,
 )
 from app.db.base import get_sessionmaker
@@ -663,3 +665,89 @@ async def test_persist_no_subtasks_when_null(session: AsyncSession) -> None:
     assert isinstance(parent, Task)
     children = (await session.exec(select(Task).where(Task.parent_id == parent.id))).all()
     assert children == []
+
+
+async def _make_parent_with_children(
+    session: AsyncSession, telegram_id: int, n_children: int
+) -> tuple[Task, list[Task]]:
+    """Helper: persist a parent task with ``n_children`` subtasks."""
+    user, _ = await get_or_create_user(session, telegram_id=telegram_id)
+    await session.commit()
+    assert user.id is not None
+    cr = ClassifierResult(
+        category_name="Проект",
+        horizon="week",
+        priority="medium",
+        is_task=True,
+        confidence=0.9,
+        title="Большой проект",
+        subtasks=[f"Шаг {i}" for i in range(1, n_children + 1)],
+    )
+    parent = await persist_classification(
+        session, user_id=user.id, cr=cr, due_at=None, inbox_id=None
+    )
+    await session.commit()
+    assert isinstance(parent, Task)
+    children = list((await session.exec(select(Task).where(Task.parent_id == parent.id))).all())
+    return parent, children
+
+
+@pytest.mark.asyncio
+async def test_parent_auto_completes_when_last_child_done(session: AsyncSession) -> None:
+    parent, children = await _make_parent_with_children(session, 930, 2)
+    assert len(children) == 2
+
+    # Completing the first child leaves the parent open.
+    await mark_task_done(session, children[0], parent.user_id)
+    await session.commit()
+    refreshed_parent = await session.get(Task, parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status != "done"
+
+    # Completing the last child auto-completes the parent.
+    await mark_task_done(session, children[1], parent.user_id)
+    await session.commit()
+    refreshed_parent = await session.get(Task, parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_parent_reopens_when_child_reopened(session: AsyncSession) -> None:
+    parent, children = await _make_parent_with_children(session, 931, 2)
+
+    await mark_task_done(session, children[0], parent.user_id)
+    await mark_task_done(session, children[1], parent.user_id)
+    await session.commit()
+    refreshed_parent = await session.get(Task, parent.id)
+    assert refreshed_parent is not None and refreshed_parent.status == "done"
+
+    # Reopening any child must reopen the auto-completed parent.
+    await mark_task_undone(session, children[0], parent.user_id)
+    await session.commit()
+    refreshed_parent = await session.get(Task, parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status == "new"
+
+
+@pytest.mark.asyncio
+async def test_completing_atomic_task_does_not_touch_parent(session: AsyncSession) -> None:
+    """A top-level task (parent_id is None) completes without side effects."""
+    user, _ = await get_or_create_user(session, telegram_id=932)
+    await session.commit()
+    assert user.id is not None
+    cat = await get_or_create_category(session, user.id, "Покупки")
+    hor = await get_or_create_horizon(session, user.id, "today")
+    task = Task(
+        user_id=user.id,
+        category_id=cat.id,
+        horizon_id=hor.id,
+        title="Купить хлеб",
+        priority="medium",
+    )
+    session.add(task)
+    await session.commit()
+
+    updated = await mark_task_done(session, task, user.id)
+    assert updated.status == "done"
+    assert updated.parent_id is None
