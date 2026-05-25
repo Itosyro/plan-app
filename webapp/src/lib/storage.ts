@@ -115,4 +115,5 @@ export async function storageRemove(key: string): Promise<boolean> {
 export const StorageKeys = {
   lastHorizon: "last_horizon",
   lastCategory: "last_category",
+  lastTasksView: "last_tasks_view",
 } as const;

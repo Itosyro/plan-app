@@ -229,9 +229,10 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedHorizon, storedCategory] = await Promise.all([
+      const [storedHorizon, storedCategory, storedView] = await Promise.all([
         storageGet(StorageKeys.lastHorizon),
         storageGet(StorageKeys.lastCategory),
+        storageGet(StorageKeys.lastTasksView),
       ]);
       if (cancelled) return;
       if (storedHorizon && VALID_HORIZONS.has(storedHorizon as HorizonSlug)) {
@@ -242,6 +243,9 @@ export default function App() {
         if (Number.isFinite(parsed) && parsed > 0) {
           setSelectedCategory(parsed);
         }
+      }
+      if (storedView === "board" || storedView === "list") {
+        setTasksView(storedView);
       }
       setPrefsHydrated(true);
     })();
@@ -550,7 +554,13 @@ export default function App() {
         />
         {activeTab === "tasks" ? (
           <>
-            <ViewToggle value={tasksView} onChange={setTasksView} />
+            <ViewToggle
+              value={tasksView}
+              onChange={(v) => {
+                setTasksView(v);
+                void storageSet(StorageKeys.lastTasksView, v);
+              }}
+            />
             {tasksView === "board" ? (
               <KanbanView
                 horizons={horizons}
