@@ -14,6 +14,7 @@ import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
+import { CompletedPage } from "./components/CompletedPage";
 import {
   KanbanView,
   KanbanCardView,
@@ -148,6 +149,10 @@ export default function App() {
         const resp = await apiClient.tasks({
           horizon,
           category_id: categoryId ?? undefined,
+          // Phase 7e/C: pull recently-done tasks too so they can linger
+          // struck-through in the list; the render filter hides ones
+          // completed > 24h ago (they live in the «Выполненные» screen).
+          include_done: true,
         });
         setTasks(resp);
       } catch (err) {
@@ -265,24 +270,45 @@ export default function App() {
 
   const handleDone = useCallback(
     async (id: number) => {
+      // Phase 7e/C linger: the task stays in the list, struck-through,
+      // with a fresh completed_at — the render filter keeps it visible
+      // for 24h. No more 350ms removal; re-tap (handleReopen) undoes it.
+      const nowIso = new Date().toISOString();
       setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, status: "done" } : t)),
+        prev.map((t) =>
+          t.id === id ? { ...t, status: "done", completed_at: nowIso } : t,
+        ),
       );
       try {
         await apiClient.patchTask(id, { status: "done" });
-        // Drop completed tasks from the visible list a moment later so
-        // the user has time to register the strikethrough animation.
-        setTimeout(() => {
-          setTasks((prev) => prev.filter((t) => t.id !== id));
-        }, 350);
         void loadCounts();
         void refreshCategories();
         setCalendarRefresh((n) => n + 1);
         setBoardRefresh((n) => n + 1);
       } catch (err) {
-        // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
         console.error("done failed", err);
+      }
+    },
+    [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
+  );
+
+  const handleReopen = useCallback(
+    async (id: number) => {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === id ? { ...t, status: "new", completed_at: null } : t,
+        ),
+      );
+      try {
+        await apiClient.patchTask(id, { status: "new" });
+        void loadCounts();
+        void refreshCategories();
+        setCalendarRefresh((n) => n + 1);
+        setBoardRefresh((n) => n + 1);
+      } catch (err) {
+        loadTasks(activeHorizon, selectedCategory);
+        console.error("reopen failed", err);
       }
     },
     [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
@@ -509,7 +535,7 @@ export default function App() {
     );
   }
 
-  if (route.path === "/trash") {
+  if (route.path === "/trash" || route.path === "/completed") {
     return (
       <DndContext sensors={sensors}>
         <div
@@ -519,7 +545,7 @@ export default function App() {
             paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
           }}
         >
-          <TrashPage />
+          {route.path === "/completed" ? <CompletedPage tz={tz} /> : <TrashPage />}
         </div>
         <BottomNav
           active={activeTab}
@@ -545,6 +571,20 @@ export default function App() {
     selectedCategory === null
       ? undefined
       : categories.find((c) => c.id === selectedCategory)?.name;
+
+  // Phase 7e/C linger: show open tasks + done ones completed within the
+  // last 24h (struck-through). Older done tasks live in «Выполненные».
+  // Plain const (not a hook) — we're past the early returns above.
+  const LINGER_MS = 24 * 60 * 60 * 1000;
+  const visibleTasks = tasks.filter((t) => {
+    if (t.status !== "done") return true;
+    const ts = t.completed_at;
+    if (!ts) return false;
+    // Server timestamps are naive UTC (no suffix); optimistic ones carry
+    // a trailing Z. Normalise before parsing.
+    const utc = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+    return Date.now() - Date.parse(utc) < LINGER_MS;
+  });
 
   return (
     <DndContext
@@ -607,7 +647,7 @@ export default function App() {
                   counts={counts}
                   onChange={handleHorizonChange}
                 />
-                {tasks.length === 0 ? (
+                {visibleTasks.length === 0 ? (
                   <EmptyState
                     icon={Sparkles}
                     tone="emerald"
@@ -616,12 +656,13 @@ export default function App() {
                   />
                 ) : (
                   <ul className="flex flex-col gap-2">
-                    {tasks.map((task) => (
+                    {visibleTasks.map((task) => (
                       <li key={task.id}>
                         <TaskCard
                           task={task}
                           tz={tz}
                           onDone={handleDone}
+                          onReopen={handleReopen}
                           onOpen={handleOpenTask}
                         />
                       </li>

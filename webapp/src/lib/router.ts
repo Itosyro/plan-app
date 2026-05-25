@@ -27,6 +27,7 @@ const ROUTES: { pattern: RegExp; path: string; keys: string[] }[] = [
   { pattern: /^\/note\/new$/, path: "/note/new", keys: [] },
   { pattern: /^\/note\/(\d+)$/, path: "/note/:id", keys: ["id"] },
   { pattern: /^\/trash$/, path: "/trash", keys: [] },
+  { pattern: /^\/completed$/, path: "/completed", keys: [] },
   { pattern: /^\/$/, path: "/", keys: [] },
 ];
 
