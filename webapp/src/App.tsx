@@ -6,7 +6,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { Sparkles } from "lucide-react";
+import { LayoutGrid, ListTodo, Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
@@ -17,6 +17,7 @@ import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { NoteDetail } from "./components/NoteDetail";
 import { NotesList } from "./components/NotesList";
+import { SegmentedControl, type SegmentOption } from "./components/SegmentedControl";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
@@ -54,44 +55,10 @@ const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
   "someday",
 ]);
 
-function ViewToggle({
-  value,
-  onChange,
-}: {
-  value: "list" | "board";
-  onChange: (v: "list" | "board") => void;
-}) {
-  const opts: { id: "list" | "board"; label: string }[] = [
-    { id: "list", label: "Список" },
-    { id: "board", label: "Доска" },
-  ];
-  return (
-    <div className="mb-3 flex gap-1 rounded-2xl bg-bento p-1">
-      {opts.map((o) => {
-        const active = o.id === value;
-        return (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => {
-              if (active) return;
-              haptic("select");
-              onChange(o.id);
-            }}
-            className={
-              "ease-apple flex-1 rounded-xl py-1.5 text-[13px] font-medium tracking-tight transition-all duration-150 " +
-              (active
-                ? "bg-bento-card text-tg-text shadow-bento"
-                : "text-tg-hint")
-            }
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+const TASKS_VIEW_OPTIONS: SegmentOption<"list" | "board">[] = [
+  { value: "list", label: "Список", icon: ListTodo },
+  { value: "board", label: "Доска", icon: LayoutGrid },
+];
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -554,7 +521,10 @@ export default function App() {
         />
         {activeTab === "tasks" ? (
           <>
-            <ViewToggle
+            <SegmentedControl
+              className="mb-3"
+              ariaLabel="Вид задач"
+              options={TASKS_VIEW_OPTIONS}
               value={tasksView}
               onChange={(v) => {
                 setTasksView(v);
