@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     # Pages) — Telegram requires HTTPS for ``MenuButtonWebApp``.
     miniapp_url_override: str | None = None
 
+    # Per-user rate limit for the LLM pipeline. A token bucket of
+    # ``rate_limit_burst`` tokens refilling at ``rate_limit_per_minute``
+    # tokens/min. Each inbound text / voice message costs one token;
+    # when the bucket is empty the bot replies with a gentle "slow
+    # down" instead of firing the expensive Groq pipeline. Defends
+    # against a single user (or a leaked token) running up cost — see
+    # CRIT-2 in the 2026-05 security review. Set
+    # ``rate_limit_per_minute`` to 0 to disable entirely.
+    rate_limit_per_minute: int = 20
+    rate_limit_burst: int = 10
+
     @property
     def groq_keys_list(self) -> list[str]:
         """Parse `GROQ_API_KEYS` into a clean list of keys."""

@@ -21,6 +21,7 @@ from aiogram.types import Message
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.quote_replies import reply_to
+from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
@@ -46,6 +47,15 @@ def create_router() -> Router:
     async def handle_text(message: Message) -> None:
         """Persist incoming text, run full pipeline in background, reply."""
         if message.from_user is None or message.text is None:
+            return
+
+        # Throttle the expensive LLM pipeline per user (CRIT-2). Cheap
+        # in-memory check before we touch the DB or Groq.
+        if not get_rate_limiter().allow(message.from_user.id):
+            logger.info("ratelimit.text_throttled", tg_user_id=message.from_user.id)
+            await message.answer(
+                "Слишком много сообщений подряд — дай мне пару секунд разгрести. Попробуй ещё раз чуть позже."
+            )
             return
 
         async with session_scope() as session:
