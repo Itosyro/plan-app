@@ -1,23 +1,39 @@
-// Month-grid calendar for the Mini-App (Phase 7d). Shows tasks that
-// have a due date, bucketed into day cells in the user's timezone.
-// Tapping a day reveals that day's tasks below the grid; tapping a
-// task opens the detail screen (same route as the list).
+// Calendar for the Mini-App (Phase 7e/B). Three modes — Month, Week,
+// Agenda — switchable via a SegmentedControl and persisted to
+// CloudStorage. Tasks with a due date are fetched client-side and
+// bucketed by local day in the user's tz. Event pills are tinted by a
+// deterministic per-category color.
 //
-// Tasks are fetched client-side (the personal task volume is small)
-// and re-bucketed whenever the visible month changes or the parent
-// bumps ``refreshSignal`` after a mutation.
+// DnD: month day-cells and week day-columns are droppable
+// (CALDAY_PREFIX) so a dragged task reschedules onto the target day
+// (App.tsx::handleDragEnd preserves local time-of-day).
 
 import { useEffect, useMemo, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
+import {
+  CalendarDays,
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  ListTree,
+} from "lucide-react";
 import { apiClient } from "../api/client";
-import { localDateKey, localTime } from "../lib/format";
+import { categoryColor, localDateKey, localTime } from "../lib/format";
 import { haptic } from "../lib/telegram";
+import { StorageKeys, storageGet, storageSet } from "../lib/storage";
 import type { Task } from "../types";
+import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 
-// Droppable id prefix for a calendar day cell. App.tsx::handleDragEnd
-// recognises this to reschedule a dragged task onto the target day.
 export const CALDAY_PREFIX = "calday:";
+
+type CalMode = "month" | "week" | "agenda";
+
+const MODE_OPTIONS: SegmentOption<CalMode>[] = [
+  { value: "month", label: "Месяц", icon: CalendarDays },
+  { value: "week", label: "Неделя", icon: CalendarRange },
+  { value: "agenda", label: "Агенда", icon: ListTree },
+];
 
 interface Props {
   tz: string;
@@ -27,36 +43,48 @@ interface Props {
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const MONTHS = [
-  "Январь",
-  "Февраль",
-  "Март",
-  "Апрель",
-  "Май",
-  "Июнь",
-  "Июль",
-  "Август",
-  "Сентябрь",
-  "Октябрь",
-  "Ноябрь",
-  "Декабрь",
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ];
 
-// Today's calendar-day key in the user's tz, for the "today" ring.
 function todayKey(tz: string): string {
   return localDateKey(new Date().toISOString(), tz) ?? "";
 }
-
-// Monday-first weekday index (0=Mon..6=Sun) for a JS Date.
 function mondayIndex(date: Date): number {
   return (date.getDay() + 6) % 7;
+}
+function dateKeyOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+function startOfWeek(d: Date): Date {
+  const off = mondayIndex(d);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - off);
+}
+function timeKey(t: Task): string {
+  return t.due_at ?? "";
 }
 
 export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
   const now = useMemo(() => new Date(), []);
+  const [mode, setMode] = useState<CalMode>("month");
   const [viewYear, setViewYear] = useState(now.getFullYear());
-  const [viewMonth, setViewMonth] = useState(now.getMonth()); // 0-11
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(now));
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>(() => todayKey(tz));
+
+  // Hydrate persisted mode once.
+  useEffect(() => {
+    let cancelled = false;
+    void storageGet(StorageKeys.lastCalendarView).then((v) => {
+      if (!cancelled && (v === "month" || v === "week" || v === "agenda")) setMode(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +101,6 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
     };
   }, [refreshSignal]);
 
-  // Bucket tasks by local day key once per task-set change.
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const t of tasks) {
@@ -83,22 +110,103 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
       if (arr) arr.push(t);
       else map.set(key, [t]);
     }
+    for (const arr of map.values()) arr.sort((a, b) => timeKey(a).localeCompare(timeKey(b)));
     return map;
   }, [tasks, tz]);
 
-  // Build the 6×7 grid of day cells for the visible month. Leading /
-  // trailing cells from adjacent months are rendered dimmed.
+  const changeMode = (m: CalMode) => {
+    setMode(m);
+    void storageSet(StorageKeys.lastCalendarView, m);
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SegmentedControl
+        ariaLabel="Режим календаря"
+        options={MODE_OPTIONS}
+        value={mode}
+        onChange={changeMode}
+      />
+
+      {mode === "month" && (
+        <MonthView
+          tz={tz}
+          byDay={byDay}
+          viewYear={viewYear}
+          viewMonth={viewMonth}
+          selectedKey={selectedKey}
+          onPrev={() => {
+            haptic("select");
+            if (viewMonth === 0) {
+              setViewMonth(11);
+              setViewYear((y) => y - 1);
+            } else setViewMonth((m) => m - 1);
+          }}
+          onNext={() => {
+            haptic("select");
+            if (viewMonth === 11) {
+              setViewMonth(0);
+              setViewYear((y) => y + 1);
+            } else setViewMonth((m) => m + 1);
+          }}
+          onSelect={(k) => {
+            haptic("select");
+            setSelectedKey(k);
+          }}
+          onOpen={onOpen}
+        />
+      )}
+
+      {mode === "week" && (
+        <WeekView
+          tz={tz}
+          byDay={byDay}
+          weekStart={weekStart}
+          onPrev={() => {
+            haptic("select");
+            setWeekStart((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
+          }}
+          onNext={() => {
+            haptic("select");
+            setWeekStart((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7));
+          }}
+          onToday={() => {
+            haptic("select");
+            setWeekStart(startOfWeek(new Date()));
+          }}
+          onOpen={onOpen}
+        />
+      )}
+
+      {mode === "agenda" && <AgendaView tz={tz} tasks={tasks} onOpen={onOpen} />}
+    </div>
+  );
+}
+
+// ── Month ───────────────────────────────────────────────────────────
+
+interface MonthProps {
+  tz: string;
+  byDay: Map<string, Task[]>;
+  viewYear: number;
+  viewMonth: number;
+  selectedKey: string;
+  onPrev: () => void;
+  onNext: () => void;
+  onSelect: (key: string) => void;
+  onOpen: (id: number) => void;
+}
+
+function MonthView({
+  tz, byDay, viewYear, viewMonth, selectedKey, onPrev, onNext, onSelect, onOpen,
+}: MonthProps) {
   const cells = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
-    const startOffset = mondayIndex(first);
-    const gridStart = new Date(viewYear, viewMonth, 1 - startOffset);
-    const out: { date: Date; key: string; inMonth: boolean }[] = [];
+    const gridStart = new Date(viewYear, viewMonth, 1 - mondayIndex(first));
+    const out: { key: string; day: number; inMonth: boolean }[] = [];
     for (let i = 0; i < 42; i++) {
       const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate(),
-      ).padStart(2, "0")}`;
-      out.push({ date: d, key, inMonth: d.getMonth() === viewMonth });
+      out.push({ key: dateKeyOf(d), day: d.getDate(), inMonth: d.getMonth() === viewMonth });
     }
     return out;
   }, [viewYear, viewMonth]);
@@ -106,164 +214,366 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
   const tKey = todayKey(tz);
   const selectedTasks = byDay.get(selectedKey) ?? [];
 
-  const goPrev = () => {
-    haptic("select");
-    if (viewMonth === 0) {
-      setViewMonth(11);
-      setViewYear((y) => y - 1);
-    } else {
-      setViewMonth((m) => m - 1);
-    }
-  };
-  const goNext = () => {
-    haptic("select");
-    if (viewMonth === 11) {
-      setViewMonth(0);
-      setViewYear((y) => y + 1);
-    } else {
-      setViewMonth((m) => m + 1);
-    }
-  };
-
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <div className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
         <div className="mb-3 flex items-center justify-between">
-          <button
-            type="button"
-            aria-label="Предыдущий месяц"
-            onClick={goPrev}
-            className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-all duration-150 hover:bg-bento active:scale-90"
-          >
-            <ChevronLeft size={20} strokeWidth={2.25} aria-hidden />
-          </button>
+          <NavButton dir="prev" onClick={onPrev} label="Предыдущий месяц" />
           <span className="font-display text-[16px] font-semibold tracking-tight text-tg-text">
             {MONTHS[viewMonth]} {viewYear}
           </span>
-          <button
-            type="button"
-            aria-label="Следующий месяц"
-            onClick={goNext}
-            className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-all duration-150 hover:bg-bento active:scale-90"
-          >
-            <ChevronRight size={20} strokeWidth={2.25} aria-hidden />
-          </button>
+          <NavButton dir="next" onClick={onNext} label="Следующий месяц" />
         </div>
-
         <div className="mb-1 grid grid-cols-7 gap-1">
           {WEEKDAYS.map((w) => (
-            <div
-              key={w}
-              className="text-center text-[11px] font-medium uppercase tracking-wide text-tg-hint"
-            >
+            <div key={w} className="text-center text-[10px] font-medium uppercase tracking-wide text-tg-hint">
               {w}
             </div>
           ))}
         </div>
-
         <div className="grid grid-cols-7 gap-1">
-          {cells.map((cell) => {
-            const dayTasks = byDay.get(cell.key) ?? [];
-            return (
-              <DayCell
-                key={cell.key}
-                dateKey={cell.key}
-                dayNumber={cell.date.getDate()}
-                inMonth={cell.inMonth}
-                isToday={cell.key === tKey}
-                isSelected={cell.key === selectedKey}
-                hasTasks={dayTasks.length > 0}
-                allDone={dayTasks.length > 0 && dayTasks.every((t) => t.status === "done")}
-                onSelect={() => {
-                  haptic("select");
-                  setSelectedKey(cell.key);
-                }}
-              />
-            );
-          })}
+          {cells.map((cell) => (
+            <MonthCell
+              key={cell.key}
+              dateKey={cell.key}
+              day={cell.day}
+              inMonth={cell.inMonth}
+              isToday={cell.key === tKey}
+              isSelected={cell.key === selectedKey}
+              tasks={byDay.get(cell.key) ?? []}
+              onSelect={() => onSelect(cell.key)}
+            />
+          ))}
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        {selectedTasks.length === 0 ? (
-          <p className="px-1 py-6 text-center text-[14px] text-tg-hint">
-            На этот день задач нет.
-          </p>
-        ) : (
-          selectedTasks
-            .slice()
-            .sort((a, b) => (a.due_at ?? "").localeCompare(b.due_at ?? ""))
-            .map((t) => (
-              <DraggableTaskRow
-                key={t.id}
-                task={t}
-                time={localTime(t.due_at, tz)}
-                onOpen={onOpen}
-              />
-            ))
-        )}
-      </div>
-    </div>
+      <DayDetail tz={tz} dateKey={selectedKey} tasks={selectedTasks} onOpen={onOpen} />
+    </>
   );
 }
 
-interface DayCellProps {
+interface MonthCellProps {
   dateKey: string;
-  dayNumber: number;
+  day: number;
   inMonth: boolean;
   isToday: boolean;
   isSelected: boolean;
-  hasTasks: boolean;
-  allDone: boolean;
+  tasks: Task[];
   onSelect: () => void;
 }
 
-function DayCell({
-  dateKey,
-  dayNumber,
-  inMonth,
-  isToday,
-  isSelected,
-  hasTasks,
-  allDone,
-  onSelect,
-}: DayCellProps) {
+function MonthCell({ dateKey, day, inMonth, isToday, isSelected, tasks, onSelect }: MonthCellProps) {
   const { isOver, setNodeRef } = useDroppable({ id: CALDAY_PREFIX + dateKey });
+  const shown = tasks.slice(0, 2);
+  const extra = tasks.length - shown.length;
   return (
     <button
       ref={setNodeRef}
       type="button"
       onClick={onSelect}
       className={
-        "ease-apple relative flex aspect-square flex-col items-center justify-center rounded-2xl text-[14px] transition-all duration-150 active:scale-90 " +
+        "ease-apple flex min-h-[58px] flex-col items-stretch gap-0.5 rounded-xl p-1 text-left transition-all duration-150 active:scale-[0.96] " +
         (isOver
-          ? "bg-tg-button/25 ring-2 ring-tg-button"
+          ? "bg-tg-button/20 ring-2 ring-tg-button"
           : isSelected
-            ? "bg-tg-button/15 font-semibold text-tg-button"
+            ? "bg-tg-button/10 ring-1 ring-tg-button/30"
             : inMonth
-              ? "text-tg-text hover:bg-bento"
-              : "text-tg-hint/40")
+              ? "hover:bg-bento"
+              : "opacity-40")
       }
     >
       <span
         className={
-          isToday && !isSelected
-            ? "flex h-6 w-6 items-center justify-center rounded-full bg-tg-button/15 text-tg-button"
-            : ""
+          "mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[12px] " +
+          (isToday
+            ? "bg-tg-button font-semibold text-tg-button-text"
+            : isSelected
+              ? "font-semibold text-tg-button"
+              : "text-tg-text")
         }
       >
-        {dayNumber}
+        {day}
       </span>
-      {hasTasks && (
-        <span
-          aria-hidden
-          className={
-            "absolute bottom-1 h-1.5 w-1.5 rounded-full " +
-            (allDone ? "bg-emerald-500/60" : "bg-tg-button")
-          }
-        />
-      )}
+      {shown.map((t) => {
+        const c = categoryColor(t.category_id);
+        return (
+          <span
+            key={t.id}
+            className={
+              "truncate rounded px-1 text-[9px] leading-[1.3] " +
+              c.pill +
+              " " +
+              (t.status === "done" ? "text-tg-hint line-through" : c.text)
+            }
+          >
+            {t.title}
+          </span>
+        );
+      })}
+      {extra > 0 && <span className="px-1 text-[9px] text-tg-hint">ещё {extra}</span>}
     </button>
+  );
+}
+
+// ── Week ────────────────────────────────────────────────────────────
+
+interface WeekProps {
+  tz: string;
+  byDay: Map<string, Task[]>;
+  weekStart: Date;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday: () => void;
+  onOpen: (id: number) => void;
+}
+
+function WeekView({ tz, byDay, weekStart, onPrev, onNext, onToday, onOpen }: WeekProps) {
+  const days = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
+      return { date: d, key: dateKeyOf(d) };
+    });
+  }, [weekStart]);
+  const tKey = todayKey(tz);
+  const last = days[6].date;
+  const rangeLabel =
+    weekStart.getMonth() === last.getMonth()
+      ? `${weekStart.getDate()}–${last.getDate()} ${MONTHS[weekStart.getMonth()].toLowerCase()}`
+      : `${weekStart.getDate()} ${MONTHS[weekStart.getMonth()].slice(0, 3).toLowerCase()} – ${last.getDate()} ${MONTHS[last.getMonth()].slice(0, 3).toLowerCase()}`;
+
+  return (
+    <div className="rounded-3xl bg-bento-card p-3 shadow-bento ring-1 ring-black/5">
+      <div className="mb-2 flex items-center justify-between">
+        <NavButton dir="prev" onClick={onPrev} label="Предыдущая неделя" />
+        <button
+          type="button"
+          onClick={onToday}
+          className="font-display rounded-full px-3 py-1 text-[15px] font-semibold tracking-tight text-tg-text transition-colors hover:bg-bento"
+        >
+          {rangeLabel}
+        </button>
+        <NavButton dir="next" onClick={onNext} label="Следующая неделя" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {days.map(({ date, key }) => (
+          <WeekDayRow
+            key={key}
+            dateKey={key}
+            weekday={WEEKDAYS[mondayIndex(date)]}
+            day={date.getDate()}
+            isToday={key === tKey}
+            tz={tz}
+            tasks={byDay.get(key) ?? []}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface WeekDayRowProps {
+  dateKey: string;
+  weekday: string;
+  day: number;
+  isToday: boolean;
+  tz: string;
+  tasks: Task[];
+  onOpen: (id: number) => void;
+}
+
+function WeekDayRow({ dateKey, weekday, day, isToday, tz, tasks, onOpen }: WeekDayRowProps) {
+  const { isOver, setNodeRef } = useDroppable({ id: CALDAY_PREFIX + dateKey });
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        "flex gap-2 rounded-2xl p-1.5 transition-colors duration-150 " +
+        (isOver ? "bg-tg-button/15 ring-1 ring-tg-button/40" : "")
+      }
+    >
+      <div className="flex w-10 shrink-0 flex-col items-center pt-0.5">
+        <span className="text-[10px] uppercase text-tg-hint">{weekday}</span>
+        <span
+          className={
+            "flex h-7 w-7 items-center justify-center rounded-full text-[14px] font-semibold " +
+            (isToday ? "bg-tg-button text-tg-button-text" : "text-tg-text")
+          }
+        >
+          {day}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1 py-0.5">
+        {tasks.length === 0 ? (
+          <span className="py-1.5 text-[12px] text-tg-hint/50">—</span>
+        ) : (
+          tasks.map((t) => (
+            <WeekEvent key={t.id} task={t} time={localTime(t.due_at, tz)} onOpen={onOpen} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WeekEvent({ task, time, onOpen }: { task: Task; time: string | null; onOpen: (id: number) => void }) {
+  const isDone = task.status === "done";
+  const c = categoryColor(task.category_id);
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+    data: { kind: "caltask", dueAt: task.due_at },
+    disabled: isDone,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "none" as const }
+    : { touchAction: "none" as const };
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      type="button"
+      onClick={() => onOpen(task.id)}
+      className={
+        "ease-apple flex items-center gap-2 rounded-lg px-2 py-1.5 text-left ring-1 ring-black/[0.04] transition-shadow " +
+        c.pill +
+        " " +
+        (isDragging ? "shadow-bento-lg" : "")
+      }
+    >
+      <span aria-hidden className={"h-3 w-1 shrink-0 rounded-full " + c.dot} />
+      {time && <span className="shrink-0 text-[11px] font-medium text-tg-hint tabular">{time}</span>}
+      <span
+        className={
+          "min-w-0 flex-1 truncate text-[13px] " +
+          (isDone ? "text-tg-hint line-through" : "text-tg-text")
+        }
+      >
+        {task.title}
+      </span>
+    </button>
+  );
+}
+
+// ── Agenda ──────────────────────────────────────────────────────────
+
+function AgendaView({ tz, tasks, onOpen }: { tz: string; tasks: Task[]; onOpen: (id: number) => void }) {
+  const tKey = todayKey(tz);
+  // Upcoming (today onward), grouped by day, chronological.
+  const groups = useMemo(() => {
+    const upcoming = tasks
+      .filter((t) => (localDateKey(t.due_at, tz) ?? "") >= tKey)
+      .sort((a, b) => timeKey(a).localeCompare(timeKey(b)));
+    const map = new Map<string, Task[]>();
+    for (const t of upcoming) {
+      const key = localDateKey(t.due_at, tz) ?? "—";
+      const arr = map.get(key);
+      if (arr) arr.push(t);
+      else map.set(key, [t]);
+    }
+    return [...map.entries()];
+  }, [tasks, tz, tKey]);
+
+  if (groups.length === 0) {
+    return (
+      <p className="px-1 py-10 text-center text-[14px] text-tg-hint">
+        Нет запланированных задач впереди.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {groups.map(([key, items]) => (
+        <section key={key}>
+          <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
+            {agendaHeading(key, tz, tKey)}
+          </header>
+          <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+            <div className="divide-y divide-tg-divider/40">
+              {items.map((t) => {
+                const c = categoryColor(t.category_id);
+                const isDone = t.status === "done";
+                const time = localTime(t.due_at, tz);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => onOpen(t.id)}
+                    className="ease-apple flex min-h-[52px] w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-bento/60 active:bg-bento"
+                  >
+                    <span aria-hidden className={"h-8 w-1 shrink-0 rounded-full " + c.dot} />
+                    <span className="flex w-12 shrink-0 items-center gap-1 text-[12px] font-medium text-tg-hint">
+                      <Clock size={12} strokeWidth={2} aria-hidden />
+                      {time ?? "—"}
+                    </span>
+                    <span
+                      className={
+                        "min-w-0 flex-1 truncate text-[15px] " +
+                        (isDone ? "text-tg-hint line-through" : "text-tg-text")
+                      }
+                    >
+                      {t.title}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function agendaHeading(key: string, tz: string, todayK: string): string {
+  if (key === todayK) return "Сегодня";
+  const yKey = localDateKey(new Date(Date.now() + 86_400_000).toISOString(), tz);
+  if (key === yKey) return "Завтра";
+  const [y, m, d] = key.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
+// ── Shared ──────────────────────────────────────────────────────────
+
+function NavButton({ dir, onClick, label }: { dir: "prev" | "next"; onClick: () => void; label: string }) {
+  const Icon = dir === "prev" ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-all duration-150 hover:bg-bento active:scale-90"
+    >
+      <Icon size={20} strokeWidth={2.25} aria-hidden />
+    </button>
+  );
+}
+
+interface DayDetailProps {
+  tz: string;
+  dateKey: string;
+  tasks: Task[];
+  onOpen: (id: number) => void;
+}
+
+function DayDetail({ tz, tasks, onOpen }: DayDetailProps) {
+  if (tasks.length === 0) {
+    return <p className="px-1 py-6 text-center text-[14px] text-tg-hint">На этот день задач нет.</p>;
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {tasks.map((t) => (
+        <DraggableTaskRow key={t.id} task={t} time={localTime(t.due_at, tz)} onOpen={onOpen} />
+      ))}
+    </div>
   );
 }
 
@@ -275,16 +585,15 @@ interface DraggableTaskRowProps {
 
 function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
   const isDone = task.status === "done";
-  // Attach the current ``due_at`` so App.tsx::handleDragEnd can shift it
-  // to the drop-target day while preserving the local time-of-day.
+  const c = categoryColor(task.category_id);
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     data: { kind: "caltask", dueAt: task.due_at },
     disabled: isDone,
   });
   const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 }
-    : undefined;
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "none" as const }
+    : { touchAction: "none" as const };
   return (
     <button
       ref={setNodeRef}
@@ -294,10 +603,11 @@ function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
       type="button"
       onClick={() => onOpen(task.id)}
       className={
-        "ease-apple flex touch-manipulation items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99] " +
+        "ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99] " +
         (isDragging ? "shadow-bento-lg" : "shadow-bento")
       }
     >
+      <span aria-hidden className={"h-8 w-1 shrink-0 rounded-full " + c.dot} />
       <span className="flex w-12 shrink-0 items-center gap-1 text-[12px] font-medium text-tg-hint">
         <Clock size={12} strokeWidth={2} aria-hidden />
         {time ?? "—"}
