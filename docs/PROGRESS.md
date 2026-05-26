@@ -6,6 +6,30 @@
 
 ---
 
+## 2026-05-26 — security: Phase 7e/G2 — pin GitHub Actions по SHA (supply-chain)
+
+**Контекст.** Workstream G2 аудита: actions по мутабельным тегам (`@v4`) —
+supply-chain риск (тег можно переписать). Сделано **субагентом** (worktree-
+изоляция) в рамках оркестрации.
+
+**Сделано.** `.github/workflows/ci.yml` — все third-party actions запинены на
+полный commit-SHA с комментом-версией:
+- `actions/checkout@34e1148…f8d5 # v4` (в обоих джобах)
+- `astral-sh/setup-uv@38f3f10…af3a # v4`
+- `actions/setup-node@49933ea…0020 # v4`
+
+SHA резолвились через `git ls-remote --tags` (GitHub API был rate-limited без
+токена; для annotated-тегов взят peeled `^{}` = commit). **Верифицировано
+независимо** повторным `git ls-remote` — все три SHA совпадают с тегами.
+
+**Верификация.** YAML валиден; `git diff` — изменены только 4 `uses:`-строки.
+Docker-образы не трогали (отдельно). CI зелёный (actions резолвятся по SHA).
+
+**Не сделано / отложено.** Pin Docker base images по digest; `pip-audit`/
+`npm audit` джоб (остаток G2/G6).
+
+---
+
 ## 2026-05-26 — security: Phase 7e/G1+G6 — prompt-injection hardening + SECURITY.md
 
 **Контекст.** Workstream G плана 7e (после UI-потоков). По аудиту Jules
