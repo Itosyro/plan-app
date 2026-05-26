@@ -29,6 +29,28 @@ def utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def utcnow_epoch() -> int:
+    """Return the current time as a true Unix epoch (seconds, int).
+
+    Uses an **aware** UTC datetime so the conversion is correct regardless
+    of the process's local timezone. Never call ``.timestamp()`` on the
+    naive value from :func:`utcnow_naive`: Python interprets a naive
+    datetime in the *system local* tz, so on a non-UTC machine that yields
+    an epoch offset by the local UTC offset.
+    """
+    return int(datetime.now(UTC).timestamp())
+
+
+def to_epoch(naive_utc: datetime) -> int:
+    """Convert a stored **naive-UTC** datetime to a Unix epoch (seconds).
+
+    Attaches UTC explicitly before ``.timestamp()`` so the result is
+    correct on any host timezone. tz-aware inputs are honoured as-is.
+    """
+    aware = naive_utc.replace(tzinfo=UTC) if naive_utc.tzinfo is None else naive_utc
+    return int(aware.timestamp())
+
+
 def to_naive_utc(dt: datetime) -> datetime:
     """Return *dt* as a naive UTC datetime (drop tz, converting if needed).
 
