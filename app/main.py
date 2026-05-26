@@ -18,13 +18,13 @@ Phase 5 wiring:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import MenuButtonWebApp, Update, WebAppInfo
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import select
 
@@ -185,6 +185,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispose_engine()
 
     app = FastAPI(title="plan-app", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Set conservative security headers on every response.
+
+        Telegram caveat: the Mini-App is rendered inside Telegram's
+        WebView/iframe, so we must NOT emit ``X-Frame-Options`` and any
+        CSP ``frame-ancestors`` must allow Telegram's origins. We scope a
+        permissive CSP to ``/app`` only (the bundle uses inline styles via
+        Vite and ``data:`` images); ``/api`` and probes get none.
+        """
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Only meaningful over HTTPS; a no-op on plain HTTP, so safe to send always.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if request.url.path.startswith("/app"):
+            # ``script-src`` MUST allow https://telegram.org — index.html
+            # loads the Telegram WebApp SDK from there; without it the
+            # Mini-App has no ``window.Telegram`` and breaks entirely.
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' https://telegram.org; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org tg:"
+            )
+        return response
+
     # Phase 6.3: API routes (Mini-App) need to refresh the pinned morning
     # digest when a task is marked done. Stash the bot on app.state so
     # the routers can access it via Request.app.state.bot. Tests pass a

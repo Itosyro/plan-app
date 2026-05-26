@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-05-26 — security: Phase 7e/G4 — security-headers middleware
+
+**Контекст.** Workstream G4 аудита. Сделано **субагентом** (worktree-изоляция,
+оркестрация), CSP **доправлен мной** (см. ниже).
+
+**Сделано.** `app/main.py` — `@app.middleware("http") security_headers`:
+- На каждый ответ: `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  strict-origin-when-cross-origin`, `Strict-Transport-Security` (max-age 1y).
+- Только на `/app` (Mini-App): `Content-Security-Policy` с
+  `frame-ancestors 'self' https://web.telegram.org https://*.telegram.org tg:`.
+  **X-Frame-Options НЕ ставим** (сломал бы встраивание в Telegram WebView).
+- `tests/test_security_headers.py` (+3 теста): заголовки на `/healthz`; нет
+  `X-Frame-Options: DENY/SAMEORIGIN`; нет CSP на `/api`/мета-путях.
+
+**Правка ревью (важно).** Агент задал `script-src 'self'`, но `index.html`
+грузит Telegram-SDK с `https://telegram.org` — такой CSP **сломал бы**
+Mini-App (нет `window.Telegram`). Поймал на ревью, добавил `https://telegram.org`
+в `script-src`.
+
+**Верификация.** `ruff format --check` + `ruff` + `mypy` clean, **471 pytest
+passed**. Фронт не тронут. CSP применяется только в проде (FastAPI-статика),
+dev-Vite его не навязывает.
+
+**Не сделано / отложено.** Pin Docker base-images по digest; G3 (подтверждение
+delete); `pip-audit`/`npm audit` джоб — остаток G.
+
+---
+
 ## 2026-05-26 — security: Phase 7e/G2 — pin GitHub Actions по SHA (supply-chain)
 
 **Контекст.** Workstream G2 аудита: actions по мутабельным тегам (`@v4`) —
