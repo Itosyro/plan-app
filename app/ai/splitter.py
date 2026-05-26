@@ -15,6 +15,7 @@ from pathlib import Path
 import instructor
 from groq import AsyncGroq
 
+from app.ai._safety import wrap_untrusted
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import SplitterResult
 from app.shared.logging import get_logger
@@ -62,7 +63,7 @@ async def split_message(
             response_model=SplitterResult,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": stripped},
+                {"role": "user", "content": wrap_untrusted(stripped)},
             ],
             temperature=0.0,
             max_retries=2,
