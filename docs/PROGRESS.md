@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-05-26 — feat: golden-evals классификатора (P2.7)
+
+**Контекст.** ROADMAP P2.7. Нужен «золотой» набор для замера точности
+классификатора (`app/ai/classifier.py::classify_intent`) на курируемом
+наборе русских фраз. Сам классификатор ходит в Groq (живой LLM), а в CI
+ключа `GROQ_API_KEYS` нет — поэтому live-прогон не должен запускаться в
+CI, но датасет и чистая логика скоринга обязаны проверяться тестами без
+сети.
+
+**Сделано.**
+- `tests/golden/ru/cases.json` — 55 реалистичных русских фраз. Каждый
+  кейс: `text`, `is_task`, `horizon` (один из 6 слугов), `priority`
+  (`low|medium|high`), опциональный `note` с обоснованием. Покрыты явные
+  даты, «на неделе», «когда-нибудь», срочное, заметки/не-задачи,
+  опечатки, транслит, разговорная речь. Поля `category` в скоринге нет
+  (open-vocab).
+- `app/ai/golden.py` — чистый, без сети (кроме чтения файла):
+  `@dataclass GoldenCase` + `load_cases(path)`; `score_case(expected,
+  predicted) -> {is_task, horizon, priority}`; `aggregate(results) ->`
+  точность по каждому полю + `overall` (доля кейсов, где все 3 поля
+  верны). `category_name` намеренно не оценивается.
+- `scripts/golden_eval.py` — CLI-раннер. Без `GROQ_API_KEYS` печатает
+  `skipped (no GROQ_API_KEYS)` и выходит `0`. Иначе собирает
+  `GroqKeyRouter` из env, гоняет `classify_intent` по всем кейсам
+  (`asyncio.run`) и печатает пофайловую/общую точность + до 15
+  несовпадений. Запуск вручную/локально, не в CI.
+- `tests/test_golden_dataset.py` — CI-safe (без сети): валидация датасета
+  (≥50 кейсов, домены `horizon`/`priority`, `is_task` — bool, непустой
+  `text`, нет дублей, покрытие всех слугов) + юнит-тесты `score_case` и
+  `aggregate` на руками собранных `ClassifierResult`.
+
+**Как запускать live-прогон.**
+`GROQ_API_KEYS=gsk_xxx,gsk_yyy uv run python scripts/golden_eval.py`.
+В CI крутится только валидация датасета и скоринга — живой прогон
+классификатора зашит за `GROQ_API_KEYS` и не дёргает Groq.
+
+**Верификация.**
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy` — чисто.
+- `uv run pytest -q` — 495 passed, 2 skipped (было 486 + 2; +9 тестов).
+- `scripts/golden_eval.py` без ключа печатает skip и выходит 0.
+
+**Не сделано.**
+- Нет порогов точности / fail-gate в CI — раннер только отчитывается.
+- Скоринг `category_name` не реализован (open-vocab, по дизайну).
+
 ## 2026-05-26 — feat: TaskEvent для отмены напоминаний (P0.2)
 
 **Контекст.** ROADMAP P0.2. Отмена напоминаний переводила
