@@ -73,11 +73,14 @@ Telegram WebApp CloudStorage; FastAPI, SQLModel, Alembic, pytest.
 
 ---
 
-> **СТАТУС (2026-05-25):** D ✅ (#123 SegmentedControl + BottomSheet),
-> A ✅ (#124 канбан=категории + фикс DnD), E2 ✅ (#125 Настройки в Mira-стиле),
-> C 🟡 бэк готов (completed_at + миграция 0014 + сортировка done), C-фронт
-> (CompletedPage / linger / роут `/completed`) — **TODO следующим**. Дальше:
-> C-фронт → F1 → B → остальной E → G.
+> **СТАТУС (2026-05-26):** D ✅ (#123 SegmentedControl + BottomSheet),
+> A ✅ (#124 канбан=категории + фикс DnD), C ✅ (#126 бэк `completed_at` +
+> миграция 0014; #127 фронт CompletedPage + linger + роут `/completed`),
+> E2 ✅ (#125 Настройки в Mira-стиле), E-дизайн ✅ частично (#128 разделители
+> канбана + базовый фон; #129 «живые обои» aurora-фон + навбар как Mira +
+> `webapp/DESIGN.md`). **Сейчас:** F1 (поповер «Раскладка»: вид + тумблер
+> «Выполненные»). Дальше: B (календарь) → доделка E (микро-полировка экранов,
+> чек-анимация) → G (security).
 
 ## Workstream A — Починить и переосмыслить Канбан
 

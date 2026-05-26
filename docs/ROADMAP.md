@@ -2,10 +2,19 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-24, после PR #106..#110):**
-> Phase 0..7c + Voice/Text Edit (PR-I серия) + Reminder Management
+> **Status (на 2026-05-26, после PR #106..#129):**
+> Phase 0..7d + Voice/Text Edit (PR-I серия) + Reminder Management
 > (PR-J серия) + Needs-Clarification UI (PR-K) — **done и в проде**.
 >
+> **Phase 7e — Polish (в работе, см. `docs/plans/2026-05-25-phase7e-polish.md`):**
+> D ✅ (#123 сегмент-контрол + bottom-sheet), A ✅ (#124 канбан=категории +
+> рабочий DnD), C ✅ (#126/#127 `completed_at` + экран «Выполненные» + linger),
+> E2 ✅ (#125 Настройки Mira-стиль), E-дизайн ✅ частично (#128/#129 aurora
+> «живые обои» фон, навбар как Mira, разделители канбана, `webapp/DESIGN.md`).
+> Осталось: F1 (поповер «Раскладка») → B (календарь Google-уровня) → доделка E
+> → G (security hardening по аудиту Jules).
+>
+
 > **Свежая волна (#106–#110, 2026-05-24):**
 > - **#106 security hotfix** — INIT_DATA TTL 24h → 10min, JSON-escape
 >   пользовательского ввода в classifier-промпте, `max_length` на
