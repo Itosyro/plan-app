@@ -2,7 +2,7 @@
 
 # ── Stage 1: build the Mini-App static bundle ───────────────────────
 # We pin Node 20 LTS which matches Vite 5's supported runtime.
-FROM node:20-alpine AS frontend
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend # 20-alpine
 
 WORKDIR /webapp
 
@@ -15,7 +15,7 @@ RUN npm run build
 
 
 # ── Stage 2: Python runtime ─────────────────────────────────────────
-FROM python:3.12-slim AS base
+FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203 AS base # 3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

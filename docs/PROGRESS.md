@@ -6,6 +6,38 @@
 
 ---
 
+## 2026-05-26 — security: Phase 7e/G6+G2 — audit-CI + Docker digest
+
+**Контекст.** Два мелких пункта из аудита (Workstream G): G6 — CI-job для
+выявления уязвимых зависимостей на каждом PR; G2 (остаток) — пиннинг базовых
+Docker-образов по immutable-дайджесту.
+
+**Сделано.**
+- `.github/workflows/ci.yml` — новый **отдельный** job `dependency-audit`
+  (informational). Python: `uv export --format requirements-txt --no-emit-project
+  | uvx pip-audit -r /dev/stdin` (pip-audit запускается эфемерно через uvx по
+  залоченным зависимостям). webapp: `npm audit --audit-level=high` в `webapp/`
+  (работает по committed `package-lock.json`). Оба audit-шага **non-blocking**
+  через `continue-on-error: true` — pre-existing транзитивные advisories не
+  блокируют будущие мержи. Новые экшены не добавлялись: переиспользованы уже
+  запиненные по SHA `actions/checkout`, `astral-sh/setup-uv`, `actions/setup-node`.
+- `Dockerfile` — оба `FROM`-образа запинены по дайджесту (тег сохранён комментом):
+  - `node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293`
+  - `python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203`
+  Дайджесты резолвлены через registry API (mirror.gcr.io из-за rate-limit Docker
+  Hub) и кросс-чекнуты против registry-1.docker.io (python совпал byte-to-byte).
+
+**Верификация.** YAML парсится (`yaml.safe_load`). `uv run ruff format --check .`
+и `uv run ruff check .` — clean (.py не трогались). Сам CI-job и Docker build
+локально не запускались (нет docker-демона/раннера) — расчёт на выверенный
+синтаксис и проверенные дайджесты.
+
+**Не сделано / отложено.** `COPY --from=ghcr.io/astral-sh/uv:0.5.4` не пинился
+по дайджесту — это `COPY --from`, а не `FROM`-строка (вне scope G2; ghcr требует
+отдельного token-flow). Все целевые `FROM`-образы запинены, пропусков нет.
+
+---
+
 ## 2026-05-26 — feat: Phase 7e/F2 — «Раскладка»: группировка / сортировка / фильтр
 
 **Контекст.** Workstream F2 плана 7e (дополняет F1). Сделано **субагентом**
