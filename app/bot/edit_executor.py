@@ -126,6 +126,35 @@ def _disambiguation_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _delete_confirm_keyboard(task_id: int, title: str) -> InlineKeyboardMarkup:
+    """Build a two-step confirm/cancel keyboard for an LLM-detected delete.
+
+    G3 / Excessive-Agency mitigation: when a ``delete`` intent is parsed
+    from *free user text* (where a prompt-injection could coerce the
+    model into emitting ``delete``), we never soft-delete immediately.
+    Instead we surface this keyboard; the task is only soft-deleted when
+    the user taps confirm (``edit:deldo:<id>``). The explicit 🗑 inline
+    button (``task:delete:<id>``) is a deliberate tap and stays immediate.
+    """
+    label = title[:40]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Да, удалить «{label}»",
+                    callback_data=f"edit:deldo:{task_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=f"edit:delno:{task_id}",
+                ),
+            ],
+        ]
+    )
+
+
 _UNDO_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -387,6 +416,23 @@ async def _execute_cancel_reminder(task_id: int, user_id: int) -> tuple[str, int
     return f"Отменил {n} {noun} для «{title}»: {times}.", None
 
 
+async def _delete_confirmation(
+    task_id: int, user_id: int
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Build the two-step delete confirmation prompt for one task.
+
+    G3: returns ``(prompt, keyboard)`` for a free-text ``delete`` intent
+    *without* mutating the task. The task is only soft-deleted when the
+    user confirms via the ``edit:deldo:<id>`` callback.
+    """
+    async with session_scope() as session:
+        task = await get_task_by_id(session, user_id, task_id)
+        if task is None:
+            return "Задача не найдена.", None
+        title = task.title
+    return f"Удалить «{title}»?", _delete_confirm_keyboard(task_id, title)
+
+
 async def _dispatch_single(
     task_id: int, user_id: int, intent: EditIntent
 ) -> tuple[str, int | None]:
@@ -471,8 +517,11 @@ async def execute_edit(
         last_id = pop_last_task(user_id)
         if last_id is not None:
             logger.info("edit.anaphora", user_id=user_id, task_id=last_id)
-            reply, snap_id = await _dispatch_single(last_id, user_id, intent)
             touch_last_task(user_id, last_id)
+            # G3: free-text delete needs explicit confirmation, never auto-runs.
+            if intent.intent == "delete":
+                return await _delete_confirmation(last_id, user_id)
+            reply, snap_id = await _dispatch_single(last_id, user_id, intent)
             kb = _undo_keyboard(snap_id) if snap_id else None
             return reply, kb
         return (
@@ -507,10 +556,16 @@ async def execute_edit(
     if task.id is None:
         return "Ошибка: задача без ID.", None
 
-    reply, snap_id = await _dispatch_single(task.id, user_id, intent)
+    touch_last_task(user_id, task.id)
 
-    if task.id is not None:
-        touch_last_task(user_id, task.id)
+    # G3: a free-text delete intent that resolved to a single task is the
+    # highest-risk Excessive-Agency path — surface a confirm/cancel prompt
+    # instead of soft-deleting on the model's say-so.
+    if intent.intent == "delete":
+        logger.info("edit.delete_confirm", task_id=task.id, user_id=user_id)
+        return await _delete_confirmation(task.id, user_id)
+
+    reply, snap_id = await _dispatch_single(task.id, user_id, intent)
 
     logger.info(
         "edit.executed",

@@ -37,6 +37,45 @@
 
 ---
 
+## 2026-05-26 — security: Phase 7e/G3 — двухшаговое подтверждение free-text delete
+
+**Контекст.** Workstream G3 аудита, митигация **Excessive Agency**. Когда
+LLM-конвейер разбора свободного текста (`app/ai/intent.py` →
+`app/bot/edit_executor.py`) определял интент `delete`, задача софт-удалялась
+сразу. Prompt-injection во входном тексте мог заставить модель выдать `delete`
+и стереть чужую задачу без явного намерения пользователя.
+
+**Сделано.**
+- `app/bot/edit_executor.py`: новые `_delete_confirm_keyboard(task_id, title)`
+  и `_delete_confirmation(task_id, user_id)` — строят промпт «Удалить «<title>»?»
+  с инлайн-клавиатурой `[Да, удалить «<title>»]` (`edit:deldo:<id>`) /
+  `[Отмена]` (`edit:delno:<id>`) **без мутации** задачи. В `execute_edit`
+  одиночный resolved `delete` теперь идёт в `_delete_confirmation`, а не в
+  `_execute_delete`; то же для анафоры (LAST_TASK). `_dispatch_single` оставлен
+  как есть — `delete` выделен на уровне `execute_edit`/коллбэков.
+- `app/bot/routers/callbacks.py`: `parse_edit_delete_confirm_callback` (парсит
+  `edit:deldo:` / `edit:delno:`, та же дисциплина что у `parse_edit_undo_callback`)
+  и хендлер `cb_edit_delete_confirm`: `deldo` → `_execute_delete` (со снимком для
+  undo) и редактирование сообщения в текст удаления + кнопка «Отменить»; `delno`
+  → «Отменено» и снятие кнопок, **без** удаления. Дизамбигуация delete из
+  свободного текста (`cb_edit_resolve`, `intent_name == "delete"`) тоже уводится
+  в подтверждение, а не в немедленное удаление.
+- **Явная кнопка 🗑 (`task:delete:<id>` в `cb_task_delete`) — это осознанный тап
+  пользователя и остаётся МГНОВЕННОЙ**, её не трогали.
+- `tests/test_edit_delete_confirm.py` (+7 тестов): парсер confirm/cancel;
+  `delete`-интент создаёт подтверждение и `deleted_at` остаётся `None`; путь
+  confirm софт-удаляет; путь cancel оставляет задачу нетронутой.
+
+**Верификация.** `ruff format --check` + `ruff check` + `mypy` clean,
+**478 passed, 2 skipped** (было ~471 + 2). Фронт не тронут.
+
+**Не сделано.** Мульти-юнит сообщение, где `delete` — один из нескольких
+интентов: ветка `_run_pipeline_inner` объединяет только текст реплаев и теряет
+клавиатуру (структурное ограничение конвейера, вне scope). Одиночный free-text
+delete и дизамбигуация покрыты полностью.
+
+---
+
 ## 2026-05-26 — security: Phase 7e/G4 — security-headers middleware
 
 **Контекст.** Workstream G4 аудита. Сделано **субагентом** (worktree-изоляция,

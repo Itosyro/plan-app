@@ -25,6 +25,7 @@ from app.ai.courier import (
 )
 from app.bot.edit_executor import (
     _UNDO_TTL_SECONDS,
+    _delete_confirmation,
     _dispatch_single,
     _execute_complete,
     _execute_delete,
@@ -238,6 +239,24 @@ def parse_edit_undo_callback(data: str) -> int | None:
         return None
     try:
         return int(parts[2])
+    except ValueError:
+        return None
+
+
+def parse_edit_delete_confirm_callback(data: str) -> tuple[str, int] | None:
+    """Parse an ``edit:deldo:<id>`` / ``edit:delno:<id>`` callback string.
+
+    G3 / Excessive-Agency mitigation: the two-step confirmation for a
+    *free-text* (LLM-detected) delete. Returns ``(action, task_id)`` where
+    ``action`` is ``"deldo"`` (confirm → soft-delete) or ``"delno"``
+    (cancel → leave intact), ``None`` on malformed input. Same parse
+    discipline as :func:`parse_edit_undo_callback`.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "edit" or parts[1] not in {"deldo", "delno"}:
+        return None
+    try:
+        return parts[1], int(parts[2])
     except ValueError:
         return None
 
@@ -689,6 +708,19 @@ def create_router() -> Router:
         # PR-I3: try stored PENDING_EDITS for I2+ intents that carry extra fields.
         snap_id: int | None = None
         stored_intent = pop_pending_edit(user_id)
+
+        # G3: a delete disambiguated from free text is still a free-text
+        # delete — gate it behind the same confirm/cancel prompt instead
+        # of soft-deleting on the picked row. The explicit 🗑 button path
+        # (task:delete:<id>) stays immediate.
+        if intent_name == "delete":
+            touch_last_task(user_id, task_id)
+            prompt, kb = await _delete_confirmation(task_id, user_id)
+            await callback.answer()
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(prompt, reply_markup=kb)
+            return
+
         if stored_intent is not None and stored_intent.intent == intent_name:
             reply, snap_id = await _dispatch_single(task_id, user_id, stored_intent)
         elif intent_name == "complete":
@@ -714,6 +746,62 @@ def create_router() -> Router:
                 except Exception:
                     logger.warning(
                         "callbacks.edit_resolve.refresh_pinned_failed",
+                        user_id=user_id,
+                        exc_info=True,
+                    )
+
+    # ── G3: two-step confirmation for free-text delete ────────────────
+
+    @router.callback_query(F.data.startswith("edit:deldo:"))
+    @router.callback_query(F.data.startswith("edit:delno:"))
+    async def cb_edit_delete_confirm(callback: CallbackQuery) -> None:
+        """Resolve the two-step confirmation for an LLM/free-text delete.
+
+        G3 / Excessive-Agency mitigation: ``edit:deldo:<id>`` confirms →
+        soft-delete via :func:`_execute_delete` (keeping its undo snapshot);
+        ``edit:delno:<id>`` cancels → leave the task intact and drop the
+        buttons. The explicit 🗑 button (``task:delete:<id>``) is a deliberate
+        tap and stays immediate — it does not route here.
+        """
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_edit_delete_confirm_callback(callback.data)
+        if parsed is None:
+            await callback.answer("Неверный формат.")
+            return
+        action, task_id = parsed
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            user_id = user.id
+
+        if action == "delno":
+            await callback.answer("Отменено.")
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text("Отменено.", reply_markup=None)
+            return
+
+        # action == "deldo" → confirmed soft-delete.
+        reply, snap_id = await _execute_delete(task_id, user_id)
+        touch_last_task(user_id, task_id)
+        await callback.answer(reply[:200])
+        kb = _undo_keyboard(snap_id) if snap_id else None
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(reply, reply_markup=kb)
+
+        if callback.bot is not None:
+            async with session_scope() as session:
+                try:
+                    await refresh_pinned_morning(callback.bot, session, user_id)
+                except Exception:
+                    logger.warning(
+                        "callbacks.edit_delete_confirm.refresh_pinned_failed",
                         user_id=user_id,
                         exc_info=True,
                     )
