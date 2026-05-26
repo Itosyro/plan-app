@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { LayoutGrid, ListTodo, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
@@ -26,7 +26,7 @@ import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { NoteDetail } from "./components/NoteDetail";
 import { NotesList } from "./components/NotesList";
-import { SegmentedControl, type SegmentOption } from "./components/SegmentedControl";
+import { LayoutSheet } from "./components/LayoutSheet";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
@@ -64,11 +64,6 @@ const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
   "someday",
 ]);
 
-const TASKS_VIEW_OPTIONS: SegmentOption<"list" | "board">[] = [
-  { value: "list", label: "Список", icon: ListTodo },
-  { value: "board", label: "Доска", icon: LayoutGrid },
-];
-
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [horizons, setHorizons] = useState<Horizon[]>([]);
@@ -90,6 +85,9 @@ export default function App() {
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
+  const [showLayoutSheet, setShowLayoutSheet] = useState(false);
+  // Phase 7e/F1: «Раскладка» toggle — show/hide done tasks in the list.
+  const [showCompleted, setShowCompleted] = useState(true);
   // Snapshot of the card being dragged on the kanban board, rendered in
   // the DragOverlay portal (#7e/A fix).
   const [activeDragTask, setActiveDragTask] = useState<Task | null>(null);
@@ -212,11 +210,13 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedHorizon, storedCategory, storedView] = await Promise.all([
-        storageGet(StorageKeys.lastHorizon),
-        storageGet(StorageKeys.lastCategory),
-        storageGet(StorageKeys.lastTasksView),
-      ]);
+      const [storedHorizon, storedCategory, storedView, storedShowDone] =
+        await Promise.all([
+          storageGet(StorageKeys.lastHorizon),
+          storageGet(StorageKeys.lastCategory),
+          storageGet(StorageKeys.lastTasksView),
+          storageGet(StorageKeys.showCompleted),
+        ]);
       if (cancelled) return;
       if (storedHorizon && VALID_HORIZONS.has(storedHorizon as HorizonSlug)) {
         setActiveHorizon(storedHorizon);
@@ -230,6 +230,7 @@ export default function App() {
       if (storedView === "board" || storedView === "list") {
         setTasksView(storedView);
       }
+      if (storedShowDone === "0") setShowCompleted(false);
       setPrefsHydrated(true);
     })();
     return () => {
@@ -578,6 +579,8 @@ export default function App() {
   const LINGER_MS = 24 * 60 * 60 * 1000;
   const visibleTasks = tasks.filter((t) => {
     if (t.status !== "done") return true;
+    // «Раскладка» → «Показывать выполненные» off: hide done entirely.
+    if (!showCompleted) return false;
     const ts = t.completed_at;
     if (!ts) return false;
     // Server timestamps are naive UTC (no suffix); optimistic ones carry
@@ -616,21 +619,12 @@ export default function App() {
           selectedCategoryId={selectedCategory}
           filterLabel={activeFilterLabel}
           onOpenFilter={() => setShowCategorySheet(true)}
+          onOpenLayout={() => setShowLayoutSheet(true)}
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
         />
         {activeTab === "tasks" ? (
           <>
-            <SegmentedControl
-              className="mb-3"
-              ariaLabel="Вид задач"
-              options={TASKS_VIEW_OPTIONS}
-              value={tasksView}
-              onChange={(v) => {
-                setTasksView(v);
-                void storageSet(StorageKeys.lastTasksView, v);
-              }}
-            />
             {tasksView === "board" ? (
               <KanbanView
                 categories={categories}
@@ -690,6 +684,20 @@ export default function App() {
         categories={categories}
         selectedId={selectedCategory}
         onChange={handleCategoryChange}
+      />
+      <LayoutSheet
+        open={showLayoutSheet}
+        onClose={() => setShowLayoutSheet(false)}
+        view={tasksView}
+        onViewChange={(v) => {
+          setTasksView(v);
+          void storageSet(StorageKeys.lastTasksView, v);
+        }}
+        showCompleted={showCompleted}
+        onShowCompletedChange={(next) => {
+          setShowCompleted(next);
+          void storageSet(StorageKeys.showCompleted, next ? "1" : "0");
+        }}
       />
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <DragOverlay dropAnimation={null}>

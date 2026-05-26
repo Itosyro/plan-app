@@ -116,4 +116,6 @@ export const StorageKeys = {
   lastHorizon: "last_horizon",
   lastCategory: "last_category",
   lastTasksView: "last_tasks_view",
+  // Phase 7e/F1: «Раскладка» — show/hide completed tasks in the list.
+  showCompleted: "show_completed",
 } as const;
