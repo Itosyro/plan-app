@@ -32,7 +32,7 @@ from app.db.base import session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import get_logger
-from app.shared.time import utcnow_naive
+from app.shared.time import utcnow_epoch
 
 logger = get_logger(__name__)
 
@@ -94,7 +94,7 @@ def parse_init_data(
         auth_date = int(auth_date_raw)
     except ValueError:
         return None
-    now = now_ts if now_ts is not None else int(utcnow_naive().timestamp())
+    now = now_ts if now_ts is not None else utcnow_epoch()
     if auth_date > now + 60:  # 60 s grace for clock skew
         return None
     if now - auth_date > max_age_seconds:

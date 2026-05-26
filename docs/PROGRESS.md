@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-05-26 — fix: Windows/non-UTC TZ — корректный epoch (P0.1)
+
+**Контекст.** Скрытый баг таймзоны (ROADMAP P0.1). `utcnow_naive()`
+возвращает naive-datetime (UTC wall-clock без tzinfo). В `app/api/auth.py`
+проверка TTL Telegram-`initData` вычисляла «сейчас» как
+`int(utcnow_naive().timestamp())`. Python интерпретирует `.timestamp()` у
+naive-datetime в **системной локальной** таймзоне, поэтому на не-UTC хосте
+полученный epoch смещён на локальный UTC-offset. Это маскировалось на
+Render (`TZ=UTC`), но локально под не-UTC TZ ломало сравнение
+`auth_date` (настоящий Unix-epoch от Telegram) с вычисленным `now` — это
+реальный баг корректности/безопасности (свежий initData отклонялся 401).
+
+**Сделано.**
+- `app/shared/time.py` — добавлены два маленьких хелпера:
+  - `utcnow_epoch() -> int` — «сейчас» как настоящий Unix-epoch через
+    aware-UTC (`datetime.now(UTC).timestamp()`).
+  - `to_epoch(naive_utc) -> int` — конвертация хранимого naive-UTC в epoch
+    через явное `replace(tzinfo=UTC)`.
+- `app/api/auth.py` — единственный битый call-site (`parse_init_data`,
+  стр. 97) переведён с `int(utcnow_naive().timestamp())` на `utcnow_epoch()`.
+- Конвенция хранения naive-UTC в БД и остальные вызовы `utcnow_naive()`
+  не тронуты — они корректны (используются для сравнений/записи в naive-колонки).
+- `tests/test_time_tz.py` — новый детерминированный regression-тест: через
+  `time.tzset()` форсит `TZ=America/New_York` и проверяет, что `utcnow_epoch`/
+  `to_epoch` совпадают с aware-UTC-epoch, а проверка TTL принимает свежий и
+  отклоняет протухший initData независимо от TZ.
+
+**Верификация.**
+- До фикса: `TZ=America/New_York uv run pytest` → **45 failed**, 433 passed,
+  2 skipped (массово 401/`KeyError` из-за отклонения валидного initData).
+- После фикса: `TZ=America/New_York` → **483 passed**, 2 skipped;
+  `TZ=Asia/Kolkata` → 483 passed; default-TZ → 483 passed.
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy` — чисто.
+
+**Не сделано.** Рефакторинг прочих call-sites не делался: только конвертации
+epoch были багом, остальное хранение naive-UTC оставлено как есть.
+
 ## 2026-05-26 — security: Phase 7e/G6+G2 — audit-CI + Docker digest
 
 **Контекст.** Два мелких пункта из аудита (Workstream G): G6 — CI-job для
