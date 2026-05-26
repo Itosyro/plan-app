@@ -2,17 +2,19 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
-> **Status (на 2026-05-26, после PR #106..#129):**
+> **Status (на 2026-05-26, после PR #106..#139):**
 > Phase 0..7d + Voice/Text Edit (PR-I серия) + Reminder Management
 > (PR-J серия) + Needs-Clarification UI (PR-K) — **done и в проде**.
 >
-> **Phase 7e — Polish (в работе, см. `docs/plans/2026-05-25-phase7e-polish.md`):**
-> D ✅ (#123 сегмент-контрол + bottom-sheet), A ✅ (#124 канбан=категории +
-> рабочий DnD), C ✅ (#126/#127 `completed_at` + экран «Выполненные» + linger),
-> E2 ✅ (#125 Настройки Mira-стиль), E-дизайн ✅ частично (#128/#129 aurora
-> «живые обои» фон, навбар как Mira, разделители канбана, `webapp/DESIGN.md`).
-> Осталось: F1 (поповер «Раскладка») → B (календарь Google-уровня) → доделка E
-> → G (security hardening по аудиту Jules).
+> **Phase 7e — Polish — ✅ ЗАВЕРШЕНА** (см. `docs/plans/2026-05-25-phase7e-polish.md`):
+> канбан=категории + рабочий DnD (#124), календарь Месяц/Неделя/Агенда (#132),
+> экран «Выполненные» + `completed_at` (#126/#127), сегмент-контрол + bottom-sheet
+> (#123), Настройки Mira-стиль (#125), aurora-фон + навбар Mira + `webapp/DESIGN.md`
+> (#128/#129), поповер «Раскладка» вид/сорт/фильтр (#131/#137), security hardening
+> по аудиту Jules — prompt-injection (#133), supply-chain pin (#134/#139),
+> security-headers (#135), confirm-delete (#138), `SECURITY.md`. Не закрыт только
+> **G5** (scheduler/keepalive вне web-процесса) — намеренно отложен, ждёт решения
+> по хостингу.
 >
 
 > **Свежая волна (#106–#110, 2026-05-24):**
@@ -519,10 +521,14 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
 
 ---
 
-## Next Up — приоритеты на 2026-05-19
+## Next Up — приоритеты на 2026-05-26
 
 Расстановка после прохода по PROGRESS / handoff v20 / предложений от ревьюера.
 Каждый пункт — потенциально отдельный PR ≤ 400 LOC.
+
+> **Phase 7e (polish) полностью смержена в `main`** (#123–#139, см. шапку и
+> `docs/plans/2026-05-25-phase7e-polish.md`). Ниже — обновлённый список:
+> сделанные пункты вычеркнуты, открытые сохранены.
 
 ### P0 — гигиена и долги
 1. **Windows TZ-bug fix** — `app/shared/time.py::utcnow_naive().timestamp()`
@@ -537,10 +543,11 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
    оригиналом транскрипта + извлечёнными задачами с чекбоксами +
    кнопками `[Подтвердить / Исправить / Разбить ещё]`. Расширяет
    PR-K clarification flow. Большой PR, бить на ~3 слайса.
-4. **Phase 7d — Task detail + inline edit** в Mini-App. Modal с
-   полями, TaskEvent-история, inline-edit title через double-tap.
-5. **Phase 5.5 — FullCalendar view** — есть полу-готовая ветка,
-   докрутить и замёржить.
+4. ✅ ~~**Phase 7d — Task detail + inline edit** в Mini-App~~ — закрыто.
+5. **Phase 5.5 — FullCalendar view** — **частично перекрыто** новым календарём
+   Месяц/Неделя/Агенда из Phase 7e (#132). Полу-готовая ветка
+   `devin/*-phase5-5-calendar` (FullCalendar) более не приоритетна; оставшийся
+   возможный долг — серверная фильтрация по диапазону, если понадобится.
 
 ### P2 — AI-качество
 6. **PR-H Critic refinement** — multi-stage critic, чёткие пороги
@@ -558,5 +565,6 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
 ### P4 — отложено / future
 - **Excel export/import** + table-classifier.
 - **Graph view (Phase 9)** — Obsidian-style визуализация связей.
-- **Brand design / design tokens** — ждём go-ahead от юзера.
+- ✅ ~~**Brand design / design tokens**~~ — закрыто в Phase 7e
+  (`webapp/DESIGN.md` + дизайн-система, #128/#129).
 - **Minor M-1..M-9** из v2-ревью — чистка, не критично.
