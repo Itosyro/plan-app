@@ -6,6 +6,38 @@
 
 ---
 
+## 2026-05-26 — feat: TaskEvent для отмены напоминаний (P0.2)
+
+**Контекст.** ROADMAP P0.2. Отмена напоминаний переводила
+`Reminder.status` в `"cancelled"`, но не оставляла записи в аудит-логе
+`TaskEvent` — в отличие от выполнения, удаления и смены категории задачи
+(`mark_task_done`/`delete_task`/`update_task_category`). Из-за этого
+история по задаче была неполной: нельзя восстановить, когда и какое
+напоминание было отменено.
+
+**Сделано.**
+- `app/bot/services/tasks.py` — `cancel_reminder`: после flush, если
+  `reminder.task_id is not None`, пишется один
+  `TaskEvent(kind="reminder_cancelled")` c payload
+  `{"reminder_id", "fire_at" (ISO или None), "scope": "single"}`, затем
+  flush и `logger.info("reminder.cancelled", ...)`.
+- `app/bot/services/tasks.py` — `cancel_task_reminders`: после цикла
+  отмены и flush (чтобы id уже существовали) пишется по одному
+  `TaskEvent(kind="reminder_cancelled")` на каждое отменённое напоминание
+  с `scope="task"` и `task_id` из аргумента; при пустом списке событий нет.
+- Сигнатуры и возвращаемые типы обеих функций не изменены.
+- `tests/test_reminder_management.py` — 3 новых теста: одиночная отмена →
+  ровно одно событие с `reminder_id` в payload; `cancel_task_reminders` →
+  событие на каждое напоминание; «нечего отменять» → новых событий нет.
+
+**Верификация.**
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy` — чисто.
+- `uv run pytest -q` — 486 passed, 2 skipped (было 483 + 2; +3 теста).
+
+**Не сделано.**
+- UI/тексты ответов бота не менялись — задача чисто про аудит-лог.
+- Отдельной выборки/отчёта по `reminder_cancelled` событиям не добавлено.
+
 ## 2026-05-26 — fix: Windows/non-UTC TZ — корректный epoch (P0.1)
 
 **Контекст.** Скрытый баг таймзоны (ROADMAP P0.1). `utcnow_naive()`
