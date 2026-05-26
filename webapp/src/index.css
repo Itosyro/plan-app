@@ -9,33 +9,41 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
-  /* Bento background: a soft, slightly blue-tinted "sandy" grey so the
-     white cards lift off it instead of blending (was a flat #f2f2f7
-     that merged with white surfaces). We keep a fixed tint for our
-     own Telegram-native look rather than inheriting the client's
-     secondary-bg, which is white in some themes (cards would vanish).
-     A faint top-down gradient adds depth toward the bottom nav. */
-  --bento-bg: #e6eaf2;
-  --bento-bg-soft: #eef1f7;
+  /* Component tint — used by ``bg-bento`` for chips, segmented-control
+     tracks, kanban tiles, switch tracks. A light blue-grey so these
+     surfaces stay visible on white cards/panels. This is DECOUPLED from
+     the page background (which is white + an aurora overlay below). */
+  --bento-bg: #eef1f7;
   --bento-card: var(--tg-theme-bg-color, #ffffff);
+
+  /* Aurora "living wallpaper" tint — soft blue glows on a white base.
+     Strong enough to read as a living blue ambiance, light enough that
+     white cards still lift (ring + shadow do the separating). */
+  --aurora-1: rgba(86, 142, 255, 0.34);
+  --aurora-2: rgba(120, 172, 255, 0.28);
+  --aurora-3: rgba(140, 188, 255, 0.30);
+  --aurora-4: rgba(99, 158, 255, 0.26);
 }
 
 html.dark {
-  /* Dark mode: deep blue-charcoal page, slightly lighter cards. */
-  --bento-bg: #0e1320;
-  --bento-bg-soft: #131a29;
+  --bento-bg: #1c2436;
   --bento-card: var(--tg-theme-bg-color, #1a2233);
+  --aurora-1: rgba(70, 110, 200, 0.22);
+  --aurora-2: rgba(60, 100, 190, 0.18);
+  --aurora-3: rgba(80, 120, 210, 0.16);
+  --aurora-4: rgba(60, 95, 180, 0.16);
+}
+
+/* White base lives on <html>; <body>/#root stay transparent so the
+   fixed aurora layer shows through the gaps between cards. */
+html {
+  background-color: var(--tg-theme-bg-color, #ffffff);
 }
 
 html,
 body,
 #root {
   height: 100%;
-  /* Soft vertical gradient (sandy-blue → lighter at top) for subtle
-     depth; falls back to the flat tint on old engines. */
-  background-color: var(--bento-bg);
-  background-image: linear-gradient(180deg, var(--bento-bg-soft) 0%, var(--bento-bg) 38%);
-  background-attachment: fixed;
   color: var(--tg-theme-text-color, #0f172a);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -45,6 +53,50 @@ body,
      features that make Inter feel native on iOS. */
   font-feature-settings: "cv11", "ss01", "ss03";
   font-optical-sizing: auto;
+}
+
+/* App content sits above the aurora layer. */
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Aurora "living wallpaper": soft blue radial glows on the white base,
+   slowly drifting + breathing. Fixed full-viewport layer below the app,
+   never repaints on scroll (GPU transform only). White cards lift off
+   the blue via ring + shadow. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -30%;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(60% 50% at 18% 6%, var(--aurora-1), transparent 72%),
+    radial-gradient(65% 55% at 88% 4%, var(--aurora-2), transparent 72%),
+    radial-gradient(70% 60% at 72% 96%, var(--aurora-3), transparent 74%),
+    radial-gradient(55% 48% at 4% 70%, var(--aurora-4), transparent 72%);
+  filter: blur(36px) saturate(1.08);
+  will-change: transform;
+  animation: aurora-drift 22s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-2%, -1.5%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(2%, 1%, 0) scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
 }
 
 /* Display optical sizing — used for big titles and headings. The Inter
