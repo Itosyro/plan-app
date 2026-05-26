@@ -32,6 +32,15 @@ import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
 import { TrashPage } from "./components/TrashPage";
 import { localDateKey } from "./lib/format";
+import {
+  DEFAULT_LAYOUT_PREFS,
+  applyFilters,
+  applySort,
+  groupTasks,
+  parseLayoutPrefs,
+  serializeLayoutPrefs,
+  type LayoutPrefs,
+} from "./lib/layoutPrefs";
 import { haptic } from "./lib/telegram";
 import { navigate, navigateHome, useRoute } from "./lib/router";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
@@ -88,6 +97,11 @@ export default function App() {
   const [showLayoutSheet, setShowLayoutSheet] = useState(false);
   // Phase 7e/F1: «Раскладка» toggle — show/hide done tasks in the list.
   const [showCompleted, setShowCompleted] = useState(true);
+  // Phase 7e/F2: «Раскладка» list grouping / sorting / filtering. One blob
+  // hydrated from + persisted to CloudStorage under StorageKeys.layoutPrefs.
+  const [layoutPrefs, setLayoutPrefs] = useState<LayoutPrefs>(
+    DEFAULT_LAYOUT_PREFS,
+  );
   // Snapshot of the card being dragged on the kanban board, rendered in
   // the DragOverlay portal (#7e/A fix).
   const [activeDragTask, setActiveDragTask] = useState<Task | null>(null);
@@ -210,13 +224,19 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedHorizon, storedCategory, storedView, storedShowDone] =
-        await Promise.all([
-          storageGet(StorageKeys.lastHorizon),
-          storageGet(StorageKeys.lastCategory),
-          storageGet(StorageKeys.lastTasksView),
-          storageGet(StorageKeys.showCompleted),
-        ]);
+      const [
+        storedHorizon,
+        storedCategory,
+        storedView,
+        storedShowDone,
+        storedLayoutPrefs,
+      ] = await Promise.all([
+        storageGet(StorageKeys.lastHorizon),
+        storageGet(StorageKeys.lastCategory),
+        storageGet(StorageKeys.lastTasksView),
+        storageGet(StorageKeys.showCompleted),
+        storageGet(StorageKeys.layoutPrefs),
+      ]);
       if (cancelled) return;
       if (storedHorizon && VALID_HORIZONS.has(storedHorizon as HorizonSlug)) {
         setActiveHorizon(storedHorizon);
@@ -231,6 +251,7 @@ export default function App() {
         setTasksView(storedView);
       }
       if (storedShowDone === "0") setShowCompleted(false);
+      setLayoutPrefs(parseLayoutPrefs(storedLayoutPrefs));
       setPrefsHydrated(true);
     })();
     return () => {
@@ -266,6 +287,24 @@ export default function App() {
     void storageSet(
       StorageKeys.lastCategory,
       categoryId === null ? "" : String(categoryId),
+    );
+  }, []);
+
+  // Phase 7e/F2: merge a partial layout-prefs patch into state and persist
+  // the whole blob (single CloudStorage key, well under the 4096 cap).
+  const updateLayoutPrefs = useCallback((patch: Partial<LayoutPrefs>) => {
+    setLayoutPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      void storageSet(StorageKeys.layoutPrefs, serializeLayoutPrefs(next));
+      return next;
+    });
+  }, []);
+
+  const handleResetLayoutPrefs = useCallback(() => {
+    setLayoutPrefs(DEFAULT_LAYOUT_PREFS);
+    void storageSet(
+      StorageKeys.layoutPrefs,
+      serializeLayoutPrefs(DEFAULT_LAYOUT_PREFS),
     );
   }, []);
 
@@ -589,6 +628,30 @@ export default function App() {
     return Date.now() - Date.parse(utc) < LINGER_MS;
   });
 
+  // Phase 7e/F2: apply «Раскладка» filter → sort → group to the LIST view.
+  // Pure transforms live in lib/layoutPrefs; we keep the (already
+  // linger-filtered) ``visibleTasks`` as the input so done-task linger logic
+  // stays intact. ``todayKey`` is the user's local "YYYY-MM-DD" for the due
+  // filter. ``horizonLabels`` feeds friendly group headers in horizon mode.
+  const todayKey = localDateKey(new Date().toISOString(), tz) ?? "";
+  const horizonLabels: Record<string, string> = {};
+  for (const h of horizons) horizonLabels[h.slug] = h.label;
+  const taskGroups = groupTasks(
+    applySort(
+      applyFilters(
+        visibleTasks,
+        layoutPrefs.filterPriority,
+        layoutPrefs.filterDue,
+        tz,
+        todayKey,
+      ),
+      layoutPrefs.sortBy,
+    ),
+    layoutPrefs.groupBy,
+    horizonLabels,
+  );
+  const hasVisibleTasks = taskGroups.some((g) => g.tasks.length > 0);
+
   return (
     <DndContext
       sensors={sensors}
@@ -641,16 +704,16 @@ export default function App() {
                   counts={counts}
                   onChange={handleHorizonChange}
                 />
-                {visibleTasks.length === 0 ? (
+                {!hasVisibleTasks ? (
                   <EmptyState
                     icon={Sparkles}
                     tone="emerald"
                     title="Ничего на горизонте"
                     hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
                   />
-                ) : (
+                ) : layoutPrefs.groupBy === "none" ? (
                   <ul className="flex flex-col gap-2">
-                    {visibleTasks.map((task) => (
+                    {taskGroups[0]?.tasks.map((task) => (
                       <li key={task.id}>
                         <TaskCard
                           task={task}
@@ -662,6 +725,29 @@ export default function App() {
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  <div className="flex flex-col gap-5">
+                    {taskGroups.map((group) => (
+                      <section key={group.key}>
+                        <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
+                          {group.label}
+                        </header>
+                        <ul className="flex flex-col gap-2">
+                          {group.tasks.map((task) => (
+                            <li key={task.id}>
+                              <TaskCard
+                                task={task}
+                                tz={tz}
+                                onDone={handleDone}
+                                onReopen={handleReopen}
+                                onOpen={handleOpenTask}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
                 )}
               </>
             )}
@@ -698,6 +784,17 @@ export default function App() {
           setShowCompleted(next);
           void storageSet(StorageKeys.showCompleted, next ? "1" : "0");
         }}
+        groupBy={layoutPrefs.groupBy}
+        onGroupByChange={(groupBy) => updateLayoutPrefs({ groupBy })}
+        sortBy={layoutPrefs.sortBy}
+        onSortByChange={(sortBy) => updateLayoutPrefs({ sortBy })}
+        filterPriority={layoutPrefs.filterPriority}
+        onFilterPriorityChange={(filterPriority) =>
+          updateLayoutPrefs({ filterPriority })
+        }
+        filterDue={layoutPrefs.filterDue}
+        onFilterDueChange={(filterDue) => updateLayoutPrefs({ filterDue })}
+        onResetAll={handleResetLayoutPrefs}
       />
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <DragOverlay dropAnimation={null}>
