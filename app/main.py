@@ -204,9 +204,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Only meaningful over HTTPS; a no-op on plain HTTP, so safe to send always.
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         if request.url.path.startswith("/app"):
+            # ``script-src`` MUST allow https://telegram.org — index.html
+            # loads the Telegram WebApp SDK from there; without it the
+            # Mini-App has no ``window.Telegram`` and breaks entirely.
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self'; "
+                "script-src 'self' https://telegram.org; "
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data:; "
                 "connect-src 'self'; "
