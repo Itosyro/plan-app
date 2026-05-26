@@ -88,7 +88,9 @@ export function BottomNav({ active, onChange }: Props) {
                 }}
                 className={
                   "relative z-10 flex min-h-[56px] flex-col items-center justify-center gap-1 rounded-[24px] py-2 transition-colors duration-200 active:scale-[0.94] " +
-                  (isActive ? "text-tg-button" : "text-tg-hint hover:text-tg-text")
+                  // Inactive: solid black icon + label (Mira style, not
+                  // washed-out grey). Active: turns blue inside the pill.
+                  (isActive ? "text-tg-button" : "text-tg-text/90 hover:text-tg-text")
                 }
                 style={{ width: `${CELL_PX}px` }}
               >
