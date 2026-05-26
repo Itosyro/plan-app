@@ -96,13 +96,42 @@ class ReminderInfo(BaseModel):
 # ── Phase 2.3 ────────────────────────────────────────────────────────
 
 
+class FieldCheck(BaseModel):
+    """A single per-field assessment produced by the Critic.
+
+    The critic emits one ``FieldCheck`` per relevant classifier field it
+    reviewed. Capturing this chain-of-thought *before* the verdict makes
+    the reasoning explicit and auditable.
+    """
+
+    field: Literal[
+        "is_task",
+        "category",
+        "horizon",
+        "priority",
+        "title",
+        "reminders",
+        "first_step",
+        "subtasks",
+    ] = Field(description="The classifier field this check assesses")
+    ok: bool = Field(description="True if the field is correct as classified")
+    note: str = Field(description="Short Russian note explaining the assessment")
+
+
 class CriticVerdict(BaseModel):
     """Output of the Critic LLM call.
 
     The critic reviews the classifier output and either approves it
     or returns a corrected ``ClassifierResult``.
+
+    ``checks`` comes first so the model reasons per-field (chain-of-thought)
+    before concluding with ``approved`` / ``reason`` / ``corrected``.
     """
 
+    checks: list[FieldCheck] = Field(
+        default_factory=list,
+        description="Per-field chain-of-thought review, emitted before the verdict",
+    )
     approved: bool = Field(description="True if classifier result is correct")
     reason: str = Field(description="Short explanation in Russian (why approved or what was wrong)")
     corrected: ClassifierResult | None = Field(

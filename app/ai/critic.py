@@ -119,6 +119,7 @@ async def critique_classification(
         "critic.done",
         approved=verdict.approved,
         reason_len=len(verdict.reason),
+        checks=len(verdict.checks),
         latency_ms=latency_ms,
         key_id=router.current_key_id,
     )

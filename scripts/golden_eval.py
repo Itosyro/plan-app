@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.ai.classifier import classify_intent
+from app.ai.critic import apply_verdict, critique_classification
 from app.ai.golden import (
     SCORED_FIELDS,
     GoldenCase,
@@ -40,8 +41,16 @@ _USER_TZ = "Europe/Moscow"
 _MAX_MISMATCHES = 15
 
 
+def _print_acc(label: str, acc: dict[str, float]) -> None:
+    print(f"\n{label}\n" + "=" * 40)
+    for field in SCORED_FIELDS:
+        print(f"  {field:<10} accuracy: {acc[field]:.1%}")
+    print(f"  {'overall':<10} accuracy: {acc['overall']:.1%}  (all 3 fields correct)")
+
+
 async def _run(router: GroqKeyRouter, cases: list[GoldenCase]) -> None:
     results: list[dict[str, bool]] = []
+    critic_results: list[dict[str, bool]] = []
     mismatches: list[tuple[GoldenCase, ClassifierResult, dict[str, bool]]] = []
 
     for case in cases:
@@ -57,12 +66,26 @@ async def _run(router: GroqKeyRouter, cases: list[GoldenCase]) -> None:
         if not all(score.values()):
             mismatches.append((case, predicted, score))
 
-    acc = aggregate(results)
+        # Also run the refined critic over the prediction and re-score so
+        # we can measure whether per-field CoT improves accuracy.
+        try:
+            verdict = await critique_classification(router, case.text, predicted, None, _USER_TZ)
+            refined = apply_verdict(predicted, verdict)
+        except Exception as exc:  # keep the live run resilient
+            print(f"  ! critic failed on {case.text!r}: {exc}")
+            refined = predicted
+        critic_results.append(score_case(case, refined))
 
-    print(f"\nGolden eval — {len(cases)} cases\n" + "=" * 40)
-    for field in SCORED_FIELDS:
-        print(f"  {field:<10} accuracy: {acc[field]:.1%}")
-    print(f"  {'overall':<10} accuracy: {acc['overall']:.1%}  (all 3 fields correct)")
+    acc = aggregate(results)
+    critic_acc = aggregate(critic_results)
+
+    print(f"\nGolden eval — {len(cases)} cases")
+    _print_acc("BEFORE critic (raw classifier)", acc)
+    _print_acc("AFTER critic (per-field CoT)", critic_acc)
+    print("\nDelta (AFTER - BEFORE):")
+    for field in (*SCORED_FIELDS, "overall"):
+        delta = critic_acc[field] - acc[field]
+        print(f"  {field:<10} {delta:+.1%}")
 
     if mismatches:
         print(f"\nMismatches ({len(mismatches)} total, showing up to {_MAX_MISMATCHES}):")
