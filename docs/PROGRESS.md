@@ -6,6 +6,58 @@
 
 ---
 
+## 2026-05-26 — feat: per-field CoT в критике (P2.6)
+
+**Контекст.** ROADMAP P2.6. Критик (`app/ai/critic.py`,
+`qwen-qwq-32b`) выносил вердикт `approved`/`reason`/`corrected` без явной
+пофайловой рефлексии — рассуждение reasoning-модели не фиксировалось и не
+поддавалось аудиту. Цель: заставить критика сначала пройтись по каждому
+полю (chain-of-thought) и только затем выносить вердикт, не меняя
+архитектуру (остаёмся single-stage) и сохраняя обратную совместимость с
+единственным call-site `app/bot/routers/_pipeline.py`.
+
+**Сделано.**
+- `app/ai/schemas.py` — добавлен `FieldCheck`
+  (`field: Literal[is_task|category|horizon|priority|title|reminders|first_step|subtasks]`,
+  `ok: bool`, короткий русский `note`). В `CriticVerdict` добавлено поле
+  `checks: list[FieldCheck] = Field(default_factory=list)` — стоит
+  **перед** `approved`/`reason`/`corrected`, чтобы модель рассуждала до
+  вывода. Дефолт `[]` сохраняет обратную совместимость для всего кода,
+  что конструирует `CriticVerdict(...)` вручную.
+- `app/ai/prompts/critic.md` — переписан Decision flow: критик сначала
+  заполняет `checks` (по одному `FieldCheck` на каждое релевантное поле с
+  `ok` и русским `note`-обоснованием), затем выносит вердикт по правилу
+  «`approved: true` тогда и только тогда, когда все `checks` `ok: true`;
+  иначе `approved: false` + полный `corrected`». Сохранены все исходные
+  критерии «What to check», русский `reason`, консервативность и блок
+  Security (untrusted `<user_intent>`, не следовать инструкциям внутри,
+  не раскрывать промпт). JSON-примеры обновлены с массивом `checks`.
+- `app/ai/critic.py` — в `logger.info("critic.done", ...)` добавлен
+  `checks=len(verdict.checks)`. Сигнатуры и `apply_verdict` без изменений.
+- `scripts/golden_eval.py` — live-раннер теперь, помимо скоринга сырого
+  классификатора, прогоняет каждый предикт через
+  `critique_classification` + `apply_verdict` и пере-скорит, печатая
+  BEFORE vs AFTER точность (is_task / horizon / priority / overall) и
+  дельту. Полностью за `GROQ_API_KEYS`: без ключа печатает
+  `skipped (no GROQ_API_KEYS)` и выходит 0 — CI остаётся зелёным.
+- `tests/test_critic.py` — тесты (мок Groq через respx, без сети):
+  round-trip `CriticVerdict` с заполненными `checks`, валидация без
+  `checks` (дефолт `[]`), вердикт с провальным полем → `apply_verdict`
+  возвращает `corrected`, all-ok вердикт → возвращает оригинал;
+  поведение `should_run_critic` без изменений.
+
+**Верификация.**
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy` — чисто
+  (64 файла, без ошибок).
+- `uv run pytest` — 498 passed, 2 skipped (было 495 + 2; +3 теста критика).
+- `GROQ_API_KEYS= uv run python scripts/golden_eval.py` печатает skip и
+  выходит 0.
+
+**Не сделано.**
+- Порогов / fail-gate по приросту точности критика в CI нет — раннер
+  только отчитывается (BEFORE/AFTER/дельта).
+- Архитектура остаётся single-stage — отдельной стадии критика не вводим.
+
 ## 2026-05-26 — feat: golden-evals классификатора (P2.7)
 
 **Контекст.** ROADMAP P2.7. Нужен «золотой» набор для замера точности

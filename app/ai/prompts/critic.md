@@ -24,25 +24,43 @@ You receive:
 7. **first_step** — For abstract / vague verbs ("создать", "сделать", "организовать", "научиться"), `first_step` should be a concrete 5–15 min action. Atomic tasks ("купить хлеб") must have `first_step: null`. Don't invent a first step if the original task is already atomic.
 8. **subtasks** — For composite multi-step tasks ("организовать день рождения", "переехать"), should be 2–5 atomic action titles. Should be `null` for atomic / one-shot tasks. Don't emit both `first_step` and `subtasks` unless they truly answer different questions.
 
-## Decision
+## Decision flow (think step by step)
 
-- If everything looks correct → `approved: true`, `reason` explains briefly, `corrected: null`.
-- If something is wrong → `approved: false`, `reason` explains what was wrong, `corrected` contains the full corrected ClassifierResult.
+You MUST reason field-by-field **before** deciding. Produce the output in this order:
+
+1. **First fill `checks`** — emit one `FieldCheck` per field you reviewed from the list above (use these field names: `is_task`, `category`, `horizon`, `priority`, `title`, `reminders`, `first_step`, `subtasks`). For each: set `ok` (`true` if that field is correct as classified, `false` if it is wrong) and write a short Russian `note` with your reasoning for that field. Skip a field only if it is not applicable to this intent.
+2. **Then decide the verdict** based purely on those checks:
+   - `approved: true` **if and only if** every check is `ok: true`. Then `reason` explains briefly and `corrected: null`.
+   - If **any** check is `ok: false` → `approved: false`, `reason` explains what was wrong (in Russian), and `corrected` is a complete ClassifierResult that fixes exactly those failing fields and leaves the rest unchanged.
 
 ## Output
 
-JSON object:
+JSON object (all-correct case):
 ```json
 {
+  "checks": [
+    {"field": "is_task", "ok": true, "note": "Покупка — это действие, задача."},
+    {"field": "category", "ok": true, "note": "«Покупки» соответствует смыслу."},
+    {"field": "horizon", "ok": true, "note": "Срок не указан → someday корректно."},
+    {"field": "priority", "ok": true, "note": "Обычная покупка → medium."},
+    {"field": "title", "ok": true, "note": "Короткий, по-русски, передаёт суть."}
+  ],
   "approved": true,
   "reason": "Всё верно: задача на покупку, категория и горизонт корректны.",
   "corrected": null
 }
 ```
 
-Or if correction needed:
+Or if correction needed (note the failing check):
 ```json
 {
+  "checks": [
+    {"field": "is_task", "ok": true, "note": "Покупка — это задача."},
+    {"field": "category", "ok": true, "note": "«Покупки» подходит."},
+    {"field": "horizon", "ok": false, "note": "«завтра» указывает на tomorrow, не someday."},
+    {"field": "priority", "ok": true, "note": "medium разумно."},
+    {"field": "title", "ok": true, "note": "Заголовок корректен."}
+  ],
   "approved": false,
   "reason": "Неправильный горизонт: 'завтра' указывает на tomorrow, не someday.",
   "corrected": {
