@@ -328,6 +328,22 @@ async def cancel_reminder(
     reminder.last_error = None
     session.add(reminder)
     await session.flush()
+
+    if reminder.task_id is not None:
+        session.add(
+            TaskEvent(
+                task_id=reminder.task_id,
+                kind="reminder_cancelled",
+                payload_json={
+                    "reminder_id": reminder.id,
+                    "fire_at": reminder.fire_at.isoformat() if reminder.fire_at else None,
+                    "scope": "single",
+                },
+            ),
+        )
+        await session.flush()
+        logger.info("reminder.cancelled", reminder_id=reminder.id, user_id=user_id)
+
     return reminder
 
 
@@ -361,6 +377,25 @@ async def cancel_task_reminders(
         session.add(reminder)
     if reminders:
         await session.flush()
+        for reminder in reminders:
+            session.add(
+                TaskEvent(
+                    task_id=task_id,
+                    kind="reminder_cancelled",
+                    payload_json={
+                        "reminder_id": reminder.id,
+                        "fire_at": reminder.fire_at.isoformat() if reminder.fire_at else None,
+                        "scope": "task",
+                    },
+                ),
+            )
+        await session.flush()
+        logger.info(
+            "reminder.cancelled",
+            task_id=task_id,
+            user_id=user_id,
+            count=len(reminders),
+        )
     return reminders
 
 
