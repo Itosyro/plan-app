@@ -132,6 +132,12 @@ class InboxEntry(SQLModel, table=True):
         default=None,
         sa_column=Column(BigInteger, nullable=True),
     )
+    # Set by the pipeline when a message yields ≥2 tasks or a
+    # low-confidence result. The Mini-App «Входящие» tab lists entries
+    # with this flag so the user can confirm / drop the extracted tasks;
+    # confirming clears it. Indexed because the pending-list query
+    # filters on it for every Mini-App poll.
+    needs_review: bool = Field(default=False, index=True)
     received_at: datetime = Field(default_factory=_utcnow, nullable=False)
 
 

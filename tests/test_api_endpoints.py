@@ -28,7 +28,7 @@ from app.bot.services import (
     get_or_create_user,
 )
 from app.db.base import session_scope
-from app.db.models import Note, Task, UserSettings
+from app.db.models import InboxEntry, Note, Task, UserSettings
 from app.main import create_app
 from app.shared.config import Settings
 from app.shared.time import utcnow_naive
@@ -929,3 +929,122 @@ async def test_inbox_404_for_missing(
 ) -> None:
     resp = await aclient.get("/api/inbox/999999", headers=auth_headers)
     assert resp.status_code == 404
+
+
+# ── /api/inbox review tab («Входящие») ───────────────────────────────
+
+
+async def _seed_review_entry(user_id: int, *, n_tasks: int = 2) -> tuple[int, list[int]]:
+    """Create a flagged inbox entry with ``n_tasks`` tasks linked to it."""
+    async with session_scope() as session:
+        hor = await get_or_create_horizon(session, user_id, "today")
+        entry = InboxEntry(
+            user_id=user_id,
+            kind="voice",
+            transcript="купить молоко и записаться к врачу",
+            needs_review=True,
+        )
+        session.add(entry)
+        await session.flush()
+        task_ids: list[int] = []
+        for i in range(n_tasks):
+            task = Task(
+                user_id=user_id,
+                horizon_id=hor.id,
+                title=f"Задача {i + 1}",
+                priority="medium",
+                source_inbox_id=entry.id,
+            )
+            session.add(task)
+            await session.flush()
+            assert task.id is not None
+            task_ids.append(task.id)
+        assert entry.id is not None
+        return entry.id, task_ids
+
+
+@pytest.mark.asyncio
+async def test_inbox_pending_lists_flagged_entry(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    entry_id, task_ids = await _seed_review_entry(seeded, n_tasks=2)
+    resp = await aclient.get("/api/inbox/pending", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    review = body[0]
+    assert review["id"] == entry_id
+    assert review["text"] == "купить молоко и записаться к врачу"
+    assert {t["id"] for t in review["tasks"]} == set(task_ids)
+
+
+@pytest.mark.asyncio
+async def test_inbox_confirm_drops_unchecked_and_clears_flag(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    entry_id, task_ids = await _seed_review_entry(seeded, n_tasks=2)
+    keep, drop = task_ids[0], task_ids[1]
+
+    resp = await aclient.post(
+        f"/api/inbox/{entry_id}/confirm",
+        headers=auth_headers,
+        json={"keep_task_ids": [keep]},
+    )
+    assert resp.status_code == 204
+
+    # Entry leaves the tab.
+    pending = (await aclient.get("/api/inbox/pending", headers=auth_headers)).json()
+    assert pending == []
+
+    # Kept task survives, dropped task is soft-deleted, flag cleared.
+    async with session_scope() as session:
+        kept = await session.get(Task, keep)
+        dropped = await session.get(Task, drop)
+        entry = await session.get(InboxEntry, entry_id)
+        assert kept is not None and kept.deleted_at is None
+        assert dropped is not None and dropped.deleted_at is not None
+        assert entry is not None and entry.needs_review is False
+
+
+@pytest.mark.asyncio
+async def test_inbox_confirm_empty_keep_drops_all(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    entry_id, task_ids = await _seed_review_entry(seeded, n_tasks=2)
+    resp = await aclient.post(
+        f"/api/inbox/{entry_id}/confirm",
+        headers=auth_headers,
+        json={"keep_task_ids": []},
+    )
+    assert resp.status_code == 204
+    async with session_scope() as session:
+        for tid in task_ids:
+            task = await session.get(Task, tid)
+            assert task is not None and task.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_inbox_confirm_rejects_other_user(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+) -> None:
+    entry_id, task_ids = await _seed_review_entry(seeded, n_tasks=1)
+    other_headers = {"X-Telegram-Init-Data": _build_init_data(user_id=_OTHER_TG_USER)}
+    async with session_scope() as session:
+        await get_or_create_user(session, telegram_id=_OTHER_TG_USER, lang_code="ru")
+    resp = await aclient.post(
+        f"/api/inbox/{entry_id}/confirm",
+        headers=other_headers,
+        json={"keep_task_ids": []},
+    )
+    assert resp.status_code == 404
+    # Task untouched.
+    async with session_scope() as session:
+        task = await session.get(Task, task_ids[0])
+        assert task is not None and task.deleted_at is None

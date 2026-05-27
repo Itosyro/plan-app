@@ -28,7 +28,7 @@ from app.bot.routers._pipeline import (
     run_pipeline,
 )
 from app.bot.services import get_or_create_category, get_or_create_user
-from app.db.models import Note, Task
+from app.db.models import InboxEntry, Note, Task
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
@@ -269,12 +269,20 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_e2e_low_confidence_asks_for_clarification(session: AsyncSession) -> None:
-    """Low-confidence classifier result is not persisted until user confirms."""
+async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSession) -> None:
+    """Low-confidence result is persisted immediately (вариант Б) and its
+    inbox entry is flagged for the «Входящие» review tab — no in-chat
+    «создать? да/нет» prompt anymore."""
     reset_pending_clarifications_for_tests()
     user, _ = await get_or_create_user(session, telegram_id=309)
     await session.commit()
     assert user.id is not None
+
+    entry = InboxEntry(user_id=user.id, kind="voice", transcript="созвон с командой")
+    session.add(entry)
+    await session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
 
     low_conf = _cr_dict(
         category="Работа",
@@ -296,26 +304,31 @@ async def test_e2e_low_confidence_asks_for_clarification(session: AsyncSession) 
         side_effect=tracker.side_effect
     )
 
-    text, keyboard = await run_pipeline(
+    text, _keyboard = await run_pipeline(
         GroqKeyRouter(keys=_FAKE_KEYS),
         "созвон с командой",
         tg_user_id=309,
         user_id=user.id,
         user_tz="Europe/Moscow",
-        inbox_id=None,
+        inbox_id=entry_id,
         courier_mode="template_only",
     )
 
-    assert "Я не совсем уверен" in text
-    assert "Созвон с командой" in text
-    assert keyboard is not None
-    buttons = [btn for row in keyboard.inline_keyboard for btn in row]
-    assert any(btn.text == "Да, создать" and btn.callback_data for btn in buttons)
-    assert any(btn.text == "Нет, отмена" and btn.callback_data for btn in buttons)
-    assert len(PENDING_CLARIFICATIONS) == 1
+    # No clarification prompt; instead a pointer to the review tab.
+    assert "Я не совсем уверен" not in text
+    assert "Входящие" in text
+    assert len(PENDING_CLARIFICATIONS) == 0
 
+    # The task exists right away.
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
-    assert tasks == []
+    assert len(tasks) == 1
+    assert tasks[0].title == "Созвон с командой"
+
+    # The inbox entry is flagged for review.
+    session.expire_all()
+    refreshed = await session.get(InboxEntry, entry_id)
+    assert refreshed is not None
+    assert refreshed.needs_review is True
     reset_pending_clarifications_for_tests()
 
 

@@ -24,9 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from sqlmodel import select
 
 from app.ai.classifier import classify_intent
@@ -47,7 +46,7 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.base import session_scope
-from app.db.models import Task
+from app.db.models import InboxEntry, Task
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
@@ -395,10 +394,16 @@ async def _run_pipeline_inner(
                 logger.exception("pipeline.critic_failed", user_id=user_id)
         reviewed.append((cr, resolved))
 
-    # Persist surviving units.
+    # Persist surviving units. Under the review model (вариант Б),
+    # low-confidence items are persisted immediately rather than deferred
+    # to an in-chat «создать? да/нет» prompt. Instead, when a message
+    # produces ≥2 tasks or anything came back below the confidence
+    # threshold, we flag the inbox entry ``needs_review`` so the Mini-App
+    # «Входящие» tab surfaces it for a quick confirm / cleanup.
     items: list[SummaryItem] = []
-    clarification_texts: list[str] = []
-    clarification_buttons: list[list[InlineKeyboardButton]] = []
+    created_task_count = 0
+    any_low_confidence = False
+    review_flagged = False
 
     async with session_scope() as session:
         await log_ai_run(
@@ -431,26 +436,7 @@ async def _run_pipeline_inner(
                 cr = cr.model_copy(update={"reminder_offsets": [0]})
 
             if cr.confidence < confidence_threshold:
-                clarify_id = uuid.uuid4().hex[:8]
-                PENDING_CLARIFICATIONS[clarify_id] = (
-                    cr,
-                    resolved,
-                    inbox_id,
-                    tg_user_id,
-                    time.monotonic(),
-                )
-                clarification_texts.append(f"🤔 Я не совсем уверен. Вы имели в виду: «{cr.title}»?")
-                clarification_buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            text="Да, создать", callback_data=f"clarify:yes:{clarify_id}"
-                        ),
-                        InlineKeyboardButton(
-                            text="Нет, отмена", callback_data=f"clarify:no:{clarify_id}"
-                        ),
-                    ]
-                )
-                continue
+                any_low_confidence = True
 
             row = await persist_classification(
                 session,
@@ -465,6 +451,7 @@ async def _run_pipeline_inner(
                 # PR-I3: update LAST_TASK so the user can refer back.
                 if isinstance(row, Task):
                     touch_last_task(user_id, row.id)
+                    created_task_count += 1
                 # PR-Subtask-Tree: pull just-created child titles so
                 # courier can render a Unicode tree under the
                 # confirmation. Same-session SELECT is cheap and avoids
@@ -507,6 +494,17 @@ async def _run_pipeline_inner(
                 key_index=groq_router.current_key_id,
             )
 
+        # Flag the inbox entry for review when the message produced
+        # several tasks or anything came back unsure. The tasks already
+        # exist (вариант Б) — the flag just routes them to the Mini-App
+        # «Входящие» tab for a confirm / cleanup pass.
+        if inbox_id is not None and (created_task_count >= 2 or any_low_confidence):
+            entry = await session.get(InboxEntry, inbox_id)
+            if entry is not None:
+                entry.needs_review = True
+                session.add(entry)
+                review_flagged = True
+
     text_reply, keyboard = await courier_respond(
         groq_router,
         items,
@@ -514,14 +512,9 @@ async def _run_pipeline_inner(
         style=courier_style,
     )
 
-    if clarification_texts:
-        if text_reply:
-            text_reply += "\n\n"
-        text_reply += "\n".join(clarification_texts)
-        if keyboard:
-            keyboard.inline_keyboard.extend(clarification_buttons)
-        else:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=clarification_buttons)
+    if review_flagged:
+        review_note = "📥 Отправил на проверку — открой «Входящие» в приложении."
+        text_reply = f"{text_reply}\n\n{review_note}" if text_reply else review_note
 
     # PR-I3: prepend edit replies when message contained mixed intents.
     if edit_replies:

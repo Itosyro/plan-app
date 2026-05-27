@@ -268,6 +268,35 @@ class InboxEntryOut(_ConfiguredModel):
     received_at: datetime
 
 
+class InboxReviewOut(_ConfiguredModel):
+    """One inbox entry pending review, with the tasks it produced.
+
+    Returned by ``GET /api/inbox/pending`` — the «Входящие» tab renders
+    the transcript / raw text plus a checkbox per extracted task.
+    ``text`` is the user-facing source (transcript for voice, raw_text
+    for text) so the client doesn't branch on ``kind``.
+    """
+
+    id: int
+    kind: str
+    text: str | None = None
+    received_at: datetime
+    tasks: list[TaskOut] = []
+
+
+class InboxConfirmIn(BaseModel):
+    """Body for ``POST /api/inbox/{id}/confirm``.
+
+    ``keep_task_ids`` are the tasks the user left checked — everything
+    else the entry produced is soft-deleted. An empty list drops all of
+    them. The flag is cleared regardless so the entry leaves the tab.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    keep_task_ids: list[int] = Field(default_factory=list)
+
+
 # ── /api/trash ───────────────────────────────────────────────────────
 
 TrashKind = Literal["task", "note"]
@@ -294,7 +323,9 @@ __all__ = [
     "CategoryCreateIn",
     "CategoryOut",
     "HorizonOut",
+    "InboxConfirmIn",
     "InboxEntryOut",
+    "InboxReviewOut",
     "MeOut",
     "MeUpdateIn",
     "NoteCreateIn",
