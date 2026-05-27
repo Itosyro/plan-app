@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { formatDue } from "../lib/format";
+import { PRIORITY_LABEL, PRIORITY_OPTIONS } from "../lib/priority";
 import { haptic } from "../lib/telegram";
 import type {
   Category,
@@ -66,18 +67,6 @@ const HORIZON_TONE: Record<HorizonSlug, TileTone> = {
   month: "indigo",
   year: "blue",
   someday: "slate",
-};
-
-const PRIORITY_OPTIONS: { value: TaskPriority; label: string; hint?: string }[] = [
-  { value: "high", label: "Высокий", hint: "Срочно, важно" },
-  { value: "medium", label: "Средний", hint: "По умолчанию" },
-  { value: "low", label: "Низкий", hint: "Когда будет время" },
-];
-
-const PRIORITY_LABEL: Record<TaskPriority, string> = {
-  high: "Высокий",
-  medium: "Средний",
-  low: "Низкий",
 };
 
 const PRIORITY_TONE: Record<TaskPriority, TileTone> = {

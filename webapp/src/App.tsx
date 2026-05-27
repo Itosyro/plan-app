@@ -795,6 +795,7 @@ export default function App() {
         ) : activeTab === "inbox" ? (
           <InboxReview
             tz={tz}
+            categories={categories}
             onResolved={() => {
               void loadInboxCount();
               void loadTasks(activeHorizon, selectedCategory);
