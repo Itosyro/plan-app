@@ -82,6 +82,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 import type {
   Category,
   Horizon,
+  InboxReview,
   Me,
   MeUpdate,
   Note,
@@ -125,6 +126,12 @@ export const apiClient = {
   patchNote: (id: number, body: NoteUpdate) =>
     api<Note>(`/notes/${id}`, { method: "PATCH", body }),
   deleteNote: (id: number) => api<void>(`/notes/${id}`, { method: "DELETE" }),
+  pendingInbox: () => api<InboxReview[]>("/inbox/pending"),
+  confirmInbox: (id: number, keepTaskIds: number[]) =>
+    api<void>(`/inbox/${id}/confirm`, {
+      method: "POST",
+      body: { keep_task_ids: keepTaskIds },
+    }),
   trash: () => api<TrashItem[]>("/trash"),
   trashCounts: () => api<TrashCounts>("/trash/counts"),
   restoreTrashItem: (kind: TrashKind, id: number) =>

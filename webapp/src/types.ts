@@ -159,3 +159,16 @@ export interface TrashCounts {
   tasks: number;
   notes: number;
 }
+
+// ── Входящие (review inbox) ─────────────────────────────────────────
+// Mirrors app/api/schemas.py::InboxReviewOut. One inbox entry that the
+// pipeline flagged for review, with the top-level tasks it produced.
+// ``text`` is the user-facing source (transcript for voice, raw_text for
+// text). The user keeps the checked tasks and drops the rest on confirm.
+export interface InboxReview {
+  id: number;
+  kind: string;
+  text: string | null;
+  received_at: string;
+  tasks: Task[];
+}

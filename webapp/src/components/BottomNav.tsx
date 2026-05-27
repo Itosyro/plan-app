@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  Inbox,
   ListTodo,
   Settings,
   StickyNote,
@@ -7,7 +8,7 @@ import {
 } from "lucide-react";
 import { haptic } from "../lib/telegram";
 
-// Four top-level Mini-App tabs. Telegram-style floating pill: deep
+// Five top-level Mini-App tabs. Telegram-style floating pill: deep
 // 28px radius, strong blur, soft outer shadow. The active state is a
 // sliding capsule behind the icon — it animates left/right when the
 // user switches tabs instead of just swapping colors. Icons gain a
@@ -17,11 +18,14 @@ import { haptic } from "../lib/telegram";
 // The capsule is one absolutely-positioned element translated via
 // transform — keeps the layout 100% stable (no width recomputation,
 // no flex jitter when switching tabs).
-export type NavTab = "tasks" | "notes" | "calendar" | "settings";
+export type NavTab = "tasks" | "notes" | "calendar" | "inbox" | "settings";
 
 interface Props {
   active: NavTab;
   onChange: (tab: NavTab) => void;
+  // Optional per-tab counts shown as a small bubble (e.g. «Входящие»
+  // pending-review count). Zero / missing → no bubble.
+  badges?: Partial<Record<NavTab, number>>;
 }
 
 interface Item {
@@ -34,16 +38,17 @@ const ITEMS: Item[] = [
   { id: "tasks", label: "Задачи", icon: ListTodo },
   { id: "notes", label: "Заметки", icon: StickyNote },
   { id: "calendar", label: "Календарь", icon: CalendarDays },
+  { id: "inbox", label: "Входящие", icon: Inbox },
   { id: "settings", label: "Настройки", icon: Settings },
 ];
 
 // Fixed cell width so the capsule can slide with a simple
-// ``translateX(activeIndex * CELL_PX)``. Bigger than a stock Telegram
-// 4-tab nav (the user prefers Mira's larger, clearer island): wider
-// cells, larger icons + labels, taller touch targets (≥56px).
-const CELL_PX = 86;
+// ``translateX(activeIndex * CELL_PX)``. Narrowed from 86 to fit five
+// cells on a phone-width island (5 × 68 + padding ≈ 356px) while still
+// keeping ≥56px touch targets and readable labels.
+const CELL_PX = 68;
 
-export function BottomNav({ active, onChange }: Props) {
+export function BottomNav({ active, onChange, badges }: Props) {
   const activeIndex = Math.max(
     0,
     ITEMS.findIndex((it) => it.id === active),
@@ -75,11 +80,14 @@ export function BottomNav({ active, onChange }: Props) {
           {ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = item.id === active;
+            const badge = badges?.[item.id] ?? 0;
             return (
               <button
                 key={item.id}
                 type="button"
-                aria-label={item.label}
+                aria-label={
+                  badge > 0 ? `${item.label} (${badge})` : item.label
+                }
                 aria-current={isActive ? "page" : undefined}
                 onClick={() => {
                   if (isActive) return;
@@ -94,18 +102,28 @@ export function BottomNav({ active, onChange }: Props) {
                 }
                 style={{ width: `${CELL_PX}px` }}
               >
-                <Icon
-                  size={25}
-                  strokeWidth={isActive ? 2.5 : 2.0}
-                  aria-hidden
-                  className={
-                    "transition-transform duration-300 " +
-                    (isActive ? "scale-110" : "scale-100")
-                  }
-                />
+                <span className="relative">
+                  <Icon
+                    size={24}
+                    strokeWidth={isActive ? 2.5 : 2.0}
+                    aria-hidden
+                    className={
+                      "transition-transform duration-300 " +
+                      (isActive ? "scale-110" : "scale-100")
+                    }
+                  />
+                  {badge > 0 && (
+                    <span
+                      aria-hidden
+                      className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-bento-card"
+                    >
+                      {badge > 9 ? "9+" : badge}
+                    </span>
+                  )}
+                </span>
                 <span
                   className={
-                    "font-display text-[12px] leading-tight tracking-tight transition-all duration-200 " +
+                    "font-display text-[11px] leading-tight tracking-tight transition-all duration-200 " +
                     (isActive ? "font-semibold" : "font-medium")
                   }
                 >
