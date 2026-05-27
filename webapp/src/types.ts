@@ -82,6 +82,9 @@ export interface UserSettings {
   // ``first_step`` text is prepended to ``Task.description`` as
   // "Шаг 1: …". Defaults to false server-side.
   concretize_tasks: boolean;
+  // When true, uncertain/large breakdowns are routed to the «Входящие»
+  // review tab instead of being applied directly. Defaults to true.
+  review_enabled: boolean;
 }
 
 // Mirrors app/api/schemas.py::UserSettingsUpdateIn — every field
@@ -95,6 +98,7 @@ export interface UserSettingsUpdate {
   courier_template_style?: string;
   week_due_semantic?: string;
   concretize_tasks?: boolean;
+  review_enabled?: boolean;
 }
 
 // Mirrors app/api/schemas.py::MeUpdateIn.

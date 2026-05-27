@@ -112,6 +112,13 @@ class UserSettings(SQLModel, table=True):
     # first message after a model swap doesn't surprise them with a
     # synthetic step. Toggle from /settings (bot) or the Mini-App.
     concretize_tasks: bool = Field(default=False, nullable=False)
+    # Gates the «Входящие» review flagging. When ``True`` (default) the
+    # pipeline flags inbox entries as ``needs_review`` when a message
+    # yields several tasks or anything came back low-confidence, and
+    # appends the "📥 Отправил на проверку…" note. When ``False`` the
+    # flagging and note are suppressed. Defaults to ``True`` to preserve
+    # the pre-existing behaviour for current users.
+    review_enabled: bool = Field(default=True, nullable=False)
 
 
 class InboxEntry(SQLModel, table=True):

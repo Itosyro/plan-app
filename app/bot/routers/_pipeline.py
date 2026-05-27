@@ -195,6 +195,7 @@ async def run_pipeline(
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
     concretize_tasks: bool = False,
+    review_enabled: bool = True,
 ) -> PipelineReply:
     """Detect reorder or run split → time → classify → critic → persist → reply.
 
@@ -235,6 +236,7 @@ async def run_pipeline(
             morning_anchor=morning_anchor,
             evening_anchor=evening_anchor,
             concretize_tasks=concretize_tasks,
+            review_enabled=review_enabled,
         )
 
 
@@ -254,6 +256,7 @@ async def _run_pipeline_inner(
     morning_anchor: str = "09:00",
     evening_anchor: str = "19:00",
     concretize_tasks: bool = False,
+    review_enabled: bool = True,
 ) -> PipelineReply:
     """Inner pipeline body, called only while both semaphores are held."""
     # PR-I1: detect edit intent before falling through to create-path.
@@ -459,7 +462,11 @@ async def _run_pipeline_inner(
         # several tasks or anything came back unsure. The tasks already
         # exist (вариант Б) — the flag just routes them to the Mini-App
         # «Входящие» tab for a confirm / cleanup pass.
-        if inbox_id is not None and (created_task_count >= 2 or any_low_confidence):
+        if (
+            review_enabled
+            and inbox_id is not None
+            and (created_task_count >= 2 or any_low_confidence)
+        ):
             entry = await session.get(InboxEntry, inbox_id)
             if entry is not None:
                 entry.needs_review = True

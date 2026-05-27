@@ -33,6 +33,7 @@ def _settings_to_out(settings: UserSettings | None) -> UserSettingsOut | None:
         courier_template_style=settings.courier_template_style,
         week_due_semantic=settings.week_due_semantic,
         concretize_tasks=settings.concretize_tasks,
+        review_enabled=settings.review_enabled,
     )
 
 
@@ -120,6 +121,8 @@ async def patch_me(body: MeUpdateIn, user: User = Depends(current_user)) -> MeOu
                 # Translate here so both shapes converge before validation.
                 if field == "concretize_tasks" and isinstance(raw_value, bool):
                     value: str = "on" if raw_value else "off"
+                elif field == "review_enabled" and isinstance(raw_value, bool):
+                    value = "on" if raw_value else "off"
                 else:
                     value = str(raw_value)
                 allowed = ALLOWED_SETTING_VALUES.get(field)

@@ -6,6 +6,33 @@
 
 ---
 
+## 2026-05-27 — feat: выключатель ревью «Входящие» в /settings
+
+**Контекст.** «Входящие» (вариант Б) автоматически шлёт на проверку всё,
+где ≥2 задач или низкая уверенность. Не всем это нужно — добавил тумблер
+`review_enabled` (по умолчанию **включён**, поведение не меняется). Выкл →
+ничего не помечается `needs_review` и нет приписки «📥 Отправил на
+проверку…». Сделано двумя сабагентами (бэкенд + фронт) по контракту,
+зеркалит существующий `concretize_tasks` end-to-end.
+
+**Сделано.**
+- `app/db/models.py` — `UserSettings.review_enabled: bool = True`.
+  Миграция `0016_review_enabled` (server_default TRUE → снимаем, чтобы
+  совпадало с моделью; SQLite/Postgres).
+- `app/bot/services/settings.py` — allow-list `{"on","off"}` + запись.
+- `app/api/schemas.py` + `app/api/routers/me.py` — поле в out/update,
+  bool→"on"/"off" в PATCH.
+- `app/bot/routers/_pipeline.py` — параметр `review_enabled` в
+  `run_pipeline`/`_run_pipeline_inner`, гейт `review_enabled and (…)`
+  на флаг `needs_review`; проброшен из `text.py`/`voice.py`.
+- Фронт: `SettingsPage.tsx` — `SettingsToggleRow` «Входящие» (иконка
+  Inbox, `?? true`); `types.ts` — поле в `UserSettings`/`Update`.
+- Тесты: e2e «выкл → не флагает и без приписки», PATCH /api/me round-trip.
+
+**Гейты:** ruff/mypy/pytest (523) + webapp build — зелёные.
+
+---
+
 ## 2026-05-27 — feat: правка категории и приоритета во «Входящих»
 
 **Контекст.** Слайс 3 «Входящих» после инлайн-правки названия (#150):

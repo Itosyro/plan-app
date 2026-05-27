@@ -55,6 +55,9 @@ ALLOWED_SETTING_VALUES: dict[str, frozenset[str]] = {
     # options; the service-layer write translates back to bool
     # before persisting (see :func:`update_user_settings`).
     "concretize_tasks": frozenset({"on", "off"}),
+    # Gates the «Входящие» review flagging. bool exposed as string
+    # "on"/"off" for the same reasons as ``concretize_tasks`` above.
+    "review_enabled": frozenset({"on", "off"}),
 }
 
 
@@ -130,6 +133,9 @@ async def update_user_settings(
     elif field == "concretize_tasks":
         # The allow-list above guarantees ``value`` is "on" or "off".
         settings.concretize_tasks = value == "on"
+    elif field == "review_enabled":
+        # The allow-list above guarantees ``value`` is "on" or "off".
+        settings.review_enabled = value == "on"
     else:  # pragma: no cover - exhaustive above
         return None
     session.add(settings)

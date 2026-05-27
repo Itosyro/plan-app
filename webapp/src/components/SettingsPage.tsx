@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Globe,
+  Inbox,
   Languages,
   ListChecks,
   MessageSquare,
@@ -265,6 +266,17 @@ export function SettingsPage({ me, onUpdated }: Props) {
           disabled={pending === "concretize_tasks"}
           onChange={(next) =>
             patch("concretize_tasks", { settings: { concretize_tasks: next } })
+          }
+        />
+        <SettingsToggleRow
+          icon={Inbox}
+          tone="amber"
+          label="Входящие"
+          hint="Сомнительные и большие разборы отправляю на проверку во вкладку «Входящие»"
+          checked={settings?.review_enabled ?? true}
+          disabled={pending === "review_enabled"}
+          onChange={(next) =>
+            patch("review_enabled", { settings: { review_enabled: next } })
           }
         />
         <SettingsSelectRow
