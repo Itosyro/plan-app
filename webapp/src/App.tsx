@@ -1,27 +1,46 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  closestCorners,
   DndContext,
+  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
-import { KanbanView } from "./components/KanbanView";
+import { CompletedPage } from "./components/CompletedPage";
+import {
+  KanbanView,
+  KanbanCardView,
+  KCAT_PREFIX,
+  KCAT_NONE,
+} from "./components/KanbanView";
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { NoteDetail } from "./components/NoteDetail";
 import { NotesList } from "./components/NotesList";
+import { LayoutSheet } from "./components/LayoutSheet";
 import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
 import { TaskDetail } from "./components/TaskDetail";
 import { TrashPage } from "./components/TrashPage";
 import { localDateKey } from "./lib/format";
+import {
+  DEFAULT_LAYOUT_PREFS,
+  applyFilters,
+  applySort,
+  groupTasks,
+  parseLayoutPrefs,
+  serializeLayoutPrefs,
+  type LayoutPrefs,
+} from "./lib/layoutPrefs";
 import { haptic } from "./lib/telegram";
 import { navigate, navigateHome, useRoute } from "./lib/router";
 import { StorageKeys, storageGet, storageSet } from "./lib/storage";
@@ -54,45 +73,6 @@ const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
   "someday",
 ]);
 
-function ViewToggle({
-  value,
-  onChange,
-}: {
-  value: "list" | "board";
-  onChange: (v: "list" | "board") => void;
-}) {
-  const opts: { id: "list" | "board"; label: string }[] = [
-    { id: "list", label: "Список" },
-    { id: "board", label: "Доска" },
-  ];
-  return (
-    <div className="mb-3 flex gap-1 rounded-2xl bg-bento p-1">
-      {opts.map((o) => {
-        const active = o.id === value;
-        return (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => {
-              if (active) return;
-              haptic("select");
-              onChange(o.id);
-            }}
-            className={
-              "ease-apple flex-1 rounded-xl py-1.5 text-[13px] font-medium tracking-tight transition-all duration-150 " +
-              (active
-                ? "bg-bento-card text-tg-text shadow-bento"
-                : "text-tg-hint")
-            }
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [horizons, setHorizons] = useState<Horizon[]>([]);
@@ -114,6 +94,17 @@ export default function App() {
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
+  const [showLayoutSheet, setShowLayoutSheet] = useState(false);
+  // Phase 7e/F1: «Раскладка» toggle — show/hide done tasks in the list.
+  const [showCompleted, setShowCompleted] = useState(true);
+  // Phase 7e/F2: «Раскладка» list grouping / sorting / filtering. One blob
+  // hydrated from + persisted to CloudStorage under StorageKeys.layoutPrefs.
+  const [layoutPrefs, setLayoutPrefs] = useState<LayoutPrefs>(
+    DEFAULT_LAYOUT_PREFS,
+  );
+  // Snapshot of the card being dragged on the kanban board, rendered in
+  // the DragOverlay portal (#7e/A fix).
+  const [activeDragTask, setActiveDragTask] = useState<Task | null>(null);
   const tz = me?.tz ?? "Europe/Moscow";
   const detailTaskId = useMemo(() => {
     if (route.path !== "/task/:id") return null;
@@ -170,6 +161,10 @@ export default function App() {
         const resp = await apiClient.tasks({
           horizon,
           category_id: categoryId ?? undefined,
+          // Phase 7e/C: pull recently-done tasks too so they can linger
+          // struck-through in the list; the render filter hides ones
+          // completed > 24h ago (they live in the «Выполненные» screen).
+          include_done: true,
         });
         setTasks(resp);
       } catch (err) {
@@ -229,10 +224,18 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedHorizon, storedCategory, storedView] = await Promise.all([
+      const [
+        storedHorizon,
+        storedCategory,
+        storedView,
+        storedShowDone,
+        storedLayoutPrefs,
+      ] = await Promise.all([
         storageGet(StorageKeys.lastHorizon),
         storageGet(StorageKeys.lastCategory),
         storageGet(StorageKeys.lastTasksView),
+        storageGet(StorageKeys.showCompleted),
+        storageGet(StorageKeys.layoutPrefs),
       ]);
       if (cancelled) return;
       if (storedHorizon && VALID_HORIZONS.has(storedHorizon as HorizonSlug)) {
@@ -247,6 +250,8 @@ export default function App() {
       if (storedView === "board" || storedView === "list") {
         setTasksView(storedView);
       }
+      if (storedShowDone === "0") setShowCompleted(false);
+      setLayoutPrefs(parseLayoutPrefs(storedLayoutPrefs));
       setPrefsHydrated(true);
     })();
     return () => {
@@ -285,26 +290,65 @@ export default function App() {
     );
   }, []);
 
+  // Phase 7e/F2: merge a partial layout-prefs patch into state and persist
+  // the whole blob (single CloudStorage key, well under the 4096 cap).
+  const updateLayoutPrefs = useCallback((patch: Partial<LayoutPrefs>) => {
+    setLayoutPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      void storageSet(StorageKeys.layoutPrefs, serializeLayoutPrefs(next));
+      return next;
+    });
+  }, []);
+
+  const handleResetLayoutPrefs = useCallback(() => {
+    setLayoutPrefs(DEFAULT_LAYOUT_PREFS);
+    void storageSet(
+      StorageKeys.layoutPrefs,
+      serializeLayoutPrefs(DEFAULT_LAYOUT_PREFS),
+    );
+  }, []);
+
   const handleDone = useCallback(
     async (id: number) => {
+      // Phase 7e/C linger: the task stays in the list, struck-through,
+      // with a fresh completed_at — the render filter keeps it visible
+      // for 24h. No more 350ms removal; re-tap (handleReopen) undoes it.
+      const nowIso = new Date().toISOString();
       setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, status: "done" } : t)),
+        prev.map((t) =>
+          t.id === id ? { ...t, status: "done", completed_at: nowIso } : t,
+        ),
       );
       try {
         await apiClient.patchTask(id, { status: "done" });
-        // Drop completed tasks from the visible list a moment later so
-        // the user has time to register the strikethrough animation.
-        setTimeout(() => {
-          setTasks((prev) => prev.filter((t) => t.id !== id));
-        }, 350);
         void loadCounts();
         void refreshCategories();
         setCalendarRefresh((n) => n + 1);
         setBoardRefresh((n) => n + 1);
       } catch (err) {
-        // Revert optimistic update.
         loadTasks(activeHorizon, selectedCategory);
         console.error("done failed", err);
+      }
+    },
+    [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
+  );
+
+  const handleReopen = useCallback(
+    async (id: number) => {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === id ? { ...t, status: "new", completed_at: null } : t,
+        ),
+      );
+      try {
+        await apiClient.patchTask(id, { status: "new" });
+        void loadCounts();
+        void refreshCategories();
+        setCalendarRefresh((n) => n + 1);
+        setBoardRefresh((n) => n + 1);
+      } catch (err) {
+        loadTasks(activeHorizon, selectedCategory);
+        console.error("reopen failed", err);
       }
     },
     [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
@@ -329,6 +373,33 @@ export default function App() {
       }
     },
     [activeHorizon, selectedCategory, loadTasks, loadCounts],
+  );
+
+  // Kanban drop: re-assign the task's category (null = "Без категории"
+  // column). The board owns its own task list, so we just patch + bump
+  // ``boardRefresh`` to re-pull every column.
+  const handleSetCategory = useCallback(
+    async (id: number, categoryId: number | null) => {
+      try {
+        await apiClient.patchTask(id, { category_id: categoryId });
+        void loadCounts();
+        void refreshCategories();
+        setBoardRefresh((n) => n + 1);
+      } catch (err) {
+        setBoardRefresh((n) => n + 1);
+        console.error("set category failed", err);
+      }
+    },
+    [loadCounts, refreshCategories],
+  );
+
+  // "+ Раздел" on the board creates a category = new column.
+  const handleCreateCategoryColumn = useCallback(
+    async (name: string) => {
+      await apiClient.createCategory(name);
+      await refreshCategories();
+    },
+    [refreshCategories],
   );
 
   const handleOpenTask = useCallback((id: number) => {
@@ -386,13 +457,31 @@ export default function App() {
     [loadCounts],
   );
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const data = event.active.data.current as { task?: Task } | undefined;
+    setActiveDragTask(data?.task ?? null);
+  }, []);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      setActiveDragTask(null);
       if (over === null) return;
       const taskId = Number(active.id);
       if (!Number.isFinite(taskId) || taskId <= 0) return;
       const overId = String(over.id);
+
+      // Kanban column drop (Phase 7e/A): re-assign category. The drag
+      // payload carries the card's current category to skip no-op drops.
+      if (overId.startsWith(KCAT_PREFIX)) {
+        const targetCat = overId === KCAT_NONE ? null : Number(overId.slice(KCAT_PREFIX.length));
+        const dragData = active.data.current as { categoryId?: number | null } | undefined;
+        const currentCat = dragData?.categoryId ?? null;
+        if (currentCat === targetCat) return; // dropped back in same column
+        haptic("success");
+        void handleSetCategory(taskId, targetCat);
+        return;
+      }
 
       // Calendar day drop (Phase 7d): shift the task's due_at to the
       // target day, preserving its local time-of-day. The dragged row
@@ -414,19 +503,17 @@ export default function App() {
         return;
       }
 
-      // Horizon drop — pill (Phase 5.4b, list view) or kanban column
-      // (Phase 7d, board view). Both use the horizon slug as drop id.
+      // Horizon drop — pill in list view (Phase 5.4b). The drop id is a
+      // bare horizon slug.
       const targetSlug = overId;
       if (!VALID_HORIZONS.has(targetSlug as HorizonSlug)) return;
-      // Board cards aren't in App's ``tasks`` list, so fall back to the
-      // current slug carried in the drag payload to detect no-op drops.
       const dragData = active.data.current as { horizonSlug?: string } | undefined;
       const currentSlug = tasks.find((t) => t.id === taskId)?.horizon_slug ?? dragData?.horizonSlug;
       if (currentSlug === targetSlug) return; // no-op same horizon
       haptic("success");
       void handleMove(taskId, targetSlug as HorizonSlug);
     },
-    [tasks, handleMove, handleReschedule, tz],
+    [tasks, handleMove, handleReschedule, handleSetCategory, tz],
   );
 
   if (loading) {
@@ -488,7 +575,7 @@ export default function App() {
     );
   }
 
-  if (route.path === "/trash") {
+  if (route.path === "/trash" || route.path === "/completed") {
     return (
       <DndContext sensors={sensors}>
         <div
@@ -498,7 +585,7 @@ export default function App() {
             paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
           }}
         >
-          <TrashPage />
+          {route.path === "/completed" ? <CompletedPage tz={tz} /> : <TrashPage />}
         </div>
         <BottomNav
           active={activeTab}
@@ -525,8 +612,54 @@ export default function App() {
       ? undefined
       : categories.find((c) => c.id === selectedCategory)?.name;
 
+  // Phase 7e/C linger: show open tasks + done ones completed within the
+  // last 24h (struck-through). Older done tasks live in «Выполненные».
+  // Plain const (not a hook) — we're past the early returns above.
+  const LINGER_MS = 24 * 60 * 60 * 1000;
+  const visibleTasks = tasks.filter((t) => {
+    if (t.status !== "done") return true;
+    // «Раскладка» → «Показывать выполненные» off: hide done entirely.
+    if (!showCompleted) return false;
+    const ts = t.completed_at;
+    if (!ts) return false;
+    // Server timestamps are naive UTC (no suffix); optimistic ones carry
+    // a trailing Z. Normalise before parsing.
+    const utc = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+    return Date.now() - Date.parse(utc) < LINGER_MS;
+  });
+
+  // Phase 7e/F2: apply «Раскладка» filter → sort → group to the LIST view.
+  // Pure transforms live in lib/layoutPrefs; we keep the (already
+  // linger-filtered) ``visibleTasks`` as the input so done-task linger logic
+  // stays intact. ``todayKey`` is the user's local "YYYY-MM-DD" for the due
+  // filter. ``horizonLabels`` feeds friendly group headers in horizon mode.
+  const todayKey = localDateKey(new Date().toISOString(), tz) ?? "";
+  const horizonLabels: Record<string, string> = {};
+  for (const h of horizons) horizonLabels[h.slug] = h.label;
+  const taskGroups = groupTasks(
+    applySort(
+      applyFilters(
+        visibleTasks,
+        layoutPrefs.filterPriority,
+        layoutPrefs.filterDue,
+        tz,
+        todayKey,
+      ),
+      layoutPrefs.sortBy,
+    ),
+    layoutPrefs.groupBy,
+    horizonLabels,
+  );
+  const hasVisibleTasks = taskGroups.some((g) => g.tasks.length > 0);
+
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveDragTask(null)}
+    >
       <div
         className="mx-auto max-w-md px-4"
         style={{
@@ -549,24 +682,19 @@ export default function App() {
           selectedCategoryId={selectedCategory}
           filterLabel={activeFilterLabel}
           onOpenFilter={() => setShowCategorySheet(true)}
+          onOpenLayout={() => setShowLayoutSheet(true)}
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
         />
         {activeTab === "tasks" ? (
           <>
-            <ViewToggle
-              value={tasksView}
-              onChange={(v) => {
-                setTasksView(v);
-                void storageSet(StorageKeys.lastTasksView, v);
-              }}
-            />
             {tasksView === "board" ? (
               <KanbanView
-                horizons={horizons}
+                categories={categories}
                 refreshSignal={boardRefresh}
                 onOpen={handleOpenTask}
                 onDone={handleDone}
+                onCreateCategory={handleCreateCategoryColumn}
               />
             ) : (
               <>
@@ -576,26 +704,50 @@ export default function App() {
                   counts={counts}
                   onChange={handleHorizonChange}
                 />
-                {tasks.length === 0 ? (
+                {!hasVisibleTasks ? (
                   <EmptyState
                     icon={Sparkles}
                     tone="emerald"
                     title="Ничего на горизонте"
                     hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
                   />
-                ) : (
+                ) : layoutPrefs.groupBy === "none" ? (
                   <ul className="flex flex-col gap-2">
-                    {tasks.map((task) => (
+                    {taskGroups[0]?.tasks.map((task) => (
                       <li key={task.id}>
                         <TaskCard
                           task={task}
                           tz={tz}
                           onDone={handleDone}
+                          onReopen={handleReopen}
                           onOpen={handleOpenTask}
                         />
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  <div className="flex flex-col gap-5">
+                    {taskGroups.map((group) => (
+                      <section key={group.key}>
+                        <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
+                          {group.label}
+                        </header>
+                        <ul className="flex flex-col gap-2">
+                          {group.tasks.map((task) => (
+                            <li key={task.id}>
+                              <TaskCard
+                                task={task}
+                                tz={tz}
+                                onDone={handleDone}
+                                onReopen={handleReopen}
+                                onOpen={handleOpenTask}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
                 )}
               </>
             )}
@@ -619,7 +771,35 @@ export default function App() {
         selectedId={selectedCategory}
         onChange={handleCategoryChange}
       />
+      <LayoutSheet
+        open={showLayoutSheet}
+        onClose={() => setShowLayoutSheet(false)}
+        view={tasksView}
+        onViewChange={(v) => {
+          setTasksView(v);
+          void storageSet(StorageKeys.lastTasksView, v);
+        }}
+        showCompleted={showCompleted}
+        onShowCompletedChange={(next) => {
+          setShowCompleted(next);
+          void storageSet(StorageKeys.showCompleted, next ? "1" : "0");
+        }}
+        groupBy={layoutPrefs.groupBy}
+        onGroupByChange={(groupBy) => updateLayoutPrefs({ groupBy })}
+        sortBy={layoutPrefs.sortBy}
+        onSortByChange={(sortBy) => updateLayoutPrefs({ sortBy })}
+        filterPriority={layoutPrefs.filterPriority}
+        onFilterPriorityChange={(filterPriority) =>
+          updateLayoutPrefs({ filterPriority })
+        }
+        filterDue={layoutPrefs.filterDue}
+        onFilterDueChange={(filterDue) => updateLayoutPrefs({ filterDue })}
+        onResetAll={handleResetLayoutPrefs}
+      />
       <BottomNav active={activeTab} onChange={setActiveTab} />
+      <DragOverlay dropAnimation={null}>
+        {activeDragTask ? <KanbanCardView task={activeDragTask} overlay /> : null}
+      </DragOverlay>
     </DndContext>
   );
 }

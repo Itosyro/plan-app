@@ -44,7 +44,7 @@ async def list_pending_reviews(
                 select(InboxEntry)
                 .where(
                     InboxEntry.user_id == user.id,
-                    InboxEntry.needs_review.is_(True),  # type: ignore[union-attr]
+                    InboxEntry.needs_review.is_(True),  # type: ignore[attr-defined]
                 )
                 .order_by(InboxEntry.received_at.desc())  # type: ignore[attr-defined]
             )

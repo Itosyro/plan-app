@@ -20,9 +20,12 @@ interface Props {
   tz: string;
   onDone: (id: number) => Promise<void> | void;
   onOpen: (id: number) => void;
+  // Phase 7e/C: tapping a lingering done card's checkbox returns it to
+  // work. When omitted, a done checkbox stays inert (legacy surfaces).
+  onReopen?: (id: number) => Promise<void> | void;
 }
 
-export function TaskCard({ task, tz, onDone, onOpen }: Props) {
+export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
   const [busy, setBusy] = useState(false);
   const due = formatDue(task.due_at, tz);
   const isDone = task.status === "done";
@@ -73,11 +76,18 @@ export function TaskCard({ task, tz, onDone, onOpen }: Props) {
       <div className="flex items-start gap-3">
         <button
           type="button"
-          aria-label={isDone ? "Готово" : "Отметить выполненной"}
-          disabled={busy || isDone}
+          aria-label={isDone ? "Вернуть в работу" : "Отметить выполненной"}
+          disabled={busy || (isDone && !onReopen)}
           onClick={(e) => {
             e.stopPropagation();
             void wrap(async () => {
+              if (isDone) {
+                if (onReopen) {
+                  haptic("select");
+                  await onReopen(task.id);
+                }
+                return;
+              }
               haptic("success");
               await onDone(task.id);
             });

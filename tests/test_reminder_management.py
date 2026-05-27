@@ -25,7 +25,7 @@ from app.bot.services import (
     get_or_create_user,
     list_pending_reminders,
 )
-from app.db.models import Reminder, Task
+from app.db.models import Reminder, Task, TaskEvent
 from app.shared.time import plural_ru
 
 
@@ -393,3 +393,92 @@ def test_reminder_list_keyboard_without_next_offset() -> None:
 def test_parse_reminder_cancel_callback_still_works() -> None:
     # Sanity: existing PR-J callback parser unaffected by new page parser.
     assert parse_reminder_cancel_callback("rem:cancel:42") == 42
+
+
+# ── P0.2 audit-trail tests ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancel_reminder_logs_task_event(session: AsyncSession) -> None:
+    """Cancelling one reminder writes exactly one audit TaskEvent."""
+    user_id, task_id, reminder_ids = await _create_task_with_reminders(
+        session,
+        telegram_id=830,
+    )
+
+    cancelled = await cancel_reminder(session, user_id, reminder_ids[0])
+    await session.commit()
+
+    assert cancelled is not None
+    events = (
+        await session.exec(
+            select(TaskEvent).where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.kind == "reminder_cancelled",
+            ),
+        )
+    ).all()
+    assert len(events) == 1
+    payload = events[0].payload_json
+    assert payload is not None
+    assert payload["reminder_id"] == reminder_ids[0]
+    assert payload["scope"] == "single"
+    assert payload["fire_at"] == datetime(2026, 5, 20, 10, 0).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_reminders_logs_event_per_reminder(
+    session: AsyncSession,
+) -> None:
+    """Cancelling all task reminders writes one event per cancelled row."""
+    user_id, task_id, reminder_ids = await _create_task_with_reminders(
+        session,
+        telegram_id=831,
+    )
+
+    cancelled = await cancel_task_reminders(session, user_id, task_id)
+    await session.commit()
+
+    assert len(cancelled) == 2
+    events = (
+        await session.exec(
+            select(TaskEvent).where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.kind == "reminder_cancelled",
+            ),
+        )
+    ).all()
+    assert len(events) == 2
+    assert {e.payload_json["scope"] for e in events if e.payload_json} == {"task"}
+    assert {e.payload_json["reminder_id"] for e in events if e.payload_json} == set(
+        reminder_ids,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_reminders_no_event_when_nothing_to_cancel(
+    session: AsyncSession,
+) -> None:
+    """No reminders to cancel → no audit events."""
+    user_id, task_id, reminder_ids = await _create_task_with_reminders(
+        session,
+        telegram_id=832,
+    )
+    # Cancel everything first; the second pass has nothing left to do.
+    await cancel_task_reminders(session, user_id, task_id)
+    await session.commit()
+
+    cancelled_again = await cancel_task_reminders(session, user_id, task_id)
+    await session.commit()
+
+    assert cancelled_again == []
+    events = (
+        await session.exec(
+            select(TaskEvent).where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.kind == "reminder_cancelled",
+            ),
+        )
+    ).all()
+    # Only the first (successful) pass produced events — one per reminder.
+    assert len(events) == len(reminder_ids)

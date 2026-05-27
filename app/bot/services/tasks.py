@@ -328,6 +328,22 @@ async def cancel_reminder(
     reminder.last_error = None
     session.add(reminder)
     await session.flush()
+
+    if reminder.task_id is not None:
+        session.add(
+            TaskEvent(
+                task_id=reminder.task_id,
+                kind="reminder_cancelled",
+                payload_json={
+                    "reminder_id": reminder.id,
+                    "fire_at": reminder.fire_at.isoformat() if reminder.fire_at else None,
+                    "scope": "single",
+                },
+            ),
+        )
+        await session.flush()
+        logger.info("reminder.cancelled", reminder_id=reminder.id, user_id=user_id)
+
     return reminder
 
 
@@ -361,6 +377,25 @@ async def cancel_task_reminders(
         session.add(reminder)
     if reminders:
         await session.flush()
+        for reminder in reminders:
+            session.add(
+                TaskEvent(
+                    task_id=task_id,
+                    kind="reminder_cancelled",
+                    payload_json={
+                        "reminder_id": reminder.id,
+                        "fire_at": reminder.fire_at.isoformat() if reminder.fire_at else None,
+                        "scope": "task",
+                    },
+                ),
+            )
+        await session.flush()
+        logger.info(
+            "reminder.cancelled",
+            task_id=task_id,
+            user_id=user_id,
+            count=len(reminders),
+        )
     return reminders
 
 
@@ -654,10 +689,14 @@ async def update_task_horizon(
 async def update_task_category(
     session: AsyncSession,
     task: Task,
-    new_category_id: int,
+    new_category_id: int | None,
     user_id: int,
 ) -> Task:
-    """Move a task to a different category and log the event."""
+    """Move a task to a different category (or clear it) and log the event.
+
+    ``new_category_id=None`` clears the category — used by the kanban
+    "Без категории" column drop.
+    """
     old_category_id = task.category_id
     task.category_id = new_category_id
     session.add(task)
@@ -869,6 +908,7 @@ async def _maybe_complete_parent(session: AsyncSession, child: Task, user_id: in
     if parent is None or parent.status == "done" or parent.deleted_at is not None:
         return None
     parent.status = "done"
+    parent.completed_at = utcnow_naive()
     session.add(parent)
     await session.flush()
     if parent.id is not None:
@@ -895,6 +935,7 @@ async def mark_task_done(
     auto-completed too (see :func:`_maybe_complete_parent`).
     """
     task.status = "done"
+    task.completed_at = utcnow_naive()
     session.add(task)
     await session.flush()
 
@@ -928,6 +969,7 @@ async def mark_task_undone(
     event so the audit trail mirrors :func:`mark_task_done`.
     """
     task.status = "new"
+    task.completed_at = None
     session.add(task)
     await session.flush()
 
@@ -947,6 +989,7 @@ async def mark_task_undone(
         parent = await session.get(Task, task.parent_id)
         if parent is not None and parent.status == "done" and parent.deleted_at is None:
             parent.status = "new"
+            parent.completed_at = None
             session.add(parent)
             await session.flush()
             if parent.id is not None:

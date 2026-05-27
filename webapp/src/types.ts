@@ -28,6 +28,9 @@ export interface Task {
   status: TaskStatus;
   due_at: string | null;
   created_at: string;
+  // Phase 7e/C: set when marked done (cleared on reopen). Drives the
+  // "Выполненные" screen + linger-strikethrough window. Null when open.
+  completed_at: string | null;
   horizon_slug: HorizonSlug | null;
   category_id: number | null;
   category_name: string | null;
@@ -123,7 +126,7 @@ export interface TaskUpdate {
   status?: TaskStatus;
   priority?: TaskPriority;
   horizon_slug?: HorizonSlug;
-  category_id?: number;
+  category_id?: number | null;
   due_at?: string | null;
 }
 

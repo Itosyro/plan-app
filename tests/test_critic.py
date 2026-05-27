@@ -9,7 +9,7 @@ import respx
 
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.router import GroqKeyRouter
-from app.ai.schemas import ClassifierResult, CriticVerdict
+from app.ai.schemas import ClassifierResult, CriticVerdict, FieldCheck
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
@@ -81,12 +81,51 @@ def test_should_not_run_unknown_mode() -> None:
     assert not should_run_critic(cr, critic_mode="off", confidence_threshold=0.7)
 
 
+# ── CriticVerdict.checks (per-field CoT) ──────────────────────────────
+
+
+def test_verdict_checks_default_empty() -> None:
+    verdict = CriticVerdict(approved=True, reason="ок", corrected=None)
+    assert verdict.checks == []
+
+
+def test_verdict_checks_roundtrip() -> None:
+    verdict = CriticVerdict(
+        checks=[
+            FieldCheck(field="is_task", ok=True, note="это задача"),
+            FieldCheck(field="horizon", ok=False, note="должно быть tomorrow"),
+        ],
+        approved=False,
+        reason="неверный горизонт",
+        corrected=_cr(horizon="tomorrow"),
+    )
+    dumped = verdict.model_dump_json()
+    restored = CriticVerdict.model_validate_json(dumped)
+    assert len(restored.checks) == 2
+    assert restored.checks[0].field == "is_task"
+    assert restored.checks[0].ok is True
+    assert restored.checks[1].field == "horizon"
+    assert restored.checks[1].ok is False
+
+
+def test_verdict_validates_without_checks() -> None:
+    restored = CriticVerdict.model_validate_json(
+        '{"approved": true, "reason": "ок", "corrected": null}'
+    )
+    assert restored.checks == []
+
+
 # ── apply_verdict ─────────────────────────────────────────────────────
 
 
 def test_apply_verdict_approved() -> None:
     cr = _cr()
-    verdict = CriticVerdict(approved=True, reason="Всё верно", corrected=None)
+    verdict = CriticVerdict(
+        checks=[FieldCheck(field="horizon", ok=True, note="верно")],
+        approved=True,
+        reason="Всё верно",
+        corrected=None,
+    )
     assert apply_verdict(cr, verdict) is cr
 
 
@@ -117,6 +156,10 @@ def test_apply_verdict_rejected_but_no_corrected() -> None:
 async def test_critique_approved() -> None:
     _mock_critic(
         {
+            "checks": [
+                {"field": "is_task", "ok": True, "note": "это задача"},
+                {"field": "horizon", "ok": True, "note": "someday корректно"},
+            ],
             "approved": True,
             "reason": "Классификация корректна.",
             "corrected": None,
@@ -127,6 +170,10 @@ async def test_critique_approved() -> None:
     verdict = await critique_classification(router, "купить хлеб", cr, None, "Europe/Moscow")
     assert verdict.approved is True
     assert verdict.corrected is None
+    assert len(verdict.checks) == 2
+    assert all(c.ok for c in verdict.checks)
+    # all-ok / approved → apply_verdict returns the original unchanged
+    assert apply_verdict(cr, verdict) is cr
 
 
 @respx.mock
@@ -134,6 +181,10 @@ async def test_critique_approved() -> None:
 async def test_critique_corrected() -> None:
     _mock_critic(
         {
+            "checks": [
+                {"field": "is_task", "ok": True, "note": "это задача"},
+                {"field": "horizon", "ok": False, "note": "'завтра' → tomorrow, не someday"},
+            ],
             "approved": False,
             "reason": "Горизонт неправильный — 'завтра' указывает на tomorrow.",
             "corrected": {
@@ -153,3 +204,6 @@ async def test_critique_corrected() -> None:
     assert verdict.approved is False
     assert verdict.corrected is not None
     assert verdict.corrected.horizon == "tomorrow"
+    # a failing check (ok=False) drives the correction through apply_verdict
+    assert any(not c.ok for c in verdict.checks)
+    assert apply_verdict(cr, verdict).horizon == "tomorrow"

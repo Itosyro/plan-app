@@ -69,6 +69,9 @@ class TaskOut(_ConfiguredModel):
     status: TaskStatus
     due_at: datetime | None = None
     created_at: datetime
+    # Phase 7e/C: set when marked done (cleared on reopen). ``None`` for
+    # open tasks. Drives the "Выполненные" screen + linger-strikethrough.
+    completed_at: datetime | None = None
     horizon_slug: HorizonSlug | None = None
     category_id: int | None = None
     category_name: str | None = None

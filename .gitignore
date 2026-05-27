@@ -67,5 +67,5 @@ temp/
 # --- Docker ---
 docker-compose.override.yml
 
-# --- Claude Code agent worktrees (transient, never commit) ---
-.claude/worktrees/
+# --- Claude Code agent worktrees (transient, per-session) ---
+.claude/

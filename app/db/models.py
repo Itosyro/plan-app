@@ -217,6 +217,11 @@ class Task(SQLModel, table=True):
     needs_clarification: bool = Field(default=False)
     confidence: float = Field(default=1.0)
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+    # Phase 7e/C: when the task was marked done. Drives the "Выполненные"
+    # screen + the linger-strikethrough window in the Mini-App. Cleared
+    # on reopen. ``None`` for open tasks (and legacy done rows until
+    # re-completed). Indexed for ``ORDER BY completed_at DESC``.
+    completed_at: datetime | None = Field(default=None, index=True)
     deleted_at: datetime | None = Field(default=None)
 
 

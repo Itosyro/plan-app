@@ -38,9 +38,10 @@ const ITEMS: Item[] = [
 ];
 
 // Fixed cell width so the capsule can slide with a simple
-// ``translateX(activeIndex * CELL_PX)``. Matches what Telegram uses
-// for its 4-tab nav on phones.
-const CELL_PX = 76;
+// ``translateX(activeIndex * CELL_PX)``. Bigger than a stock Telegram
+// 4-tab nav (the user prefers Mira's larger, clearer island): wider
+// cells, larger icons + labels, taller touch targets (≥56px).
+const CELL_PX = 86;
 
 export function BottomNav({ active, onChange }: Props) {
   const activeIndex = Math.max(
@@ -54,22 +55,21 @@ export function BottomNav({ active, onChange }: Props) {
       className="fixed inset-x-0 z-30 flex justify-center px-4"
       style={{ bottom: "calc(var(--safe-bottom) + 0.875rem)" }}
     >
-      <div
-        className="rounded-[28px] bg-bento-card/80 p-1.5 shadow-island ring-1 ring-black/5 backdrop-blur-2xl"
-      >
+      <div className="rounded-[30px] bg-bento-card/85 p-2 shadow-island ring-1 ring-black/[0.06] backdrop-blur-2xl">
         <div
           className="relative flex items-center"
           style={{ width: `${CELL_PX * ITEMS.length}px` }}
         >
-          {/* Sliding active-tab capsule. ``cubic-bezier`` matches the
-              iOS / Telegram spring (soft overshoot for tactility). */}
+          {/* Sliding active-tab capsule — a clear filled pill (Mira
+              style) so the current tab reads unmistakably. cubic-bezier
+              matches the iOS / Telegram spring (soft overshoot). */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 rounded-[22px] bg-tg-button/12"
+            className="pointer-events-none absolute inset-y-0 rounded-[24px] bg-tg-button/[0.14] ring-1 ring-tg-button/[0.10]"
             style={{
               width: `${CELL_PX}px`,
               transform: `translateX(${activeIndex * CELL_PX}px)`,
-              transition: "transform 320ms cubic-bezier(0.32, 0.72, 0.20, 1.05)",
+              transition: "transform 340ms cubic-bezier(0.32, 0.72, 0.20, 1.05)",
             }}
           />
           {ITEMS.map((item) => {
@@ -87,14 +87,16 @@ export function BottomNav({ active, onChange }: Props) {
                   onChange(item.id);
                 }}
                 className={
-                  "relative z-10 flex flex-col items-center justify-center gap-0.5 rounded-[22px] py-1.5 transition-colors duration-200 active:scale-[0.94] " +
-                  (isActive ? "text-tg-button" : "text-tg-hint hover:text-tg-text")
+                  "relative z-10 flex min-h-[56px] flex-col items-center justify-center gap-1 rounded-[24px] py-2 transition-colors duration-200 active:scale-[0.94] " +
+                  // Inactive: solid black icon + label (Mira style, not
+                  // washed-out grey). Active: turns blue inside the pill.
+                  (isActive ? "text-tg-button" : "text-tg-text/90 hover:text-tg-text")
                 }
                 style={{ width: `${CELL_PX}px` }}
               >
                 <Icon
-                  size={22}
-                  strokeWidth={isActive ? 2.4 : 2.0}
+                  size={25}
+                  strokeWidth={isActive ? 2.5 : 2.0}
                   aria-hidden
                   className={
                     "transition-transform duration-300 " +
@@ -103,7 +105,7 @@ export function BottomNav({ active, onChange }: Props) {
                 />
                 <span
                   className={
-                    "font-display text-[11px] leading-tight tracking-tight transition-all duration-200 " +
+                    "font-display text-[12px] leading-tight tracking-tight transition-all duration-200 " +
                     (isActive ? "font-semibold" : "font-medium")
                   }
                 >

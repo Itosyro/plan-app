@@ -116,4 +116,11 @@ export const StorageKeys = {
   lastHorizon: "last_horizon",
   lastCategory: "last_category",
   lastTasksView: "last_tasks_view",
+  // Phase 7e/F1: «Раскладка» — show/hide completed tasks in the list.
+  showCompleted: "show_completed",
+  // Phase 7e/B: calendar mode (month / week / agenda).
+  lastCalendarView: "last_calendar_view",
+  // Phase 7e/F2: «Раскладка» list grouping / sorting / filtering — stored
+  // as one small JSON blob to keep the per-bot key quota low.
+  layoutPrefs: "layout_prefs",
 } as const;
