@@ -24,6 +24,7 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
+import { InboxReview } from "./components/InboxReview";
 import { NoteDetail } from "./components/NoteDetail";
 import { NotesList } from "./components/NotesList";
 import { LayoutSheet } from "./components/LayoutSheet";
@@ -93,6 +94,8 @@ export default function App() {
   const [notesRefresh, setNotesRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
+  // «Входящие» pending-review count for the nav badge.
+  const [inboxCount, setInboxCount] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
   const [showLayoutSheet, setShowLayoutSheet] = useState(false);
   // Phase 7e/F1: «Раскладка» toggle — show/hide done tasks in the list.
@@ -201,6 +204,19 @@ export default function App() {
     }
   }, []);
 
+  // «Входящие» badge count. Cheap — the pending list is small. Refreshed
+  // on shell load and after a review is confirmed.
+  const loadInboxCount = useCallback(async () => {
+    try {
+      const resp = await apiClient.pendingInbox();
+      setInboxCount(resp.length);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
+        console.error("loadInboxCount failed", err);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadShell().finally(() => setLoading(false));
   }, [loadShell]);
@@ -274,6 +290,12 @@ export default function App() {
       void loadCounts();
     }
   }, [authError, prefsHydrated, loadCounts]);
+
+  useEffect(() => {
+    if (!authError && prefsHydrated) {
+      void loadInboxCount();
+    }
+  }, [authError, prefsHydrated, loadInboxCount]);
 
   // Persist horizon choice. We don't persist on every render — the
   // setActiveHorizon path is the only way it changes.
@@ -549,7 +571,11 @@ export default function App() {
           onMutated={handleDetailMutated}
           onDeleted={handleCloseDetail}
         />
-        <BottomNav active={activeTab} onChange={setActiveTab} />
+        <BottomNav
+          active={activeTab}
+          onChange={setActiveTab}
+          badges={{ inbox: inboxCount }}
+        />
       </DndContext>
     );
   }
@@ -570,6 +596,7 @@ export default function App() {
             navigateHome();
             setActiveTab(tab);
           }}
+          badges={{ inbox: inboxCount }}
         />
       </DndContext>
     );
@@ -593,6 +620,7 @@ export default function App() {
             navigateHome();
             setActiveTab(tab);
           }}
+          badges={{ inbox: inboxCount }}
         />
       </DndContext>
     );
@@ -605,7 +633,9 @@ export default function App() {
         : "Лента твоих задач"
       : activeTab === "notes"
         ? "Любой текст, который не задача"
-        : undefined;
+        : activeTab === "inbox"
+          ? "Проверь, что распозналось"
+          : undefined;
 
   const activeFilterLabel =
     selectedCategory === null
@@ -675,7 +705,9 @@ export default function App() {
                 ? "Заметки"
                 : activeTab === "settings"
                   ? "Настройки"
-                  : "Календарь"
+                  : activeTab === "inbox"
+                    ? "Входящие"
+                    : "Календарь"
           }
           subtitle={titleSubtitle}
           showFilter={activeTab === "tasks"}
@@ -760,6 +792,18 @@ export default function App() {
             refreshSignal={calendarRefresh}
             onOpen={handleOpenTask}
           />
+        ) : activeTab === "inbox" ? (
+          <InboxReview
+            tz={tz}
+            onResolved={() => {
+              void loadInboxCount();
+              void loadTasks(activeHorizon, selectedCategory);
+              void loadCounts();
+              void refreshCategories();
+              setCalendarRefresh((n) => n + 1);
+              setBoardRefresh((n) => n + 1);
+            }}
+          />
         ) : me ? (
           <SettingsPage me={me} onUpdated={setMe} />
         ) : null}
@@ -796,7 +840,11 @@ export default function App() {
         onFilterDueChange={(filterDue) => updateLayoutPrefs({ filterDue })}
         onResetAll={handleResetLayoutPrefs}
       />
-      <BottomNav active={activeTab} onChange={setActiveTab} />
+      <BottomNav
+        active={activeTab}
+        onChange={setActiveTab}
+        badges={{ inbox: inboxCount }}
+      />
       <DragOverlay dropAnimation={null}>
         {activeDragTask ? <KanbanCardView task={activeDragTask} overlay /> : null}
       </DragOverlay>
