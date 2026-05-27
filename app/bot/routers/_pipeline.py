@@ -23,7 +23,6 @@ descriptors, and trip the rate-limiter for every other user.
 from __future__ import annotations
 
 import asyncio
-import time
 
 from aiogram.types import InlineKeyboardMarkup
 from sqlmodel import select
@@ -73,44 +72,6 @@ _groq_router: GroqKeyRouter | None = None
 _global_pipeline_semaphore: asyncio.Semaphore | None = None
 _user_pipeline_semaphores: dict[int, asyncio.Semaphore] = {}
 _user_semaphores_lock: asyncio.Lock | None = None
-
-PENDING_CLARIFICATIONS: dict[
-    str, tuple[ClassifierResult, ResolvedTime | None, int | None, int, float]
-] = {}
-
-
-def pop_pending_clarification(
-    clarify_id: str,
-    tg_user_id: int,
-) -> tuple[ClassifierResult, ResolvedTime | None, int | None] | None:
-    """Pop a pending clarification if it belongs to the user and is fresh.
-
-    Implements a 5-minute TTL to avoid memory leaks from abandoned prompts,
-    and checks authorization (IDOR protection) so one user cannot click
-    another user's clarification buttons.
-    """
-    now = time.monotonic()
-    stale_keys = [k for k, v in PENDING_CLARIFICATIONS.items() if now - v[4] > 300]
-    for k in stale_keys:
-        PENDING_CLARIFICATIONS.pop(k, None)
-
-    item = PENDING_CLARIFICATIONS.get(clarify_id)
-    if item is None:
-        return None
-
-    cr, resolved, inbox_id, owner_id, _ts = item
-    if owner_id != tg_user_id:
-        # Prevent IDOR where user B clicks user A's clarification button.
-        # Don't pop it, so user A can still click it.
-        raise PermissionError("unauthorized")
-
-    PENDING_CLARIFICATIONS.pop(clarify_id, None)
-    return cr, resolved, inbox_id
-
-
-def reset_pending_clarifications_for_tests() -> None:
-    """Test-only hook: clear in-memory clarification prompts."""
-    PENDING_CLARIFICATIONS.clear()
 
 
 def _get_global_pipeline_semaphore() -> asyncio.Semaphore:
