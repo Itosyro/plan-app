@@ -58,7 +58,11 @@ def test_edit_intents_all_superset() -> None:
     assert "complete" in EDIT_INTENTS_ALL
     assert "rename" in EDIT_INTENTS_ALL
     assert "cancel_reminder" in EDIT_INTENTS_ALL
-    assert len(EDIT_INTENTS_ALL) == 11  # I1(4) + I2(5) + I3_READONLY(1) + PR-J(1)
+    assert "create_category" in EDIT_INTENTS_ALL
+    assert "rename_category" in EDIT_INTENTS_ALL
+    assert "delete_category" in EDIT_INTENTS_ALL
+    # I1(4) + I2(5) + I3_READONLY(1) + PR-J(1) + category(3)
+    assert len(EDIT_INTENTS_ALL) == 14
 
 
 # ── Service functions ─────────────────────────────────────────────────

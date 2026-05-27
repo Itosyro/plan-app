@@ -65,7 +65,13 @@ from .tasks import (
     count_pending_reminders as count_pending_reminders,
 )
 from .tasks import (
+    delete_category as delete_category,
+)
+from .tasks import (
     delete_task as delete_task,
+)
+from .tasks import (
+    find_category_by_name as find_category_by_name,
 )
 from .tasks import (
     find_task_by_query as find_task_by_query,
@@ -108,6 +114,9 @@ from .tasks import (
 )
 from .tasks import (
     persist_classification as persist_classification,
+)
+from .tasks import (
+    rename_category as rename_category,
 )
 from .tasks import (
     schedule_reminders as schedule_reminders,

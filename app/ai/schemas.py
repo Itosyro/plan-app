@@ -183,6 +183,9 @@ class EditIntent(BaseModel):
         "set_due",
         "set_priority",
         "set_category",
+        "create_category",
+        "rename_category",
+        "delete_category",
         "list_done",
         "cancel_reminder",
         "none",
@@ -190,6 +193,13 @@ class EditIntent(BaseModel):
     task_query: str | None = Field(
         default=None,
         description="Search string to find the target task (Russian)",
+    )
+    category_query: str | None = Field(
+        default=None,
+        description=(
+            "Name of the existing category to rename or delete "
+            "(rename_category / delete_category intents)"
+        ),
     )
     new_horizon: Literal["today", "tomorrow", "week", "month", "year", "someday"] | None = Field(
         default=None,
@@ -209,7 +219,10 @@ class EditIntent(BaseModel):
     )
     new_category: str | None = Field(
         default=None,
-        description="New category name for set_category intent",
+        description=(
+            "Category name: target for set_category, the name to create for "
+            "create_category, or the new name for rename_category"
+        ),
     )
     confidence: float = Field(
         default=0.0,

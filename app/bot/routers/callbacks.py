@@ -31,6 +31,7 @@ from app.bot.edit_executor import (
     _execute_delete,
     _execute_reopen,
     _undo_keyboard,
+    execute_delete_category,
     pop_pending_edit,
     touch_last_task,
 )
@@ -254,6 +255,22 @@ def parse_edit_delete_confirm_callback(data: str) -> tuple[str, int] | None:
     """
     parts = data.split(":")
     if len(parts) != 3 or parts[0] != "edit" or parts[1] not in {"deldo", "delno"}:
+        return None
+    try:
+        return parts[1], int(parts[2])
+    except ValueError:
+        return None
+
+
+def parse_edit_category_delete_callback(data: str) -> tuple[str, int] | None:
+    """Parse an ``edit:catdo:<id>`` / ``edit:catno:<id>`` callback string.
+
+    Two-step confirmation for a free-text ``delete_category``. Returns
+    ``(action, category_id)`` where ``action`` is ``"catdo"`` (confirm →
+    delete) or ``"catno"`` (cancel), ``None`` on malformed input.
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "edit" or parts[1] not in {"catdo", "catno"}:
         return None
     try:
         return parts[1], int(parts[2])
@@ -805,6 +822,43 @@ def create_router() -> Router:
                         user_id=user_id,
                         exc_info=True,
                     )
+
+    @router.callback_query(F.data.startswith("edit:catdo:"))
+    @router.callback_query(F.data.startswith("edit:catno:"))
+    async def cb_edit_category_delete_confirm(callback: CallbackQuery) -> None:
+        """Resolve the two-step confirmation for a free-text delete_category.
+
+        ``edit:catdo:<id>`` confirms → detach tasks/notes and drop the
+        category; ``edit:catno:<id>`` cancels → leave it intact.
+        """
+        if callback.from_user is None or callback.data is None:
+            return
+        parsed = parse_edit_category_delete_callback(callback.data)
+        if parsed is None:
+            await callback.answer("Неверный формат.")
+            return
+        action, category_id = parsed
+
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=callback.from_user.id,
+            )
+            if user.id is None:
+                await callback.answer("Ошибка.")
+                return
+            user_id = user.id
+
+        if action == "catno":
+            await callback.answer("Отменено.")
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text("Отменено.", reply_markup=None)
+            return
+
+        reply = await execute_delete_category(user_id, category_id)
+        await callback.answer(reply[:200])
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(reply, reply_markup=None)
 
     # ── PR-K: needs_clarification UI ──────────────────────────────────
 

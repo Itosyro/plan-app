@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import Insert as _PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import Insert as _SqliteInsert
@@ -145,6 +146,82 @@ async def get_user_categories_full(
         select(Category).where(Category.user_id == user_id).order_by(Category.name),
     )
     return list(result.all())
+
+
+async def find_category_by_name(
+    session: AsyncSession,
+    user_id: int,
+    name: str,
+) -> Category | None:
+    """Find one of the user's categories by name (case-insensitive).
+
+    Voice/text commands rarely match the stored casing ("финансы" vs
+    "Финансы"), so the lookup folds case. Folding happens in Python, not
+    via SQL ``lower()`` — SQLite's ``lower()`` only folds ASCII, so a
+    SQL-side comparison would silently miss Cyrillic. A user has at most a
+    handful of categories, so loading them all is cheap.
+    """
+    folded = name.strip().lower()
+    if not folded:
+        return None
+    result = await session.exec(
+        select(Category).where(Category.user_id == user_id),
+    )
+    for cat in result.all():
+        if cat.name.lower() == folded:
+            return cat
+    return None
+
+
+async def rename_category(
+    session: AsyncSession,
+    category: Category,
+    new_name: str,
+) -> Category:
+    """Rename a category in place."""
+    category.name = new_name
+    session.add(category)
+    await session.flush()
+    logger.info("category.renamed", category_id=category.id, user_id=category.user_id)
+    return category
+
+
+async def delete_category(
+    session: AsyncSession,
+    category: Category,
+) -> int:
+    """Delete a category, leaving its tasks and notes uncategorised.
+
+    The category FK is nullable on both ``Task`` and ``Note``; rather than
+    cascade-deleting the user's items we null their ``category_id`` so the
+    work survives (just moves to "Без категории"). Returns the number of
+    active (non-deleted) tasks that were detached, for the confirmation.
+    """
+    cat_id = category.id
+    if cat_id is None:
+        return 0
+
+    affected = (
+        await session.exec(
+            select(func.count())
+            .select_from(Task)
+            .where(
+                Task.category_id == cat_id,
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            ),
+        )
+    ).one()
+
+    await session.exec(
+        sa_update(Task).where(Task.category_id == cat_id).values(category_id=None),  # type: ignore[arg-type]
+    )
+    await session.exec(
+        sa_update(Note).where(Note.category_id == cat_id).values(category_id=None),  # type: ignore[arg-type]
+    )
+    await session.delete(category)
+    await session.flush()
+    logger.info("category.deleted", category_id=cat_id, user_id=category.user_id, tasks=affected)
+    return int(affected)
 
 
 # ── Reminders ─────────────────────────────────────────────────────────

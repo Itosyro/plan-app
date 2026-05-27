@@ -22,12 +22,15 @@ from sqlmodel import select
 from app.ai.schemas import EditIntent
 from app.bot.services import (
     cancel_task_reminders,
+    delete_category,
     delete_task,
+    find_category_by_name,
     find_tasks_by_query,
     get_or_create_category,
     get_task_by_id,
     mark_task_done,
     mark_task_undone,
+    rename_category,
     update_task_category,
     update_task_due_at,
     update_task_horizon,
@@ -35,7 +38,7 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Task, TaskEditSnapshot, TaskEvent, User
+from app.db.models import Category, Task, TaskEditSnapshot, TaskEvent, User
 from app.shared.logging import get_logger
 from app.shared.time import format_reminder_local, plural_ru
 
@@ -91,8 +94,13 @@ EDIT_INTENTS_I1 = frozenset({"complete", "delete", "reopen", "reorder_horizon"})
 EDIT_INTENTS_I2 = frozenset({"rename", "set_due", "set_priority", "set_category", "reorder_time"})
 EDIT_INTENTS_I3_READONLY = frozenset({"list_done"})
 EDIT_INTENTS_I4_REMINDERS = frozenset({"cancel_reminder"})
+EDIT_INTENTS_CATEGORY = frozenset({"create_category", "rename_category", "delete_category"})
 EDIT_INTENTS_ALL = (
-    EDIT_INTENTS_I1 | EDIT_INTENTS_I2 | EDIT_INTENTS_I3_READONLY | EDIT_INTENTS_I4_REMINDERS
+    EDIT_INTENTS_I1
+    | EDIT_INTENTS_I2
+    | EDIT_INTENTS_I3_READONLY
+    | EDIT_INTENTS_I4_REMINDERS
+    | EDIT_INTENTS_CATEGORY
 )
 
 PRIORITY_LABELS: dict[str, str] = {
@@ -416,6 +424,117 @@ async def _execute_cancel_reminder(task_id: int, user_id: int) -> tuple[str, int
     return f"Отменил {n} {noun} для «{title}»: {times}.", None
 
 
+# ── Category management (voice/text) ─────────────────────────────────
+
+
+def _category_delete_confirm_keyboard(category_id: int, name: str) -> InlineKeyboardMarkup:
+    """Two-step confirm/cancel keyboard for deleting a whole category.
+
+    Deleting a category detaches every task/note in it, so — like the
+    free-text task delete — we never act on the model's say-so alone.
+    """
+    label = name[:40]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Да, удалить «{label}»",
+                    callback_data=f"edit:catdo:{category_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=f"edit:catno:{category_id}",
+                ),
+            ],
+        ]
+    )
+
+
+async def _execute_create_category(user_id: int, intent: EditIntent) -> str:
+    """Create a new empty category (no task involved)."""
+    name = (intent.new_category or "").strip()
+    if not name:
+        return "Не понял название категории. Уточни, как её назвать."
+    async with session_scope() as session:
+        existing = await find_category_by_name(session, user_id, name)
+        if existing is not None:
+            return f"Категория «{existing.name}» уже есть."
+        await get_or_create_category(session, user_id, name)
+    return f"Создал категорию «{name}»."
+
+
+async def _execute_rename_category(user_id: int, intent: EditIntent) -> str:
+    """Rename an existing category."""
+    old = (intent.category_query or "").strip()
+    new = (intent.new_category or "").strip()
+    if not old or not new:
+        return "Не понял, что переименовать. Пример: «переименуй категорию Работа в Дела»."
+    async with session_scope() as session:
+        cat = await find_category_by_name(session, user_id, old)
+        if cat is None:
+            return f"Не нашёл категорию «{old}»."
+        clash = await find_category_by_name(session, user_id, new)
+        if clash is not None and clash.id != cat.id:
+            return f"Категория «{clash.name}» уже есть — выбери другое имя."
+        old_name = cat.name
+        await rename_category(session, cat, new)
+    return f"Переименовал категорию «{old_name}» → «{new}»."
+
+
+async def _category_delete_confirmation(
+    user_id: int, intent: EditIntent
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Surface a confirm/cancel prompt for a free-text delete_category."""
+    name = (intent.category_query or "").strip()
+    if not name:
+        return "Не понял, какую категорию удалить. Пример: «удали категорию Финансы».", None
+    async with session_scope() as session:
+        cat = await find_category_by_name(session, user_id, name)
+        if cat is None:
+            return f"Не нашёл категорию «{name}».", None
+        if cat.id is None:
+            return "Ошибка: категория без ID.", None
+        cat_id, cat_name = cat.id, cat.name
+    prompt = f"Удалить категорию «{cat_name}»? Задачи из неё станут без категории."
+    return prompt, _category_delete_confirm_keyboard(cat_id, cat_name)
+
+
+async def execute_delete_category(user_id: int, category_id: int) -> str:
+    """Delete a category after the user confirmed (callback path)."""
+    async with session_scope() as session:
+        cat = (
+            await session.exec(
+                select(Category).where(
+                    Category.id == category_id,
+                    Category.user_id == user_id,
+                ),
+            )
+        ).first()
+        if cat is None:
+            return "Категория не найдена."
+        name = cat.name
+        affected = await delete_category(session, cat)
+    if affected:
+        noun = plural_ru(affected, ("задачу", "задачи", "задач"))
+        return f"Удалил категорию «{name}». {affected} {noun} перенёс в «Без категории»."
+    return f"Удалил категорию «{name}»."
+
+
+async def _execute_category_intent(
+    intent: EditIntent, user_id: int
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Dispatch the category-management intents (no task lookup)."""
+    if intent.intent == "create_category":
+        return await _execute_create_category(user_id, intent), None
+    if intent.intent == "rename_category":
+        return await _execute_rename_category(user_id, intent), None
+    if intent.intent == "delete_category":
+        return await _category_delete_confirmation(user_id, intent)
+    return f"Действие «{intent.intent}» пока не поддерживается.", None
+
+
 async def _delete_confirmation(
     task_id: int, user_id: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -508,6 +627,11 @@ async def execute_edit(
     # PR-I3: list_completed_today is read-only, no task lookup needed.
     if intent.intent == "list_done":
         return await _execute_list_completed_today(user_id)
+
+    # Category-management intents operate on a category, not a task —
+    # they have no task_query, so route them before the task lookup.
+    if intent.intent in EDIT_INTENTS_CATEGORY:
+        return await _execute_category_intent(intent, user_id)
 
     # For reopen, search among completed tasks too.
     include_done = intent.intent == "reopen"
