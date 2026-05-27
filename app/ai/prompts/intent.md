@@ -17,6 +17,9 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - **create_category** — create a new *category* itself (not a task). "создай категорию X", "новая категория X".
 - **rename_category** — rename an existing *category*. "переименуй категорию X в Y".
 - **delete_category** — delete an existing *category* (its tasks stay, just become uncategorised). "удали категорию X".
+- **rename_note** — rename an existing *note*. "переименуй заметку X в Y".
+- **delete_note** — delete an existing *note*. "удали заметку X".
+- **set_note_category** — move an existing *note* to a category. "перенеси заметку X в категорию Z".
 - **list_done** — show tasks completed today (read-only query).
 - **cancel_reminder** — cancel pending reminders for an existing task, without deleting the task.
 - **none** — unclear or not an intent directed at an existing task; fall back to create.
@@ -36,6 +39,10 @@ Your job: determine whether the user wants to **modify an existing task** or **c
   - "создай категорию X" / "новая категория X" / "добавь категорию X" → **create_category** with `new_category=X`.
   - "переименуй категорию X в Y" / "категорию X назови Y" → **rename_category** with `category_query=X`, `new_category=Y`.
   - "удали категорию X" / "убери категорию X" → **delete_category** with `category_query=X`. Note: "удали X" *without* the word "категория" is a task **delete**, not delete_category.
+- The word **заметка/заметку** signals an operation on a note, not a task:
+  - "переименуй заметку X в Y" → **rename_note** with `task_query=X`, `new_title=Y`.
+  - "удали заметку X" / "убери заметку X" → **delete_note** with `task_query=X`. "удали X" *without* "заметку" is a task **delete**.
+  - "перенеси заметку X в категорию Z" / "заметку X в работу" → **set_note_category** with `task_query=X`, `new_category=Z`.
 - "что я закрыл сегодня" / "покажи сделанное" → **list_done**.
 - "это" / "эту" / "её" / "его" — anaphora to the last created/updated task. Leave task_query empty; the system will resolve from context.
 - If the phrase is simply a new task ("утром пробежка", "купить хлеб") → **create**.
@@ -107,6 +114,15 @@ User: "переименуй категорию Работа в Дела"
 
 User: "удали категорию Финансы"
 → {"intent": "delete_category", "category_query": "Финансы", "confidence": 0.95}
+
+User: "переименуй заметку про пароли в Доступы"
+→ {"intent": "rename_note", "task_query": "про пароли", "new_title": "Доступы", "confidence": 0.9}
+
+User: "удали заметку про идею подарка"
+→ {"intent": "delete_note", "task_query": "идею подарка", "confidence": 0.92}
+
+User: "перенеси заметку про книги в категорию Хобби"
+→ {"intent": "set_note_category", "task_query": "про книги", "new_category": "Хобби", "confidence": 0.9}
 
 User: "утром пробежка 5 км"
 → {"intent": "create", "confidence": 0.95}

@@ -929,6 +929,90 @@ async def get_all_notes(
     return list(result.all())
 
 
+async def find_note_by_query(
+    session: AsyncSession,
+    user_id: int,
+    query: str,
+) -> Note | None:
+    """Find a user's note whose title or body matches *query*.
+
+    Case-insensitive LIKE over both ``title`` and ``body`` (notes carry
+    most of their text in the body). Returns the most recently created
+    match, or ``None``. Voice/text note edits resolve to a single note;
+    the executor echoes its title so the user can catch a wrong pick.
+    """
+    pattern = f"%{_escape_like(query)}%"
+    result = await session.exec(
+        select(Note)
+        .where(
+            Note.user_id == user_id,
+            Note.deleted_at.is_(None),  # type: ignore[union-attr]
+            Note.title.ilike(pattern, escape="\\")  # type: ignore[attr-defined]
+            | Note.body.ilike(pattern, escape="\\"),  # type: ignore[union-attr]
+        )
+        .order_by(Note.created_at.desc()),  # type: ignore[attr-defined]
+    )
+    return result.first()
+
+
+async def get_note_by_id(
+    session: AsyncSession,
+    user_id: int,
+    note_id: int,
+) -> Note | None:
+    """Return a note by ID if it belongs to the user (excludes soft-deleted)."""
+    result = await session.exec(
+        select(Note).where(
+            Note.id == note_id,
+            Note.user_id == user_id,
+            Note.deleted_at.is_(None),  # type: ignore[union-attr]
+        ),
+    )
+    return result.first()
+
+
+async def update_note_title(
+    session: AsyncSession,
+    note: Note,
+    new_title: str,
+    user_id: int,
+) -> Note:
+    """Rename a note in place."""
+    note.title = new_title
+    session.add(note)
+    await session.flush()
+    logger.info("note.renamed", note_id=note.id, user_id=user_id)
+    return note
+
+
+async def update_note_category(
+    session: AsyncSession,
+    note: Note,
+    new_category_id: int | None,
+    user_id: int,
+) -> Note:
+    """Move a note to a different category (or clear it)."""
+    note.category_id = new_category_id
+    session.add(note)
+    await session.flush()
+    logger.info(
+        "note.recategorized", note_id=note.id, user_id=user_id, new_category_id=new_category_id
+    )
+    return note
+
+
+async def delete_note(
+    session: AsyncSession,
+    note: Note,
+    user_id: int,
+) -> None:
+    """Soft-delete a note by setting ``deleted_at`` (recoverable via Trash)."""
+    note.deleted_at = utcnow_naive()
+    session.add(note)
+    await session.flush()
+    logger.info("note.soft_deleted", note_id=note.id, user_id=user_id)
+
+
 async def get_categories_with_counts(
     session: AsyncSession,
     user_id: int,
