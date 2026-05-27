@@ -218,7 +218,7 @@ PostgreSQL, одна база, multi-tenant (`user_id` на каждой зап�
 | `tasks` | id, user_id, category_id, horizon_id, title, description, priority, due_at, status, source_inbox_id, needs_clarification |
 | `notes` | id, user_id, category_id, title, body, source_inbox_id |
 | `reminders` | id, user_id, task_id (nullable), note_id (nullable), fire_at, status, sent_at, kind (custom/default) |
-| `inbox_entries` | id, user_id, kind (text/voice), raw_text, transcript, telegram_message_id, received_at |
+| `inbox_entries` | id, user_id, kind (text/voice), raw_text, transcript, telegram_message_id, needs_review, received_at |
 | `ai_runs` | id, user_id, inbox_id, stage (split/classify/critic), model, key_index, latency_ms, tokens, status, error |
 | `telegram_updates` | update_id PK, user_id, kind, processed_at |
 | `task_events` | id, task_id, kind (created/updated/done/snoozed/deleted), payload_json, created_at |
