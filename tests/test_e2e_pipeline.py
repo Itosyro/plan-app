@@ -23,8 +23,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
 from app.bot.routers._pipeline import (
-    PENDING_CLARIFICATIONS,
-    reset_pending_clarifications_for_tests,
     run_pipeline,
 )
 from app.bot.services import get_or_create_category, get_or_create_user
@@ -273,7 +271,6 @@ async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSessio
     """Low-confidence result is persisted immediately (вариант Б) and its
     inbox entry is flagged for the «Входящие» review tab — no in-chat
     «создать? да/нет» prompt anymore."""
-    reset_pending_clarifications_for_tests()
     user, _ = await get_or_create_user(session, telegram_id=309)
     await session.commit()
     assert user.id is not None
@@ -317,7 +314,6 @@ async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSessio
     # No clarification prompt; instead a pointer to the review tab.
     assert "Я не совсем уверен" not in text
     assert "Входящие" in text
-    assert len(PENDING_CLARIFICATIONS) == 0
 
     # The task exists right away.
     tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
@@ -329,7 +325,6 @@ async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSessio
     refreshed = await session.get(InboxEntry, entry_id)
     assert refreshed is not None
     assert refreshed.needs_review is True
-    reset_pending_clarifications_for_tests()
 
 
 # ── e2e: task + note mix ─────────────────────────────────────────────
