@@ -194,6 +194,7 @@ class UserSettingsOut(_ConfiguredModel):
     courier_template_style: str
     week_due_semantic: str
     concretize_tasks: bool
+    review_enabled: bool
 
 
 class UserSettingsUpdateIn(BaseModel):
@@ -215,6 +216,7 @@ class UserSettingsUpdateIn(BaseModel):
     courier_template_style: str | None = None
     week_due_semantic: str | None = None
     concretize_tasks: bool | None = None
+    review_enabled: bool | None = None
 
 
 class MeUpdateIn(BaseModel):

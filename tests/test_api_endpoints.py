@@ -220,6 +220,27 @@ async def test_me_patch_settings_subset(
 
 
 @pytest.mark.asyncio
+async def test_me_patch_review_enabled(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """Toggling ``review_enabled`` off persists and round-trips via GET."""
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={"settings": {"review_enabled": False}},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["settings"]["review_enabled"] is False
+
+    fresh = await aclient.get("/api/me", headers=auth_headers)
+    assert fresh.status_code == 200
+    assert fresh.json()["settings"]["review_enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_me_patch_rejects_invalid_tz(
     aclient: httpx.AsyncClient,
     seeded: int,

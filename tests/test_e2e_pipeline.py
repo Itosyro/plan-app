@@ -327,6 +327,70 @@ async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSessio
     assert refreshed.needs_review is True
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_low_confidence_review_disabled_does_not_flag(
+    session: AsyncSession,
+) -> None:
+    """With ``review_enabled=False`` the same low-confidence message
+    persists its task but the inbox entry stays unflagged and the reply
+    omits the «Входящие» review pointer."""
+    user, _ = await get_or_create_user(session, telegram_id=310)
+    await session.commit()
+    assert user.id is not None
+
+    entry = InboxEntry(user_id=user.id, kind="voice", transcript="созвон с командой")
+    session.add(entry)
+    await session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+
+    low_conf = _cr_dict(
+        category="Работа",
+        horizon="today",
+        title="Созвон с командой",
+        confidence=0.4,
+    )
+    tracker = _CallTracker(
+        [
+            _intent_response("create"),
+            _reorder_response(False),
+            _splitter_response([{"text": "созвон с командой"}]),
+            _intent_response("create"),
+            _classifier_response(low_conf),
+            _critic_response(low_conf),
+        ]
+    )
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        side_effect=tracker.side_effect
+    )
+
+    text, _keyboard = await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "созвон с командой",
+        tg_user_id=310,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=entry_id,
+        courier_mode="template_only",
+        review_enabled=False,
+    )
+
+    # No review pointer when the gate is off.
+    assert "Входящие" not in text
+
+    # The task still exists right away.
+    tasks = (await session.exec(select(Task).where(Task.user_id == user.id))).all()
+    assert len(tasks) == 1
+    assert tasks[0].title == "Созвон с командой"
+
+    # The inbox entry is NOT flagged for review.
+    session.expire_all()
+    refreshed = await session.get(InboxEntry, entry_id)
+    assert refreshed is not None
+    assert refreshed.needs_review is False
+
+
 # ── e2e: task + note mix ─────────────────────────────────────────────
 
 
