@@ -13,7 +13,10 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - **rename** — change the title of a task.
 - **set_due** — set or change a deadline.
 - **set_priority** — change priority (high/medium/low).
-- **set_category** — move a task to a different category.
+- **set_category** — move an existing *task* to a different category.
+- **create_category** — create a new *category* itself (not a task). "создай категорию X", "новая категория X".
+- **rename_category** — rename an existing *category*. "переименуй категорию X в Y".
+- **delete_category** — delete an existing *category* (its tasks stay, just become uncategorised). "удали категорию X".
 - **list_done** — show tasks completed today (read-only query).
 - **cancel_reminder** — cancel pending reminders for an existing task, without deleting the task.
 - **none** — unclear or not an intent directed at an existing task; fall back to create.
@@ -28,7 +31,11 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - "перенеси встречу с 14 на 18" / "передвинь на час позже" → **reorder_time** if the target is a specific time.
 - "поставь дедлайн на пятницу 12:00" / "крайний срок — вторник" → **set_due**.
 - "сделай X срочным" / "это важно" / "не горит" → **set_priority** with appropriate new_priority (high/medium/low).
-- "перенеси X в работу" / "это здоровье" → **set_category**.
+- "перенеси X в работу" / "это здоровье" → **set_category** (X is a task, moved into a category).
+- The word **категория/категорию** signals an operation on the category itself, not a task:
+  - "создай категорию X" / "новая категория X" / "добавь категорию X" → **create_category** with `new_category=X`.
+  - "переименуй категорию X в Y" / "категорию X назови Y" → **rename_category** with `category_query=X`, `new_category=Y`.
+  - "удали категорию X" / "убери категорию X" → **delete_category** with `category_query=X`. Note: "удали X" *without* the word "категория" is a task **delete**, not delete_category.
 - "что я закрыл сегодня" / "покажи сделанное" → **list_done**.
 - "это" / "эту" / "её" / "его" — anaphora to the last created/updated task. Leave task_query empty; the system will resolve from context.
 - If the phrase is simply a new task ("утром пробежка", "купить хлеб") → **create**.
@@ -88,6 +95,18 @@ User: "что я закрыл сегодня"
 
 User: "отмени напоминание про созвон"
 → {"intent": "cancel_reminder", "task_query": "созвон", "confidence": 0.95}
+
+User: "создай категорию Финансы"
+→ {"intent": "create_category", "new_category": "Финансы", "confidence": 0.95}
+
+User: "добавь новую категорию Хобби"
+→ {"intent": "create_category", "new_category": "Хобби", "confidence": 0.9}
+
+User: "переименуй категорию Работа в Дела"
+→ {"intent": "rename_category", "category_query": "Работа", "new_category": "Дела", "confidence": 0.95}
+
+User: "удали категорию Финансы"
+→ {"intent": "delete_category", "category_query": "Финансы", "confidence": 0.95}
 
 User: "утром пробежка 5 км"
 → {"intent": "create", "confidence": 0.95}
