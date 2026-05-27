@@ -8,18 +8,21 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Inbox, Pencil } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { formatDue, priorityIcon } from "../lib/format";
+import { PRIORITY_OPTIONS } from "../lib/priority";
 import { haptic } from "../lib/telegram";
-import type { InboxReview as Review, Task } from "../types";
+import type { Category, InboxReview as Review, Task, TaskPriority } from "../types";
+import { BottomSheetSelect } from "./BottomSheetSelect";
 import { EmptyState } from "./EmptyState";
 
 interface Props {
   tz: string;
+  categories: Category[];
   // Called after a successful confirm so the parent can refresh the
   // task list, counts, and the nav badge.
   onResolved: () => void;
 }
 
-export function InboxReview({ tz, onResolved }: Props) {
+export function InboxReview({ tz, categories, onResolved }: Props) {
   const [reviews, setReviews] = useState<Review[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Per-entry set of task ids to keep. Seeded with every task checked.
@@ -31,6 +34,12 @@ export function InboxReview({ tz, onResolved }: Props) {
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState<number | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
+  // Category / priority pickers: the task id whose sheet is open (null =
+  // closed). A field save in flight is tracked by task id so its controls
+  // can show as busy.
+  const [categorySheet, setCategorySheet] = useState<number | null>(null);
+  const [prioritySheet, setPrioritySheet] = useState<number | null>(null);
+  const [savingField, setSavingField] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -108,6 +117,38 @@ export function InboxReview({ tz, onResolved }: Props) {
     [titleDraft],
   );
 
+  // Patch a single field (category or priority) on an inbox task. On
+  // success the local ``reviews`` state is merged so the card reflects
+  // the change instantly. ``local`` lets the caller override fields the
+  // API doesn't echo cleanly (e.g. ``category_name`` for the chip).
+  const saveField = useCallback(
+    async (taskId: number, body: { category_id: number } | { priority: TaskPriority }, local: Partial<Task>) => {
+      setSavingField(taskId);
+      setTitleError(null);
+      try {
+        const fresh = await apiClient.patchTask(taskId, body);
+        haptic("success");
+        setReviews((prev) =>
+          prev
+            ? prev.map((r) => ({
+                ...r,
+                tasks: r.tasks.map((t) =>
+                  t.id === taskId ? { ...t, ...fresh, ...local } : t,
+                ),
+              }))
+            : prev,
+        );
+      } catch (err) {
+        haptic("error");
+        console.error("patch inbox task field failed", err);
+        setTitleError("Не удалось сохранить изменение.");
+      } finally {
+        setSavingField(null);
+      }
+    },
+    [],
+  );
+
   const confirm = useCallback(
     async (review: Review) => {
       const keepIds = [...(keep[review.id] ?? new Set<number>())];
@@ -173,6 +214,7 @@ export function InboxReview({ tz, onResolved }: Props) {
                 const due = formatDue(task.due_at, tz);
                 const isEditing = editing === task.id;
                 const isSaving = savingTitle === task.id;
+                const isSavingField = savingField === task.id;
                 return (
                   <li key={task.id}>
                     <div
@@ -209,28 +251,52 @@ export function InboxReview({ tz, onResolved }: Props) {
                             placeholder="Что нужно сделать?"
                           />
                         ) : (
-                          <button
-                            type="button"
-                            aria-pressed={checked}
-                            onClick={() => toggle(review.id, task.id)}
-                            className="block w-full text-left"
-                          >
-                            <span
-                              className={
-                                "block text-[14px] leading-snug " +
-                                (checked ? "text-tg-text" : "text-tg-hint line-through")
-                              }
-                            >
-                              {priorityIcon(task.priority)} {task.title}
+                          <>
+                            <span className="flex items-start gap-1.5">
+                              <button
+                                type="button"
+                                aria-label="Изменить приоритет"
+                                disabled={isSavingField}
+                                onClick={() => {
+                                  haptic("select");
+                                  setPrioritySheet(task.id);
+                                }}
+                                className="ease-apple shrink-0 rounded-md px-0.5 text-[14px] leading-snug transition-all duration-150 active:scale-90 disabled:opacity-50"
+                              >
+                                {priorityIcon(task.priority)}
+                              </button>
+                              <button
+                                type="button"
+                                aria-pressed={checked}
+                                onClick={() => toggle(review.id, task.id)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <span
+                                  className={
+                                    "block text-[14px] leading-snug " +
+                                    (checked ? "text-tg-text" : "text-tg-hint line-through")
+                                  }
+                                >
+                                  {task.title}
+                                </span>
+                              </button>
                             </span>
-                            {(task.category_name || due) && (
-                              <span className="mt-0.5 block text-[12px] text-tg-hint">
-                                {task.category_name}
-                                {task.category_name && due ? " · " : ""}
-                                {due}
-                              </span>
-                            )}
-                          </button>
+                            <span className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[12px] text-tg-hint">
+                              <button
+                                type="button"
+                                aria-label="Изменить категорию"
+                                disabled={isSavingField || categories.length === 0}
+                                onClick={() => {
+                                  haptic("select");
+                                  setCategorySheet(task.id);
+                                }}
+                                className="ease-apple rounded-md px-1.5 py-0.5 text-tg-hint ring-1 ring-tg-hint/30 transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                              >
+                                {task.category_name ?? "Категория"}
+                              </button>
+                              {due && <span>· {due}</span>}
+                            </span>
+                          </>
                         )}
                       </div>
                       {!isEditing && (
@@ -246,6 +312,41 @@ export function InboxReview({ tz, onResolved }: Props) {
                         </button>
                       )}
                     </div>
+                    <BottomSheetSelect
+                      open={categorySheet === task.id}
+                      onClose={() => setCategorySheet(null)}
+                      title="Категория"
+                      options={categories.map((c) => ({
+                        value: String(c.id),
+                        label: c.name,
+                      }))}
+                      value={task.category_id === null ? "" : String(task.category_id)}
+                      onSelect={(value) => {
+                        const id = Number.parseInt(value, 10);
+                        if (Number.isFinite(id) && id > 0) {
+                          const hit = categories.find((c) => c.id === id);
+                          void saveField(
+                            task.id,
+                            { category_id: id },
+                            { category_id: id, category_name: hit ? hit.name : null },
+                          );
+                        }
+                      }}
+                    />
+                    <BottomSheetSelect
+                      open={prioritySheet === task.id}
+                      onClose={() => setPrioritySheet(null)}
+                      title="Приоритет"
+                      options={PRIORITY_OPTIONS}
+                      value={task.priority}
+                      onSelect={(value) => {
+                        void saveField(
+                          task.id,
+                          { priority: value as TaskPriority },
+                          { priority: value as TaskPriority },
+                        );
+                      }}
+                    />
                   </li>
                 );
               })}
