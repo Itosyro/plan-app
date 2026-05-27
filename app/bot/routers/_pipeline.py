@@ -31,18 +31,15 @@ from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.intent import detect_intent
-from app.ai.reorder import detect_reorder
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
 from app.bot.edit_executor import EDIT_INTENTS_ALL, execute_edit, touch_last_task
 from app.bot.services import (
-    find_task_by_query,
     get_user_categories,
     log_ai_run,
     persist_classification,
-    update_task_horizon,
 )
 from app.db.base import session_scope
 from app.db.models import InboxEntry, Task
@@ -151,34 +148,6 @@ def log_task_exception(task: asyncio.Task[object]) -> None:
 PipelineReply = tuple[str, InlineKeyboardMarkup | None]
 
 
-async def _try_reorder(
-    groq_router: GroqKeyRouter,
-    text: str,
-    user_id: int,
-) -> str | None:
-    """Detect reorder intent and execute if found. Returns reply or None."""
-    reorder_req = await detect_reorder(groq_router, text)
-    if not reorder_req.is_reorder or not reorder_req.task_query or not reorder_req.target_horizon:
-        return None
-
-    async with session_scope() as session:
-        task = await find_task_by_query(session, user_id, reorder_req.task_query)
-        if task is None:
-            return f"Не нашёл задачу «{reorder_req.task_query}» — возможно, она уже выполнена или не существует."
-
-        await update_task_horizon(session, task, reorder_req.target_horizon, user_id)
-        horizon_labels = {
-            "today": "сегодня",
-            "tomorrow": "завтра",
-            "week": "на эту неделю",
-            "month": "на этот месяц",
-            "year": "на этот год",
-            "someday": "когда-нибудь",
-        }
-        label = horizon_labels.get(reorder_req.target_horizon, reorder_req.target_horizon)
-        return f"Перенёс «{task.title}» → {label}."
-
-
 async def run_pipeline(
     groq_router: GroqKeyRouter,
     text: str,
@@ -264,13 +233,6 @@ async def _run_pipeline_inner(
     if edit_intent.intent in EDIT_INTENTS_ALL:
         return await execute_edit(edit_intent, user_id)
 
-    # Legacy reorder path — kept as fallback for intents not yet in
-    # the intent router (or when detect_intent returns create/none).
-    if edit_intent.intent in ("create", "none"):
-        reorder_reply = await _try_reorder(groq_router, text, user_id)
-        if reorder_reply is not None:
-            return reorder_reply, None
-
     split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
@@ -287,13 +249,25 @@ async def _run_pipeline_inner(
     # PR-I3: multi-intent — detect_intent each unit, separate edits from creates.
     edit_replies: list[str] = []
     create_units = []
-    for unit in split_result.units:
-        unit_intent = await detect_intent(groq_router, unit.text)
-        if unit_intent.intent in EDIT_INTENTS_ALL:
-            reply_text, _kb = await execute_edit(unit_intent, user_id)
-            edit_replies.append(reply_text)
-        else:
-            create_units.append(unit)
+    if len(split_result.units) == 1:
+        # Single-unit short-circuit: the whole-message detect_intent above
+        # already ran; an edit would have returned earlier, so a lone unit
+        # is necessarily a create. Re-detecting would be a redundant
+        # round-trip.
+        create_units = [split_result.units[0]]
+    else:
+        # Detect intent for every unit in parallel, then split edits from
+        # creates while preserving order. ``execute_edit`` stays sequential
+        # so edit replies keep their order.
+        unit_intents = await asyncio.gather(
+            *[detect_intent(groq_router, unit.text) for unit in split_result.units]
+        )
+        for unit, unit_intent in zip(split_result.units, unit_intents, strict=True):
+            if unit_intent.intent in EDIT_INTENTS_ALL:
+                reply_text, _kb = await execute_edit(unit_intent, user_id)
+                edit_replies.append(reply_text)
+            else:
+                create_units.append(unit)
 
     if not create_units:
         # All units were edits — return combined replies.
@@ -343,19 +317,34 @@ async def _run_pipeline_inner(
             "Не удалось разобрать сообщение — сохранил его целиком во входящие, позже разберясь."
         ), None
 
-    # Critic: review classifications that need it (only survivors).
+    # Critic: review classifications that need it (only survivors). Critic
+    # calls run in parallel; ``return_exceptions=True`` keeps a single
+    # transient failure from killing the batch (mirrors the classifier
+    # gather above). ``reviewed`` preserves ``survivors`` order.
+    critic_needed = [
+        should_run_critic(cr, critic_mode=critic_mode, confidence_threshold=confidence_threshold)
+        for cr, _resolved, _unit_text in survivors
+    ]
+    critic_tasks = [
+        critique_classification(groq_router, unit_text, cr, resolved, user_tz)
+        for (cr, resolved, unit_text), needed in zip(survivors, critic_needed, strict=True)
+        if needed
+    ]
+    critic_results = await asyncio.gather(*critic_tasks, return_exceptions=True)
+
     reviewed: list[tuple[ClassifierResult, ResolvedTime | None]] = []
-    for cr, resolved, unit_text in survivors:
-        if should_run_critic(
-            cr, critic_mode=critic_mode, confidence_threshold=confidence_threshold
-        ):
-            try:
-                verdict = await critique_classification(
-                    groq_router, unit_text, cr, resolved, user_tz
+    critic_iter = iter(critic_results)
+    for (cr, resolved, _unit_text), needed in zip(survivors, critic_needed, strict=True):
+        if needed:
+            verdict = next(critic_iter)
+            if isinstance(verdict, BaseException):
+                logger.exception(
+                    "pipeline.critic_failed",
+                    user_id=user_id,
+                    exc_info=(type(verdict), verdict, verdict.__traceback__),
                 )
+            else:
                 cr = apply_verdict(cr, verdict)
-            except Exception:
-                logger.exception("pipeline.critic_failed", user_id=user_id)
         reviewed.append((cr, resolved))
 
     # Persist surviving units. Under the review model (вариант Б),

@@ -72,26 +72,6 @@ def _classifier_response(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _reorder_response(is_reorder: bool = False) -> dict[str, Any]:
-    payload = {
-        "is_reorder": is_reorder,
-        "task_query": None,
-        "target_horizon": None,
-        "target_raw": None,
-    }
-    body = json.dumps(payload)
-    return {
-        "id": "chatcmpl-reorder",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
-    }
-
-
 def _courier_response(text: str) -> dict[str, Any]:
     body = json.dumps({"text": text})
     return {
@@ -185,9 +165,7 @@ async def test_e2e_single_task_morning_run(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "утром пробежка"}]),
-            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(category="Здоровье", horizon="today", title="Утренняя пробежка")
             ),
@@ -231,7 +209,6 @@ async def test_e2e_multi_task_shopping_and_doctor(session: AsyncSession) -> None
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "купить хлеб и молоко"}, {"text": "записаться к врачу"}]),
             _intent_response("create"),  # PR-I3: per-unit intent
             _intent_response("create"),  # PR-I3: per-unit intent
@@ -290,9 +267,7 @@ async def test_e2e_low_confidence_persists_and_flags_review(session: AsyncSessio
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "созвон с командой"}]),
-            _intent_response("create"),
             _classifier_response(low_conf),
             _critic_response(low_conf),
         ]
@@ -354,9 +329,7 @@ async def test_e2e_low_confidence_review_disabled_does_not_flag(
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "созвон с командой"}]),
-            _intent_response("create"),
             _classifier_response(low_conf),
             _critic_response(low_conf),
         ]
@@ -405,7 +378,6 @@ async def test_e2e_task_and_note_mix(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "позвонить Олегу"}, {"text": "книга про AI интересная"}]),
             _intent_response("create"),  # PR-I3: per-unit intent
             _intent_response("create"),  # PR-I3: per-unit intent
@@ -465,7 +437,6 @@ async def test_e2e_work_report_by_friday(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "до пятницы отчёт"}, {"text": "в 11 совещание"}]),
             _intent_response("create"),  # PR-I3: per-unit intent
             _intent_response("create"),  # PR-I3: per-unit intent
@@ -520,7 +491,6 @@ async def test_e2e_filler_message_no_tasks(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([]),
         ]
     )
@@ -558,7 +528,6 @@ async def test_e2e_complex_three_items(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response(
                 [
                     {"text": "утром йога"},
@@ -625,9 +594,7 @@ async def test_e2e_single_note(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "интересная мысль про архитектуру проекта"}]),
-            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(
                     category="Работа",
@@ -688,9 +655,6 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
             # intent detection (PR-I1)
             return httpx.Response(200, json=_intent_response("create"))
         if n == 2:
-            # reorder
-            return httpx.Response(200, json=_reorder_response(False))
-        if n == 3:
             # splitter
             return httpx.Response(
                 200,
@@ -701,19 +665,19 @@ async def test_e2e_partial_classify_failure_does_not_kill_batch(
                     ]
                 ),
             )
-        if n == 4:
+        if n == 3:
             # PR-I3: per-unit intent #1
             return httpx.Response(200, json=_intent_response("create"))
-        if n == 5:
+        if n == 4:
             # PR-I3: per-unit intent #2
             return httpx.Response(200, json=_intent_response("create"))
-        if n == 6:
+        if n == 5:
             # classifier #1 - succeeds
             return httpx.Response(
                 200,
                 json=_classifier_response(_cr_dict(category="Покупки", title="Купить хлеб")),
             )
-        if n == 7:
+        if n == 6:
             # classifier #2 — fails. Use 400 (not 429) so neither the Groq
             # SDK's internal retry policy nor ``call_with_rotation`` (I-1)
             # waits through exponential-backoff retries: 4xx is treated
@@ -768,9 +732,7 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
     tracker = _CallTracker(
         [
             _intent_response("create"),
-            _reorder_response(False),
             _splitter_response([{"text": "позвонить в банк до 15:00"}]),
-            _intent_response("create"),  # PR-I3: per-unit intent
             _classifier_response(
                 _cr_dict(
                     category="Финансы",
@@ -837,19 +799,15 @@ async def test_e2e_classifier_receives_user_existing_categories(
 
     def side_effect(request: httpx.Request) -> httpx.Response:
         captured.append(request)
-        # First call is intent detection (PR-I1), then reorder, splitter,
-        # PR-I3 per-unit intent, then classifier.
+        # First call is intent detection (PR-I1), then splitter, then
+        # classifier. Single-unit messages short-circuit the per-unit
+        # intent pass.
         if len(captured) == 1:
             return httpx.Response(200, json=_intent_response("create"))
         if len(captured) == 2:
-            return httpx.Response(200, json=_reorder_response(False))
-        if len(captured) == 3:
             return httpx.Response(
                 200, json=_splitter_response([{"text": "доделать отчёт по работе"}])
             )
-        if len(captured) == 4:
-            # PR-I3: per-unit intent
-            return httpx.Response(200, json=_intent_response("create"))
         return httpx.Response(
             200,
             json=_classifier_response(
@@ -869,7 +827,7 @@ async def test_e2e_classifier_receives_user_existing_categories(
         courier_mode="template_only",
     )
 
-    classifier_request = captured[4]  # shifted by 1 for PR-I3 per-unit intent
+    classifier_request = captured[2]  # intent, splitter, classifier
     body = classifier_request.read().decode()
     assert "Работа" in body, f"existing category 'Работа' missing from classifier prompt: {body!r}"
     assert "Здоровье" in body, (
