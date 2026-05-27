@@ -23,14 +23,19 @@ from app.ai.schemas import EditIntent
 from app.bot.services import (
     cancel_task_reminders,
     delete_category,
+    delete_note,
     delete_task,
     find_category_by_name,
+    find_note_by_query,
     find_tasks_by_query,
+    get_note_by_id,
     get_or_create_category,
     get_task_by_id,
     mark_task_done,
     mark_task_undone,
     rename_category,
+    update_note_category,
+    update_note_title,
     update_task_category,
     update_task_due_at,
     update_task_horizon,
@@ -95,12 +100,14 @@ EDIT_INTENTS_I2 = frozenset({"rename", "set_due", "set_priority", "set_category"
 EDIT_INTENTS_I3_READONLY = frozenset({"list_done"})
 EDIT_INTENTS_I4_REMINDERS = frozenset({"cancel_reminder"})
 EDIT_INTENTS_CATEGORY = frozenset({"create_category", "rename_category", "delete_category"})
+EDIT_INTENTS_NOTE = frozenset({"rename_note", "delete_note", "set_note_category"})
 EDIT_INTENTS_ALL = (
     EDIT_INTENTS_I1
     | EDIT_INTENTS_I2
     | EDIT_INTENTS_I3_READONLY
     | EDIT_INTENTS_I4_REMINDERS
     | EDIT_INTENTS_CATEGORY
+    | EDIT_INTENTS_NOTE
 )
 
 PRIORITY_LABELS: dict[str, str] = {
@@ -535,6 +542,108 @@ async def _execute_category_intent(
     return f"Действие «{intent.intent}» пока не поддерживается.", None
 
 
+# ── Note management (voice/text) ─────────────────────────────────────
+
+
+def _note_delete_confirm_keyboard(note_id: int, title: str) -> InlineKeyboardMarkup:
+    """Two-step confirm/cancel keyboard for a free-text note delete (G3)."""
+    label = title[:40]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Да, удалить «{label}»",
+                    callback_data=f"edit:ndeldo:{note_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=f"edit:ndelno:{note_id}",
+                ),
+            ],
+        ]
+    )
+
+
+async def _execute_rename_note(user_id: int, intent: EditIntent) -> str:
+    """Rename a note found by query."""
+    query = (intent.task_query or "").strip()
+    new_title = (intent.new_title or "").strip()
+    if not query:
+        return "Не понял, какую заметку переименовать. Уточни, о чём она."
+    if not new_title:
+        return "Не понял новое название заметки."
+    async with session_scope() as session:
+        note = await find_note_by_query(session, user_id, query)
+        if note is None:
+            return f"Не нашёл заметку «{query}»."
+        old_title = note.title
+        await update_note_title(session, note, new_title, user_id)
+    return f"Переименовал заметку «{old_title}» → «{new_title}»."
+
+
+async def _execute_set_note_category(user_id: int, intent: EditIntent) -> str:
+    """Move a note found by query into a category (created if new)."""
+    query = (intent.task_query or "").strip()
+    cat_name = (intent.new_category or "").strip()
+    if not query:
+        return "Не понял, какую заметку перенести. Уточни, о чём она."
+    if not cat_name:
+        return "Не понял категорию. Уточни название."
+    async with session_scope() as session:
+        note = await find_note_by_query(session, user_id, query)
+        if note is None:
+            return f"Не нашёл заметку «{query}»."
+        cat = await get_or_create_category(session, user_id, cat_name)
+        if cat.id is None:
+            return "Ошибка создания категории."
+        title = note.title
+        await update_note_category(session, note, cat.id, user_id)
+    return f"Перенёс заметку «{title}» в категорию «{cat_name}»."
+
+
+async def _note_delete_confirmation(
+    user_id: int, intent: EditIntent
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Surface a confirm/cancel prompt for a free-text delete_note."""
+    query = (intent.task_query or "").strip()
+    if not query:
+        return "Не понял, какую заметку удалить. Уточни, о чём она.", None
+    async with session_scope() as session:
+        note = await find_note_by_query(session, user_id, query)
+        if note is None:
+            return f"Не нашёл заметку «{query}».", None
+        if note.id is None:
+            return "Ошибка: заметка без ID.", None
+        note_id, title = note.id, note.title
+    return f"Удалить заметку «{title}»?", _note_delete_confirm_keyboard(note_id, title)
+
+
+async def execute_delete_note(user_id: int, note_id: int) -> str:
+    """Delete a note after the user confirmed (callback path)."""
+    async with session_scope() as session:
+        note = await get_note_by_id(session, user_id, note_id)
+        if note is None:
+            return "Заметка не найдена."
+        title = note.title
+        await delete_note(session, note, user_id)
+    return f"Удалил заметку «{title}»."
+
+
+async def _execute_note_intent(
+    intent: EditIntent, user_id: int
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Dispatch the note-management intents."""
+    if intent.intent == "rename_note":
+        return await _execute_rename_note(user_id, intent), None
+    if intent.intent == "set_note_category":
+        return await _execute_set_note_category(user_id, intent), None
+    if intent.intent == "delete_note":
+        return await _note_delete_confirmation(user_id, intent)
+    return f"Действие «{intent.intent}» пока не поддерживается.", None
+
+
 async def _delete_confirmation(
     task_id: int, user_id: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -632,6 +741,11 @@ async def execute_edit(
     # they have no task_query, so route them before the task lookup.
     if intent.intent in EDIT_INTENTS_CATEGORY:
         return await _execute_category_intent(intent, user_id)
+
+    # Note-management intents resolve their own note (find_note_by_query),
+    # not a task, so route them before the task lookup too.
+    if intent.intent in EDIT_INTENTS_NOTE:
+        return await _execute_note_intent(intent, user_id)
 
     # For reopen, search among completed tasks too.
     include_done = intent.intent == "reopen"

@@ -68,10 +68,16 @@ from .tasks import (
     delete_category as delete_category,
 )
 from .tasks import (
+    delete_note as delete_note,
+)
+from .tasks import (
     delete_task as delete_task,
 )
 from .tasks import (
     find_category_by_name as find_category_by_name,
+)
+from .tasks import (
+    find_note_by_query as find_note_by_query,
 )
 from .tasks import (
     find_task_by_query as find_task_by_query,
@@ -84,6 +90,9 @@ from .tasks import (
 )
 from .tasks import (
     get_categories_with_counts as get_categories_with_counts,
+)
+from .tasks import (
+    get_note_by_id as get_note_by_id,
 )
 from .tasks import (
     get_or_create_category as get_or_create_category,
@@ -120,6 +129,12 @@ from .tasks import (
 )
 from .tasks import (
     schedule_reminders as schedule_reminders,
+)
+from .tasks import (
+    update_note_category as update_note_category,
+)
+from .tasks import (
+    update_note_title as update_note_title,
 )
 from .tasks import (
     update_task_category as update_task_category,

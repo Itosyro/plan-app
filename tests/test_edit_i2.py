@@ -61,8 +61,11 @@ def test_edit_intents_all_superset() -> None:
     assert "create_category" in EDIT_INTENTS_ALL
     assert "rename_category" in EDIT_INTENTS_ALL
     assert "delete_category" in EDIT_INTENTS_ALL
-    # I1(4) + I2(5) + I3_READONLY(1) + PR-J(1) + category(3)
-    assert len(EDIT_INTENTS_ALL) == 14
+    assert "rename_note" in EDIT_INTENTS_ALL
+    assert "delete_note" in EDIT_INTENTS_ALL
+    assert "set_note_category" in EDIT_INTENTS_ALL
+    # I1(4) + I2(5) + I3_READONLY(1) + PR-J(1) + category(3) + note(3)
+    assert len(EDIT_INTENTS_ALL) == 17
 
 
 # ── Service functions ─────────────────────────────────────────────────

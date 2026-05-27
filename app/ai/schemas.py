@@ -186,13 +186,19 @@ class EditIntent(BaseModel):
         "create_category",
         "rename_category",
         "delete_category",
+        "rename_note",
+        "delete_note",
+        "set_note_category",
         "list_done",
         "cancel_reminder",
         "none",
     ] = Field(description="Detected user intent")
     task_query: str | None = Field(
         default=None,
-        description="Search string to find the target task (Russian)",
+        description=(
+            "Search string to find the target task — or note, for the "
+            "rename_note / delete_note / set_note_category intents (Russian)"
+        ),
     )
     category_query: str | None = Field(
         default=None,
