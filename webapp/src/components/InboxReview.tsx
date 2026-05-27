@@ -5,11 +5,11 @@
 // leave the card — it stays pending until confirmed.
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Inbox } from "lucide-react";
+import { Check, Inbox, Pencil } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { formatDue, priorityIcon } from "../lib/format";
 import { haptic } from "../lib/telegram";
-import type { InboxReview as Review } from "../types";
+import type { InboxReview as Review, Task } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface Props {
@@ -25,6 +25,12 @@ export function InboxReview({ tz, onResolved }: Props) {
   // Per-entry set of task ids to keep. Seeded with every task checked.
   const [keep, setKeep] = useState<Record<number, Set<number>>>({});
   const [busy, setBusy] = useState<number | null>(null);
+  // Inline title edit: which task id is open for editing, its draft text,
+  // the id with a save in flight, and a save error to surface.
+  const [editing, setEditing] = useState<number | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState<number | null>(null);
+  const [titleError, setTitleError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +63,50 @@ export function InboxReview({ tz, onResolved }: Props) {
       return { ...prev, [entryId]: set };
     });
   };
+
+  const startEdit = (task: Task) => {
+    haptic("select");
+    setTitleError(null);
+    setTitleDraft(task.title);
+    setEditing(task.id);
+  };
+
+  // Commit the title draft on blur. Skips the API when empty (revert) or
+  // unchanged; on success patches local state so the card updates instantly.
+  const saveTitle = useCallback(
+    async (task: Task) => {
+      const trimmed = titleDraft.trim();
+      setEditing(null);
+      if (!trimmed || trimmed === task.title) return; // revert / no-op
+      setSavingTitle(task.id);
+      setTitleError(null);
+      try {
+        const fresh = await apiClient.patchTask(task.id, { title: trimmed });
+        haptic("success");
+        setReviews((prev) =>
+          prev
+            ? prev.map((r) => ({
+                ...r,
+                tasks: r.tasks.map((t) =>
+                  t.id === task.id ? { ...t, title: fresh.title } : t,
+                ),
+              }))
+            : prev,
+        );
+      } catch (err) {
+        haptic("error");
+        console.error("patch inbox task title failed", err);
+        setTitleError(
+          err instanceof ApiError && err.status === 422
+            ? "Не получилось — проверь название."
+            : "Не удалось сохранить название.",
+        );
+      } finally {
+        setSavingTitle(null);
+      }
+    },
+    [titleDraft],
+  );
 
   const confirm = useCallback(
     async (review: Review) => {
@@ -100,6 +150,11 @@ export function InboxReview({ tz, onResolved }: Props) {
 
   return (
     <ul className="flex flex-col gap-3">
+      {titleError && (
+        <li className="rounded-2xl bg-rose-50 px-4 py-3 text-[13px] text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+          {titleError}
+        </li>
+      )}
       {reviews.map((review) => {
         const keepSet = keep[review.id] ?? new Set<number>();
         return (
@@ -116,45 +171,81 @@ export function InboxReview({ tz, onResolved }: Props) {
               {review.tasks.map((task) => {
                 const checked = keepSet.has(task.id);
                 const due = formatDue(task.due_at, tz);
+                const isEditing = editing === task.id;
+                const isSaving = savingTitle === task.id;
                 return (
                   <li key={task.id}>
-                    <button
-                      type="button"
-                      aria-pressed={checked}
-                      onClick={() => toggle(review.id, task.id)}
+                    <div
                       className={
-                        "ease-apple flex w-full items-start gap-2.5 rounded-2xl px-3 py-2 text-left transition-all duration-150 active:scale-[0.99] " +
+                        "ease-apple flex w-full items-start gap-2.5 rounded-2xl px-3 py-2 transition-all duration-150 " +
                         (checked ? "bg-bento" : "bg-bento/40 opacity-60")
                       }
                     >
-                      <span
+                      <button
+                        type="button"
+                        aria-pressed={checked}
+                        aria-label={checked ? "Не оставлять" : "Оставить"}
+                        onClick={() => toggle(review.id, task.id)}
                         className={
-                          "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 transition-colors " +
+                          "ease-apple mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 transition-all duration-150 active:scale-90 " +
                           (checked
                             ? "bg-tg-button text-white ring-tg-button"
                             : "bg-transparent text-transparent ring-tg-hint/50")
                         }
                       >
                         <Check size={13} strokeWidth={3} aria-hidden />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={
-                            "block text-[14px] leading-snug " +
-                            (checked ? "text-tg-text" : "text-tg-hint line-through")
-                          }
-                        >
-                          {priorityIcon(task.priority)} {task.title}
-                        </span>
-                        {(task.category_name || due) && (
-                          <span className="mt-0.5 block text-[12px] text-tg-hint">
-                            {task.category_name}
-                            {task.category_name && due ? " · " : ""}
-                            {due}
-                          </span>
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        {isEditing ? (
+                          <textarea
+                            autoFocus
+                            value={titleDraft}
+                            maxLength={256}
+                            rows={2}
+                            disabled={isSaving}
+                            onChange={(e) => setTitleDraft(e.target.value)}
+                            onBlur={() => void saveTitle(task)}
+                            className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button"
+                            placeholder="Что нужно сделать?"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            aria-pressed={checked}
+                            onClick={() => toggle(review.id, task.id)}
+                            className="block w-full text-left"
+                          >
+                            <span
+                              className={
+                                "block text-[14px] leading-snug " +
+                                (checked ? "text-tg-text" : "text-tg-hint line-through")
+                              }
+                            >
+                              {priorityIcon(task.priority)} {task.title}
+                            </span>
+                            {(task.category_name || due) && (
+                              <span className="mt-0.5 block text-[12px] text-tg-hint">
+                                {task.category_name}
+                                {task.category_name && due ? " · " : ""}
+                                {due}
+                              </span>
+                            )}
+                          </button>
                         )}
-                      </span>
-                    </button>
+                      </div>
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          aria-label="Исправить название"
+                          onClick={() => startEdit(task)}
+                          className="ease-apple mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-0.5 text-[12px] text-tg-hint transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                        >
+                          <Pencil size={12} strokeWidth={2.25} aria-hidden />
+                          Исправить
+                        </button>
+                      )}
+                    </div>
                   </li>
                 );
               })}
