@@ -229,11 +229,17 @@ async def _run_pipeline_inner(
 ) -> PipelineReply:
     """Inner pipeline body, called only while both semaphores are held."""
     # PR-I1: detect edit intent before falling through to create-path.
-    edit_intent = await detect_intent(groq_router, text)
+    # detect_intent and split_message both call the 8b model on the raw
+    # text and don't depend on each other, so run them concurrently — this
+    # shaves a full LLM round-trip off the critical path. On the rarer edit
+    # path the split result is simply discarded; that extra call is cheap
+    # and was already in flight.
+    edit_intent, split_result = await asyncio.gather(
+        detect_intent(groq_router, text),
+        split_message(groq_router, text),
+    )
     if edit_intent.intent in EDIT_INTENTS_ALL:
         return await execute_edit(edit_intent, user_id)
-
-    split_result = await split_message(groq_router, text)
     logger.info(
         "pipeline.split",
         tg_user_id=tg_user_id,
@@ -465,10 +471,15 @@ async def _run_pipeline_inner(
                 session.add(entry)
                 review_flagged = True
 
+    # Skip the courier LLM coin-flip for the trivial single-item case: a
+    # one-line confirmation doesn't justify a blocking ~100-200ms round-trip.
+    effective_courier_mode = (
+        "template_only" if (created_task_count + created_note_count) == 1 else courier_mode
+    )
     text_reply, keyboard = await courier_respond(
         groq_router,
         items,
-        mode=courier_mode,
+        mode=effective_courier_mode,
         style=courier_style,
     )
 
