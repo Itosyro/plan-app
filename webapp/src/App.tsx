@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   closestCorners,
   DndContext,
@@ -14,7 +14,6 @@ import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
-import { CompletedPage } from "./components/CompletedPage";
 import {
   KanbanView,
   KanbanCardView,
@@ -24,15 +23,47 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
-import { InboxReview } from "./components/InboxReview";
-import { NoteDetail } from "./components/NoteDetail";
 import { NotesList } from "./components/NotesList";
 import { LayoutSheet } from "./components/LayoutSheet";
-import { SettingsPage } from "./components/SettingsPage";
 import { TaskCard } from "./components/TaskCard";
-import { TaskDetail } from "./components/TaskDetail";
-import { TrashPage } from "./components/TrashPage";
 import { localDateKey } from "./lib/format";
+
+// Screens that aren't part of the first paint (the Tasks tab) are
+// code-split so the initial bundle stays small and the Mini-App opens
+// fast. They're prefetched on idle right after mount (see effect below),
+// so by the time the user taps another tab the chunk is already warm and
+// the Suspense fallback never actually shows.
+const importTaskDetail = () => import("./components/TaskDetail");
+const importNoteDetail = () => import("./components/NoteDetail");
+const importSettingsPage = () => import("./components/SettingsPage");
+const importInboxReview = () => import("./components/InboxReview");
+const importTrashPage = () => import("./components/TrashPage");
+const importCompletedPage = () => import("./components/CompletedPage");
+
+const TaskDetail = lazy(() =>
+  importTaskDetail().then((m) => ({ default: m.TaskDetail })),
+);
+const NoteDetail = lazy(() =>
+  importNoteDetail().then((m) => ({ default: m.NoteDetail })),
+);
+const SettingsPage = lazy(() =>
+  importSettingsPage().then((m) => ({ default: m.SettingsPage })),
+);
+const InboxReview = lazy(() =>
+  importInboxReview().then((m) => ({ default: m.InboxReview })),
+);
+const TrashPage = lazy(() =>
+  importTrashPage().then((m) => ({ default: m.TrashPage })),
+);
+const CompletedPage = lazy(() =>
+  importCompletedPage().then((m) => ({ default: m.CompletedPage })),
+);
+
+function ScreenFallback() {
+  return (
+    <div className="py-16 text-center text-sm text-tg-hint">Загружаем…</div>
+  );
+}
 import {
   DEFAULT_LAYOUT_PREFS,
   applyFilters,
@@ -220,6 +251,26 @@ export default function App() {
   useEffect(() => {
     loadShell().finally(() => setLoading(false));
   }, [loadShell]);
+
+  // Warm the code-split screens on idle, right after first paint, so the
+  // first tap on another tab/detail page doesn't wait on a chunk fetch.
+  useEffect(() => {
+    const prefetch = () => {
+      void importTaskDetail();
+      void importNoteDetail();
+      void importSettingsPage();
+      void importInboxReview();
+      void importTrashPage();
+      void importCompletedPage();
+    };
+    const ric = window.requestIdleCallback;
+    if (ric) {
+      const id = ric(prefetch);
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(prefetch, 1200);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // If the user lands on a note URL (deep link, refresh on /note/123),
   // make sure the Notes tab is the one we fall back to when they hit
@@ -562,15 +613,17 @@ export default function App() {
   if (detailTaskId !== null) {
     return (
       <DndContext sensors={sensors}>
-        <TaskDetail
-          taskId={detailTaskId}
-          tz={tz}
-          horizons={horizons}
-          categories={categories}
-          onClose={handleCloseDetail}
-          onMutated={handleDetailMutated}
-          onDeleted={handleCloseDetail}
-        />
+        <Suspense fallback={<ScreenFallback />}>
+          <TaskDetail
+            taskId={detailTaskId}
+            tz={tz}
+            horizons={horizons}
+            categories={categories}
+            onClose={handleCloseDetail}
+            onMutated={handleDetailMutated}
+            onDeleted={handleCloseDetail}
+          />
+        </Suspense>
         <BottomNav
           active={activeTab}
           onChange={setActiveTab}
@@ -583,13 +636,15 @@ export default function App() {
   if (noteRoute !== null) {
     return (
       <DndContext sensors={sensors}>
-        <NoteDetail
-          mode={noteRoute}
-          categories={categories}
-          onClose={handleCloseDetail}
-          onMutated={handleNoteMutated}
-          onDeleted={handleCloseDetail}
-        />
+        <Suspense fallback={<ScreenFallback />}>
+          <NoteDetail
+            mode={noteRoute}
+            categories={categories}
+            onClose={handleCloseDetail}
+            onMutated={handleNoteMutated}
+            onDeleted={handleCloseDetail}
+          />
+        </Suspense>
         <BottomNav
           active={activeTab}
           onChange={(tab) => {
@@ -612,7 +667,9 @@ export default function App() {
             paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
           }}
         >
-          {route.path === "/completed" ? <CompletedPage tz={tz} /> : <TrashPage />}
+          <Suspense fallback={<ScreenFallback />}>
+            {route.path === "/completed" ? <CompletedPage tz={tz} /> : <TrashPage />}
+          </Suspense>
         </div>
         <BottomNav
           active={activeTab}
@@ -722,6 +779,7 @@ export default function App() {
           key={activeTab === "tasks" ? `tasks:${tasksView}` : activeTab}
           className="animate-tab-in"
         >
+        <Suspense fallback={<ScreenFallback />}>
         {activeTab === "tasks" ? (
           <>
             {tasksView === "board" ? (
@@ -812,6 +870,7 @@ export default function App() {
         ) : me ? (
           <SettingsPage me={me} onUpdated={setMe} />
         ) : null}
+        </Suspense>
         </div>
       </div>
       <CategoryFilter
