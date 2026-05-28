@@ -6,6 +6,21 @@
 
 ---
 
+## 2026-05-28 — chore: дроп мёртвой колонки `Task.needs_clarification`
+
+**Контекст.** В #149 убрал in-chat clarify-код, но саму колонку оставил
+для отдельного reviewed PR. Сейчас закрываю долг.
+
+**Сделано.**
+- `app/db/models.py` — поле `needs_clarification` удалено.
+- `alembic/versions/.../0017_drop_task_needs_clarification.py` —
+  миграция (`drop_column` в upgrade, симметричный `add_column` в
+  downgrade с `server_default false`).
+
+**Гейты:** ruff/mypy/pytest (529) — зелёные.
+
+---
+
 ## 2026-05-27 — feat: «Разбить» — ИИ-разбивка задачи на подзадачи во «Входящих»
 
 **Контекст.** Финальный слайс «Входящих»: в карточке ревью у задачи теперь
