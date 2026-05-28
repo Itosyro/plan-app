@@ -5,7 +5,7 @@
 // leave the card — it stays pending until confirmed.
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Inbox, Pencil } from "lucide-react";
+import { Check, Inbox, Pencil, Split } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { formatDue, priorityIcon } from "../lib/format";
 import { PRIORITY_OPTIONS } from "../lib/priority";
@@ -40,6 +40,11 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
   const [categorySheet, setCategorySheet] = useState<number | null>(null);
   const [prioritySheet, setPrioritySheet] = useState<number | null>(null);
   const [savingField, setSavingField] = useState<number | null>(null);
+  // Per-task in-flight split + locally-rendered children. MVP: we don't
+  // refetch /inbox/pending (it doesn't hydrate children anyway); keep the
+  // generated subtasks inline for this session only.
+  const [splittingTask, setSplittingTask] = useState<number | null>(null);
+  const [splitChildren, setSplitChildren] = useState<Record<number, Task[]>>({});
 
   const load = useCallback(async () => {
     try {
@@ -148,6 +153,41 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
     },
     [],
   );
+
+  const splitTask = useCallback(async (task: Task) => {
+    setSplittingTask(task.id);
+    setTitleError(null);
+    try {
+      const children = await apiClient.splitTask(task.id);
+      haptic("success");
+      setSplitChildren((prev) => ({ ...prev, [task.id]: children }));
+      // Bump subtasks_total so the «Разбить» button hides for this row.
+      setReviews((prev) =>
+        prev
+          ? prev.map((r) => ({
+              ...r,
+              tasks: r.tasks.map((t) =>
+                t.id === task.id
+                  ? { ...t, subtasks_total: t.subtasks_total + children.length }
+                  : t,
+              ),
+            }))
+          : prev,
+      );
+    } catch (err) {
+      haptic("error");
+      console.error("split inbox task failed", err);
+      if (err instanceof ApiError && err.status === 422) {
+        setTitleError("Задача уже атомарная — нечего разбивать.");
+      } else if (err instanceof ApiError && err.status === 503) {
+        setTitleError("ИИ временно недоступен, попробуй позже.");
+      } else {
+        setTitleError("Не удалось разбить задачу.");
+      }
+    } finally {
+      setSplittingTask(null);
+    }
+  }, []);
 
   const confirm = useCallback(
     async (review: Review) => {
@@ -300,18 +340,44 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                         )}
                       </div>
                       {!isEditing && (
-                        <button
-                          type="button"
-                          disabled={isSaving}
-                          aria-label="Исправить название"
-                          onClick={() => startEdit(task)}
-                          className="ease-apple mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-0.5 text-[12px] text-tg-hint transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
-                        >
-                          <Pencil size={12} strokeWidth={2.25} aria-hidden />
-                          Исправить
-                        </button>
+                        <div className="mt-0.5 flex shrink-0 flex-col items-end gap-0.5">
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            aria-label="Исправить название"
+                            onClick={() => startEdit(task)}
+                            className="ease-apple inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[12px] text-tg-hint transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                          >
+                            <Pencil size={12} strokeWidth={2.25} aria-hidden />
+                            Исправить
+                          </button>
+                          {task.subtasks_total === 0 && (
+                            <button
+                              type="button"
+                              disabled={splittingTask === task.id}
+                              aria-label="Разбить на подзадачи"
+                              onClick={() => void splitTask(task)}
+                              className="ease-apple inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[12px] text-tg-hint transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                            >
+                              <Split size={12} strokeWidth={2.25} aria-hidden />
+                              {splittingTask === task.id ? "Разбиваю…" : "Разбить"}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
+                    {splitChildren[task.id] && splitChildren[task.id].length > 0 && (
+                      <ul className="mt-1 flex flex-col gap-0.5 pl-7">
+                        {splitChildren[task.id].map((child) => (
+                          <li
+                            key={child.id}
+                            className="text-[13px] leading-snug text-tg-hint"
+                          >
+                            · {child.title}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <BottomSheetSelect
                       open={categorySheet === task.id}
                       onClose={() => setCategorySheet(null)}

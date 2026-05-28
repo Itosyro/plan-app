@@ -6,6 +6,47 @@
 
 ---
 
+## 2026-05-27 — feat: «Разбить» — ИИ-разбивка задачи на подзадачи во «Входящих»
+
+**Контекст.** Финальный слайс «Входящих»: в карточке ревью у задачи теперь
+есть кнопка «Разбить» — LLM генерирует 2–5 атомарных подзадач, бэкенд
+создаёт их как детей и возвращает фронту для инлайн-рендера. Сделано
+двумя сабагентами (бэкенд + фронт) параллельно по зафиксированному
+контракту.
+
+**Бэкенд.**
+- Новый `app/ai/task_splitter.py` + промпт `app/ai/prompts/task_splitter.md`
+  — функция `split_task_to_subtasks(router, title) -> list[str]`,
+  Pydantic-схема с cap 5, паттерн как у `detect_intent`.
+- `app/bot/services/tasks.py::split_existing_task` — зеркалит дедуп/cap/
+  truncate из `_persist_subtasks`, дети наследуют `user_id` /
+  `category_id` / `horizon_id` / `priority` родителя.
+- `app/api/routers/tasks.py::POST /api/tasks/{id}/split` — auth, **404**
+  если не свой/удалён, **409** «task is already a subtask» (`parent_id`
+  не null) или «task already split» (уже есть дети), **422** «task is
+  already atomic» (LLM вернул пустой), **503** если Groq не настроен.
+  Ответ 201 — `list[TaskOut]` с гидрированными `horizon_slug` /
+  `category_name`.
+- Тесты: happy path + 404 missing/other-user + 409 already-split / is-
+  subtask + 422 empty-result.
+
+**Фронт.**
+- `webapp/src/api/client.ts` — `splitTask(id) -> Task[]`.
+- `webapp/src/components/InboxReview.tsx` — кнопка «Разбить» (иконка
+  Split) в правой колонке рядом с «Исправить»; прячется когда
+  `subtasks_total > 0`; пока идёт — «Разбиваю…», блокирована. На
+  успехе создаваемые подзадачи показываются индентированным списком
+  под родителем (`pl-7`, `text-[13px]`, `text-tg-hint`, точка-буллет —
+  без чекбоксов: keep-confirm остаётся на уровне родителя). Ошибки
+  через тот же error-banner: 422 → «Задача уже атомарная», 503 → «ИИ
+  временно недоступен», иначе общая.
+
+**Гейты:** ruff/mypy/pytest **529** (+6) + webapp build — зелёные.
+
+**Закрывает «Входящие» полностью** (см. ROADMAP).
+
+---
+
 ## 2026-05-27 — perf: меньше последовательных LLM-вызовов в пайплайне
 
 **Контекст.** После текста/гс задачи формировались долго: `_run_pipeline_inner`

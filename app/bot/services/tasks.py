@@ -664,6 +664,53 @@ async def _persist_subtasks(
     return len(titles)
 
 
+async def split_existing_task(
+    session: AsyncSession,
+    parent: Task,
+    titles: list[str],
+) -> list[Task]:
+    """Persist *titles* as subtasks of an existing *parent* task.
+
+    Mirrors the dedup / cap / truncate logic of :func:`_persist_subtasks`
+    but operates on an already-persisted parent rather than a fresh
+    classifier result. Children inherit the parent's user, category,
+    horizon and priority — only the title varies. Returns the created
+    ``Task`` rows in input order (after dedup / blanks filtering).
+    Empty input or a parent with no id is a no-op returning ``[]``.
+    """
+    if not titles or parent.id is None:
+        return []
+    normalised: list[str] = []
+    seen: set[str] = set()
+    for raw in titles[:_MAX_SUBTASKS_PER_PARENT]:
+        title = raw.strip()
+        if not title:
+            continue
+        key = title.casefold()
+        if key in seen:
+            continue
+        if len(title) > 256:
+            title = title[:255].rstrip() + "…"
+        seen.add(key)
+        normalised.append(title)
+    if not normalised:
+        return []
+    children: list[Task] = []
+    for title in normalised:
+        child = Task(
+            user_id=parent.user_id,
+            parent_id=parent.id,
+            category_id=parent.category_id,
+            horizon_id=parent.horizon_id,
+            title=title,
+            priority=parent.priority,
+        )
+        session.add(child)
+        children.append(child)
+    await session.flush()
+    return children
+
+
 # ── Task search / reorder ─────────────────────────────────────────────
 
 
