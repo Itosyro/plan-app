@@ -101,7 +101,7 @@
 > `docs/REVIEW-2026-05-09-v2.md` — закрыты.
 >
 > **Прод-операция:**
-> - Alembic migrations 0001..0016 накатаны (последние — 0014
+> - Alembic migrations 0001..0017 накатаны (последние — 0014
 >   `task_completed_at`, 0015 `inbox_needs_review`, 0016
 >   `review_enabled`).
 > - Render `startCommand` авто-применяет `alembic upgrade head` на

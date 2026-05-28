@@ -221,7 +221,6 @@ class Task(SQLModel, table=True):
     due_at: datetime | None = Field(default=None)
     status: str = Field(default="new", max_length=16)
     source_inbox_id: int | None = Field(default=None, foreign_key="inbox_entries.id")
-    needs_clarification: bool = Field(default=False)
     confidence: float = Field(default=1.0)
     created_at: datetime = Field(default_factory=_utcnow, nullable=False)
     # Phase 7e/C: when the task was marked done. Drives the "Выполненные"
