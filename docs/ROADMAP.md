@@ -87,9 +87,8 @@
 > старый flow (при `confidence < 0.7` показывать inline
 > `[Да, создать] / [Нет, отмена]`) **снят**. Теперь задачи создаются
 > сразу, а проверка/чистка вынесена во вкладку Mini-App «Входящие»
-> (#145/#146/#150). Мёртвый код PR-K удалён (#149); осталась лишь
-> неиспользуемая колонка `Task.needs_clarification` (дроп — отдельной
-> миграцией).
+> (#145/#146/#150). Мёртвый код PR-K удалён (#149), неиспользуемая
+> колонка `Task.needs_clarification` дропнута миграцией 0017.
 >
 > **Reminder Management (PR-J):** `/reminders` + `/reminders all`
 > + кнопка `[➡️ Ещё]` пагинация + голосовой `cancel_reminder` с
@@ -101,9 +100,9 @@
 > `docs/REVIEW-2026-05-09-v2.md` — закрыты.
 >
 > **Прод-операция:**
-> - Alembic migrations 0001..0017 накатаны (последние — 0014
->   `task_completed_at`, 0015 `inbox_needs_review`, 0016
->   `review_enabled`).
+> - Alembic migrations 0001..0017 накатаны (последние — 0015
+>   `inbox_needs_review`, 0016 `review_enabled`, 0017
+>   `drop_task_needs_clarification`).
 > - Render `startCommand` авто-применяет `alembic upgrade head` на
 >   каждом деплое.
 > - Render env: `GROQ_API_KEYS` поддерживает comma-separated список
