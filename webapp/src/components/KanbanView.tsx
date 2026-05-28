@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Check, Plus, X } from "lucide-react";
 import { apiClient } from "../api/client";
+import { getCache, setCache } from "../lib/cache";
 import { haptic } from "../lib/telegram";
 import type { Category, Task } from "../types";
 
@@ -28,6 +29,8 @@ export const KCAT_PREFIX = "kcat:";
 export const KCAT_NONE = `${KCAT_PREFIX}none`;
 export const kcatId = (categoryId: number | null) =>
   categoryId === null ? KCAT_NONE : `${KCAT_PREFIX}${categoryId}`;
+
+const KANBAN_CACHE_KEY = "kanban-tasks";
 
 interface Props {
   categories: Category[];
@@ -44,13 +47,16 @@ export function KanbanView({
   onDone,
   onCreateCategory,
 }: Props) {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<Task[]>(
+    () => getCache<Task[]>(KANBAN_CACHE_KEY) ?? [],
+  );
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const resp = await apiClient.tasks({ limit: 500 });
+        setCache(KANBAN_CACHE_KEY, resp);
         if (!cancelled) setTasks(resp);
       } catch (err) {
         if (!cancelled) console.error("kanban load failed", err);

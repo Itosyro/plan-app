@@ -19,6 +19,7 @@ import {
   ListTree,
 } from "lucide-react";
 import { apiClient } from "../api/client";
+import { getCache, setCache } from "../lib/cache";
 import { categoryColor, localDateKey, localTime } from "../lib/format";
 import { haptic } from "../lib/telegram";
 import { StorageKeys, storageGet, storageSet } from "../lib/storage";
@@ -112,6 +113,12 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    // Show the last-known tasks for this exact window instantly (so
+    // navigating back to a visited month/week doesn't flash empty),
+    // then revalidate in the background.
+    const cacheKey = `cal:${dueAtFrom}:${dueAtTo}`;
+    const cached = getCache<Task[]>(cacheKey);
+    if (cached) setTasks(cached);
     void (async () => {
       try {
         const resp = await apiClient.tasks({
@@ -119,7 +126,9 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
           due_at_from: dueAtFrom,
           due_at_to: dueAtTo,
         });
-        if (!cancelled) setTasks(resp.filter((t) => t.due_at !== null));
+        const dated = resp.filter((t) => t.due_at !== null);
+        setCache(cacheKey, dated);
+        if (!cancelled) setTasks(dated);
       } catch (err) {
         if (!cancelled) console.error("calendar load failed", err);
       }
@@ -156,6 +165,7 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
         onChange={changeMode}
       />
 
+      <div key={mode} className="animate-tab-in">
       {mode === "month" && (
         <MonthView
           tz={tz}
@@ -207,6 +217,7 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
       )}
 
       {mode === "agenda" && <AgendaView tz={tz} tasks={tasks} onOpen={onOpen} />}
+      </div>
     </div>
   );
 }
