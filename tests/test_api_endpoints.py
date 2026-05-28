@@ -19,9 +19,12 @@ from urllib.parse import urlencode
 import httpx
 import pytest
 import pytest_asyncio
+import respx
 from fastapi import FastAPI
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.ai.router import GroqKeyRouter
 from app.bot.services import (
     get_or_create_category,
     get_or_create_horizon,
@@ -1069,3 +1072,224 @@ async def test_inbox_confirm_rejects_other_user(
     async with session_scope() as session:
         task = await session.get(Task, task_ids[0])
         assert task is not None and task.deleted_at is None
+
+
+# ── /api/tasks/{id}/split ────────────────────────────────────────────
+
+
+def _split_groq_response(subtasks: list[str]) -> dict[str, object]:
+    """Fake Groq chat-completion response carrying the JSON subtasks payload."""
+    body = json.dumps({"subtasks": subtasks})
+    return {
+        "id": "chatcmpl-split-task",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "llama-3.1-8b-instant",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": body},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 80, "completion_tokens": 30, "total_tokens": 110},
+    }
+
+
+@pytest.fixture
+def fake_groq_router(monkeypatch: pytest.MonkeyPatch) -> GroqKeyRouter:
+    """Install a Groq router with a fake key on the tasks router.
+
+    The production ``get_groq_router`` returns ``None`` in tests
+    (no Groq keys are configured), which would short-circuit the
+    endpoint with 503. We replace it with a router carrying a
+    dummy key so ``respx`` can intercept the actual HTTP call.
+    """
+    router = GroqKeyRouter(keys=["gsk_test_split_key"])
+    monkeypatch.setattr(
+        "app.api.routers.tasks.get_groq_router",
+        lambda: router,
+    )
+    return router
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_happy_path(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    """LLM returns 3 subtitles → 3 children created with inherited fields."""
+    list_resp = (await aclient.get("/api/tasks", headers=auth_headers)).json()
+    parent = next(t for t in list_resp if t["title"] == "Тест-задача")
+    parent_id = parent["id"]
+
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json=_split_groq_response(
+                ["составить план", "написать черновик", "отправить на ревью"]
+            ),
+        )
+    )
+
+    resp = await aclient.post(f"/api/tasks/{parent_id}/split", headers=auth_headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert isinstance(body, list)
+    assert 2 <= len(body) <= 5
+    assert len(body) == 3
+    for child in body:
+        assert child["parent_id"] == parent_id
+        assert child["category_id"] == parent["category_id"]
+        assert child["category_name"] == parent["category_name"]
+        assert child["horizon_slug"] == parent["horizon_slug"]
+        assert child["priority"] == parent["priority"]
+
+    # Persisted state matches the response.
+    async with session_scope() as session:
+        children = (await session.exec(select(Task).where(Task.parent_id == parent_id))).all()
+        assert len(children) == 3
+        for c in children:
+            assert c.user_id == seeded
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_404_for_missing_task(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    resp = await aclient.post("/api/tasks/9999999/split", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_404_for_other_users_task(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    session: AsyncSession,
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    other, _ = await get_or_create_user(session, telegram_id=_OTHER_TG_USER)
+    assert other.id is not None
+    other.onboarded_at = utcnow_naive()
+    other.tz = "Europe/Moscow"
+    session.add(other)
+    session.add(UserSettings(user_id=other.id))
+    await session.commit()
+
+    list_resp = (await aclient.get("/api/tasks", headers=auth_headers)).json()
+    parent_id = list_resp[0]["id"]
+
+    other_headers = {"X-Telegram-Init-Data": _build_init_data(user_id=_OTHER_TG_USER)}
+    resp = await aclient.post(f"/api/tasks/{parent_id}/split", headers=other_headers)
+    assert resp.status_code == 404
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_409_when_already_has_children(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    async with session_scope() as session:
+        cat = await get_or_create_category(session, seeded, "Работа")
+        hor = await get_or_create_horizon(session, seeded, "today")
+        parent = Task(
+            user_id=seeded,
+            category_id=cat.id,
+            horizon_id=hor.id,
+            title="Уже разбита",
+            priority="medium",
+        )
+        session.add(parent)
+        await session.flush()
+        assert parent.id is not None
+        session.add(
+            Task(
+                user_id=seeded,
+                parent_id=parent.id,
+                category_id=cat.id,
+                horizon_id=hor.id,
+                title="существующий ребёнок",
+                priority="medium",
+            )
+        )
+        parent_id = parent.id
+
+    resp = await aclient.post(f"/api/tasks/{parent_id}/split", headers=auth_headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "task already split"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_409_when_task_is_a_subtask(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    async with session_scope() as session:
+        cat = await get_or_create_category(session, seeded, "Работа")
+        hor = await get_or_create_horizon(session, seeded, "today")
+        parent = Task(
+            user_id=seeded,
+            category_id=cat.id,
+            horizon_id=hor.id,
+            title="Родитель",
+            priority="medium",
+        )
+        session.add(parent)
+        await session.flush()
+        assert parent.id is not None
+        child = Task(
+            user_id=seeded,
+            parent_id=parent.id,
+            category_id=cat.id,
+            horizon_id=hor.id,
+            title="Ребёнок",
+            priority="medium",
+        )
+        session.add(child)
+        await session.flush()
+        assert child.id is not None
+        child_id = child.id
+
+    resp = await aclient.post(f"/api/tasks/{child_id}/split", headers=auth_headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "task is already a subtask"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tasks_split_422_when_llm_returns_empty(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+    fake_groq_router: GroqKeyRouter,
+) -> None:
+    list_resp = (await aclient.get("/api/tasks", headers=auth_headers)).json()
+    parent_id = list_resp[0]["id"]
+
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_split_groq_response([]))
+    )
+
+    resp = await aclient.post(f"/api/tasks/{parent_id}/split", headers=auth_headers)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "task is already atomic, nothing to split"
+
+    # No children were persisted.
+    async with session_scope() as session:
+        children = (await session.exec(select(Task).where(Task.parent_id == parent_id))).all()
+        assert len(children) == 0

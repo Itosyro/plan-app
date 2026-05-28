@@ -131,6 +131,9 @@ from .tasks import (
     schedule_reminders as schedule_reminders,
 )
 from .tasks import (
+    split_existing_task as split_existing_task,
+)
+from .tasks import (
     update_note_category as update_note_category,
 )
 from .tasks import (

@@ -118,6 +118,7 @@ export const apiClient = {
   task: (id: number) => api<TaskDetail>(`/tasks/${id}`),
   patchTask: (id: number, body: TaskUpdate) =>
     api<Task>(`/tasks/${id}`, { method: "PATCH", body }),
+  splitTask: (id: number) => api<Task[]>(`/tasks/${id}/split`, { method: "POST" }),
   deleteTask: (id: number) => api<void>(`/tasks/${id}`, { method: "DELETE" }),
   notes: (q?: { category_id?: number }) =>
     api<Note[]>("/notes", { query: q }),

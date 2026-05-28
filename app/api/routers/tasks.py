@@ -9,6 +9,7 @@ from sqlalchemy import case, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.ai.task_splitter import split_task_to_subtasks
 from app.api.auth import current_user
 from app.api.schemas import (
     HorizonSlug,
@@ -19,10 +20,12 @@ from app.api.schemas import (
     TaskUpdateIn,
 )
 from app.bot.pinned_today import refresh_pinned_morning
+from app.bot.routers._pipeline import get_groq_router
 from app.bot.services import (
     delete_task,
     get_task_by_id,
     mark_task_done,
+    split_existing_task,
     update_task_category,
     update_task_horizon,
 )
@@ -418,6 +421,101 @@ async def patch_task(
                 logger.warning("api.refresh_pinned_failed", user_id=user.id, exc_info=True)
 
     return _task_to_out(task, horizon_slug, category_name)
+
+
+@router.post(
+    "/{task_id}/split",
+    response_model=list[TaskOut],
+    status_code=status.HTTP_201_CREATED,
+)
+async def split_task(
+    task_id: int,
+    user: User = Depends(current_user),
+) -> list[TaskOut]:
+    """Break a task into 2–5 atomic subtasks via LLM, persist & return them.
+
+    Used by the «Входящие» review card. Errors:
+
+    * 404 — task not found / belongs to another user / soft-deleted.
+    * 409 ``"task is already a subtask"`` — ``parent_id`` is not null
+      (only one level of nesting is allowed).
+    * 409 ``"task already split"`` — the task already has children;
+      splitting again would silently duplicate steps.
+    * 503 — Groq router not configured (no API keys at boot).
+    * 422 ``"task is already atomic, nothing to split"`` — the LLM
+      decided the task can't be usefully decomposed.
+    """
+    if user.id is None:
+        raise RuntimeError("authenticated user has no id")
+
+    async with session_scope() as session:
+        task = await get_task_by_id(session, user.id, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+        if task.parent_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="task is already a subtask",
+            )
+        # Cheap existence check — we only need to know whether at least
+        # one non-deleted child exists, not how many.
+        existing_children = await session.exec(
+            select(func.count())
+            .select_from(Task)
+            .where(
+                Task.parent_id == task.id,
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
+        )
+        if (existing_children.first() or 0) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="task already split",
+            )
+
+    groq_router = get_groq_router()
+    if groq_router is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI temporarily unavailable",
+        )
+
+    titles = await split_task_to_subtasks(groq_router, task.title)
+    if not titles:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="task is already atomic, nothing to split",
+        )
+
+    out: list[TaskOut] = []
+    async with session_scope() as session:
+        # Re-load the parent inside the fresh session before mutating —
+        # the original ``task`` is detached from the prior session_scope.
+        parent = await get_task_by_id(session, user.id, task_id)
+        if parent is None:
+            # Vanishingly unlikely (the parent was here moments ago) but
+            # if it raced with a delete we surface a clean 404.
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+        children = await split_existing_task(session, parent, titles)
+
+        # Re-hydrate horizon slug + category name once — children all
+        # inherit them from the parent, so we look them up just once.
+        horizon_slug: str | None = None
+        category_name: str | None = None
+        if parent.horizon_id is not None:
+            hor_res = await session.exec(
+                select(Horizon.slug).where(Horizon.id == parent.horizon_id)
+            )
+            horizon_slug = hor_res.first()
+        if parent.category_id is not None:
+            cat_res = await session.exec(
+                select(Category.name).where(Category.id == parent.category_id)
+            )
+            category_name = cat_res.first()
+
+        for child in children:
+            out.append(_task_to_out(child, horizon_slug, category_name))
+    return out
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
