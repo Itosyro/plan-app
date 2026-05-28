@@ -58,6 +58,12 @@ interface Props {
   onMutated: () => void;
   /** Called after a successful delete so the parent can navigate away. */
   onDeleted: () => void;
+  /**
+   * Optimistic delete: drop the task from the parent list instantly,
+   * before the network round-trip. Called the moment delete is
+   * confirmed so the detail can close without a blocking spinner.
+   */
+  onOptimisticDelete?: (id: number) => void;
 }
 
 const HORIZON_TONE: Record<HorizonSlug, TileTone> = {
@@ -83,6 +89,7 @@ export function TaskDetail({
   onClose,
   onMutated,
   onDeleted,
+  onOptimisticDelete,
 }: Props) {
   const [task, setTask] = useState<TaskDetailType | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -151,26 +158,26 @@ export function TaskDetail({
 
   const remove = useCallback(async () => {
     if (task === null) return;
-    setPending("delete");
-    setSaveError(null);
+    const id = task.id;
+    // Optimistic: drop from the list and close the detail immediately —
+    // no blocking "Удаляем…" spinner. The DELETE runs in the background;
+    // ``onMutated`` reconciles all views once the server confirms (or, on
+    // a real failure, restores the row by refetching).
+    haptic("success");
+    onOptimisticDelete?.(id);
+    onDeleted();
     try {
-      await apiClient.deleteTask(task.id);
-      haptic("success");
+      await apiClient.deleteTask(id);
       onMutated();
-      onDeleted();
     } catch (err) {
-      haptic("error");
-      if (err instanceof ApiError && err.status === 404) {
-        // Already gone — treat as success.
-        onMutated();
-        onDeleted();
-        return;
+      // 404 = already gone → still a success; any other error → refetch
+      // to restore the row that wasn't actually deleted.
+      if (!(err instanceof ApiError && err.status === 404)) {
+        haptic("error");
       }
-      setSaveError("Не удалось удалить");
-    } finally {
-      setPending(null);
+      onMutated();
     }
-  }, [task, onMutated, onDeleted]);
+  }, [task, onMutated, onDeleted, onOptimisticDelete]);
 
   const categoryLabel = useMemo(() => {
     if (task === null || task.category_id === null) return "Не выбрана";
