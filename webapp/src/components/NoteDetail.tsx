@@ -27,6 +27,12 @@ interface Props {
   onMutated: () => void;
   /** Called after a successful delete so the parent can navigate away. */
   onDeleted: () => void;
+  /**
+   * Optimistic delete: drop the note from the parent list instantly,
+   * before the network round-trip. Called the moment delete is
+   * confirmed so the detail can close without a blocking spinner.
+   */
+  onOptimisticDelete?: (id: number) => void;
 }
 
 export function NoteDetail({
@@ -35,6 +41,7 @@ export function NoteDetail({
   onClose,
   onMutated,
   onDeleted,
+  onOptimisticDelete,
 }: Props) {
   const [note, setNote] = useState<Note | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -135,25 +142,23 @@ export function NoteDetail({
 
   const remove = useCallback(async () => {
     if (note === null) return;
-    setPending("delete");
-    setSaveError(null);
+    const id = note.id;
+    // Optimistic: drop from the list and close the detail immediately;
+    // background DELETE then reconciles. On a non-404 failure, onMutated
+    // refetches to restore the row.
+    haptic("success");
+    onOptimisticDelete?.(id);
+    onDeleted();
     try {
-      await apiClient.deleteNote(note.id);
-      haptic("success");
+      await apiClient.deleteNote(id);
       onMutated();
-      onDeleted();
     } catch (err) {
-      haptic("error");
-      if (err instanceof ApiError && err.status === 404) {
-        onMutated();
-        onDeleted();
-        return;
+      if (!(err instanceof ApiError && err.status === 404)) {
+        haptic("error");
       }
-      setSaveError("Не удалось удалить");
-    } finally {
-      setPending(null);
+      onMutated();
     }
-  }, [note, onMutated, onDeleted]);
+  }, [note, onMutated, onDeleted, onOptimisticDelete]);
 
   const categoryId = note?.category_id ?? draftCategoryId;
   const categoryLabel = useMemo(() => {

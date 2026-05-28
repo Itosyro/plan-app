@@ -19,12 +19,18 @@ interface Props {
    * state through the detail page.
    */
   refreshSignal: number;
+  /**
+   * Optimistic delete payload — the detail screen drops the note from
+   * the list the instant the user confirms, before the background
+   * DELETE round-trip. Keyed by ``nonce`` so the same id can re-fire.
+   */
+  optimisticDelete?: { id: number; nonce: number } | null;
   onOpen: (id: number) => void;
 }
 
 const NOTES_CACHE_KEY = "notes";
 
-export function NotesList({ refreshSignal, onOpen }: Props) {
+export function NotesList({ refreshSignal, optimisticDelete, onOpen }: Props) {
   const [notes, setNotes] = useState<Note[] | null>(
     () => getCache<Note[]>(NOTES_CACHE_KEY) ?? null,
   );
@@ -55,6 +61,21 @@ export function NotesList({ refreshSignal, onOpen }: Props) {
       cancelled = true;
     };
   }, [refreshSignal]);
+
+  // Apply an optimistic delete the instant NoteDetail confirms — the
+  // row vanishes from the list without waiting for the network. The
+  // background DELETE then bumps ``refreshSignal``, which refetches
+  // and reconciles (or, on failure, restores the row).
+  useEffect(() => {
+    if (!optimisticDelete) return;
+    const { id } = optimisticDelete;
+    setNotes((prev) => {
+      if (prev === null) return prev;
+      const next = prev.filter((n) => n.id !== id);
+      setCache(NOTES_CACHE_KEY, next);
+      return next;
+    });
+  }, [optimisticDelete?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     if (notes === null) return null;

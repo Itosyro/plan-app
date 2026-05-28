@@ -138,6 +138,10 @@ export default function App() {
     dueAt: string;
     nonce: number;
   } | null>(null);
+  const [noteOptimisticDelete, setNoteOptimisticDelete] = useState<{
+    id: number;
+    nonce: number;
+  } | null>(null);
   // «Входящие» pending-review count for the nav badge.
   const [inboxCount, setInboxCount] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
@@ -525,6 +529,10 @@ export default function App() {
     setNotesRefresh((n) => n + 1);
   }, []);
 
+  const handleNoteOptimisticDelete = useCallback((id: number) => {
+    setNoteOptimisticDelete({ id, nonce: Date.now() });
+  }, []);
+
   // Phase 5.4b: drag-n-drop. PointerSensor with delay activation so
   // a quick tap on a button inside the card still fires onClick;
   // long-press (250 ms) starts the drag. ``tolerance`` allows a few
@@ -666,6 +674,7 @@ export default function App() {
             onClose={handleCloseDetail}
             onMutated={handleNoteMutated}
             onDeleted={handleCloseDetail}
+            onOptimisticDelete={handleNoteOptimisticDelete}
           />
         </Suspense>
         <BottomNav
@@ -871,7 +880,11 @@ export default function App() {
             )}
           </>
         ) : activeTab === "notes" ? (
-          <NotesList refreshSignal={notesRefresh} onOpen={handleOpenNote} />
+          <NotesList
+            refreshSignal={notesRefresh}
+            optimisticDelete={noteOptimisticDelete}
+            onOpen={handleOpenNote}
+          />
         ) : activeTab === "calendar" ? (
           <CalendarView
             tz={tz}
