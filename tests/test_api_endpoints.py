@@ -14,6 +14,7 @@ import hmac
 import json
 import time
 from collections.abc import AsyncIterator
+from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -393,6 +394,50 @@ async def test_tasks_list_filtered_by_horizon(
     assert rows[0]["title"] == "Тест-задача"
     assert rows[0]["horizon_slug"] == "today"
     assert rows[0]["category_name"] == "Работа"
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_filtered_by_due_at_range(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    # Seed tasks across distinct due dates plus one undated task.
+    async with session_scope() as session:
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Jan",
+                priority="medium",
+                due_at=datetime(2026, 1, 15, 12, 0, 0),
+            )
+        )
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Feb",
+                priority="medium",
+                due_at=datetime(2026, 2, 15, 12, 0, 0),
+            )
+        )
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Mar",
+                priority="medium",
+                due_at=datetime(2026, 3, 15, 12, 0, 0),
+            )
+        )
+        session.add(Task(user_id=seeded, title="Undated", priority="medium"))
+        await session.flush()
+
+    resp = await aclient.get(
+        "/api/tasks?due_at_from=2026-02-01T00:00:00&due_at_to=2026-03-01T00:00:00",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    titles = {row["title"] for row in resp.json()}
+    assert titles == {"Feb"}  # Jan/Mar out of range; Undated excluded by comparison
 
 
 @pytest.mark.asyncio

@@ -86,11 +86,39 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
     };
   }, []);
 
+  // Visible date window for the current view, as UTC ISO bounds for the
+  // server-side `[due_at_from, due_at_to)` filter. Buffered generously so
+  // every rendered cell (incl. tz offsets and adjacent-month spill) is
+  // covered. `due_at_from` is inclusive, `due_at_to` exclusive.
+  const { dueAtFrom, dueAtTo } = useMemo(() => {
+    let start: Date;
+    let end: Date;
+    if (mode === "month") {
+      // First of month − 7d … first of next month + 7d (covers grid spill).
+      start = new Date(viewYear, viewMonth, 1 - 7);
+      end = new Date(viewYear, viewMonth + 1, 1 + 7);
+    } else if (mode === "week") {
+      // Visible week ± 1 day buffer (week is weekStart … weekStart+6).
+      start = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() - 1);
+      end = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7 + 1);
+    } else {
+      // Agenda lists everything from today forward (open-ended) — use a
+      // wide forward window.
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 180);
+    }
+    return { dueAtFrom: start.toISOString(), dueAtTo: end.toISOString() };
+  }, [mode, viewYear, viewMonth, weekStart, now]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const resp = await apiClient.tasks({ include_done: true });
+        const resp = await apiClient.tasks({
+          include_done: true,
+          due_at_from: dueAtFrom,
+          due_at_to: dueAtTo,
+        });
         if (!cancelled) setTasks(resp.filter((t) => t.due_at !== null));
       } catch (err) {
         if (!cancelled) console.error("calendar load failed", err);
@@ -99,7 +127,7 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [refreshSignal]);
+  }, [refreshSignal, dueAtFrom, dueAtTo]);
 
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();

@@ -6,6 +6,37 @@
 
 ---
 
+## 2026-05-28 — perf/fix: серверная фильтрация календаря по диапазону
+
+**Контекст.** `CalendarView` тянул **все** задачи (`GET /api/tasks`,
+`include_done=true`) и раскладывал по дням на клиенте. Дефолтный `limit=200`
+означал, что у пользователей с большим числом задач часть записей молча
+не попадала в календарь — это не только перф, но и корректность.
+
+**Бэкенд.**
+- `app/api/routers/tasks.py::list_tasks` — два опциональных query-параметра
+  `due_at_from` (вкл.) и `due_at_to` (искл.); фильтр
+  `Task.due_at >= from` / `Task.due_at < to`. Бездатные задачи естественно
+  отсекаются сравнением (спец-фильтра на NULL нет). Композится с остальными
+  фильтрами.
+- `tests/test_api_endpoints.py::test_tasks_list_filtered_by_due_at_range` —
+  Jan/Feb/Mar + undated, проверка что `[Feb-01, Mar-01)` отдаёт только Feb.
+
+**Фронт.**
+- `webapp/src/api/client.ts` — `tasks()` принимает `due_at_from`/`due_at_to`.
+- `webapp/src/components/CalendarView.tsx` — `useMemo` считает видимое окно
+  по режиму (Month: первое число −7д … первое следующего +7д; Week: ±1д;
+  Agenda: today−1д … today+180д) → UTC ISO; фетч перезапускается при
+  навигации (окно в deps). Буфер съедает tz-сдвиг; точную раскладку по дням
+  по-прежнему делает `localDateKey`.
+
+**Поведенческая заметка.** Agenda теперь ограничена окном +180д (раньше была
+открытой, но ограничивалась `limit=200`) — приемлемый компромисс для планера.
+
+**Гейты.** ruff format/check, mypy, pytest, webapp tsc+build — зелёные.
+
+---
+
 ## 2026-05-28 — chore: archival + ROADMAP truth-up
 
 **Контекст.** В ROADMAP-секции «Что осталось» накопились stale-пункты,
