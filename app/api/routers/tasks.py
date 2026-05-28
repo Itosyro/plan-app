@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -86,6 +87,8 @@ async def list_tasks(
     horizon: str | None = Query(default=None),
     category_id: int | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
+    due_at_from: datetime | None = Query(None, description="Inclusive lower bound on due_at."),
+    due_at_to: datetime | None = Query(None, description="Exclusive upper bound on due_at."),
     include_done: bool = Query(default=False),
     include_subtasks: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
@@ -127,6 +130,11 @@ async def list_tasks(
             stmt = stmt.where(Horizon.slug == horizon)
         if category_id is not None:
             stmt = stmt.where(Task.category_id == category_id)
+
+        if due_at_from is not None:
+            stmt = stmt.where(Task.due_at >= due_at_from)  # type: ignore[operator]
+        if due_at_to is not None:
+            stmt = stmt.where(Task.due_at < due_at_to)  # type: ignore[operator]
 
         if status_filter is not None:
             if status_filter not in _TASK_STATUSES:
