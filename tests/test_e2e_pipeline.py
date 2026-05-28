@@ -767,6 +767,75 @@ async def test_e2e_urgent_task(session: AsyncSession) -> None:
     assert tasks[0].priority == "high"
 
 
+# ── e2e: two notes flag the entry for review ─────────────────────────
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_two_notes_flag_review(session: AsyncSession) -> None:
+    """Two notes (no tasks) from one inbox entry still trigger
+    ``needs_review`` — the count now covers tasks + notes."""
+    user, _ = await get_or_create_user(session, telegram_id=311)
+    await session.commit()
+    assert user.id is not None
+
+    entry = InboxEntry(user_id=user.id, kind="text", raw_text="две заметки")
+    session.add(entry)
+    await session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+
+    tracker = _CallTracker(
+        [
+            _intent_response("create"),
+            _splitter_response([{"text": "мысль один"}, {"text": "мысль два"}]),
+            _intent_response("create"),
+            _intent_response("create"),
+            _classifier_response(
+                _cr_dict(
+                    category="Идеи",
+                    horizon="someday",
+                    priority="low",
+                    is_task=False,
+                    title="Мысль один",
+                )
+            ),
+            _classifier_response(
+                _cr_dict(
+                    category="Идеи",
+                    horizon="someday",
+                    priority="low",
+                    is_task=False,
+                    title="Мысль два",
+                )
+            ),
+        ]
+    )
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        side_effect=tracker.side_effect
+    )
+
+    text, _keyboard = await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "мысль один, мысль два",
+        tg_user_id=311,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=entry_id,
+        courier_mode="template_only",
+    )
+
+    assert "Входящие" in text
+
+    notes = (await session.exec(select(Note).where(Note.user_id == user.id))).all()
+    assert len(notes) == 2
+
+    session.expire_all()
+    refreshed = await session.get(InboxEntry, entry_id)
+    assert refreshed is not None
+    assert refreshed.needs_review is True
+
+
 # ── e2e: classifier receives existing categories (R-NEW-C-4) ─────────
 
 

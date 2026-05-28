@@ -10,7 +10,7 @@ import { ApiError, apiClient } from "../api/client";
 import { formatDue, priorityIcon } from "../lib/format";
 import { PRIORITY_OPTIONS } from "../lib/priority";
 import { haptic } from "../lib/telegram";
-import type { Category, InboxReview as Review, Task, TaskPriority } from "../types";
+import type { Category, InboxReview as Review, Note, Task, TaskPriority } from "../types";
 import { BottomSheetSelect } from "./BottomSheetSelect";
 import { EmptyState } from "./EmptyState";
 
@@ -27,6 +27,8 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
   const [error, setError] = useState<string | null>(null);
   // Per-entry set of task ids to keep. Seeded with every task checked.
   const [keep, setKeep] = useState<Record<number, Set<number>>>({});
+  // Per-entry set of note ids to keep. Seeded with every note checked.
+  const [keepNotes, setKeepNotes] = useState<Record<number, Set<number>>>({});
   const [busy, setBusy] = useState<number | null>(null);
   // Inline title edit: which task id is open for editing, its draft text,
   // the id with a save in flight, and a save error to surface.
@@ -45,13 +47,24 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
   // generated subtasks inline for this session only.
   const [splittingTask, setSplittingTask] = useState<number | null>(null);
   const [splitChildren, setSplitChildren] = useState<Record<number, Task[]>>({});
+  // Note inline edit + category sheet, mirroring the task analogues.
+  const [editingNote, setEditingNote] = useState<number | null>(null);
+  const [noteTitleDraft, setNoteTitleDraft] = useState("");
+  const [savingNoteTitle, setSavingNoteTitle] = useState<number | null>(null);
+  const [noteCategorySheet, setNoteCategorySheet] = useState<number | null>(null);
+  const [savingNoteField, setSavingNoteField] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
       const resp = await apiClient.pendingInbox();
       const seed: Record<number, Set<number>> = {};
-      for (const r of resp) seed[r.id] = new Set(r.tasks.map((t) => t.id));
+      const seedNotes: Record<number, Set<number>> = {};
+      for (const r of resp) {
+        seed[r.id] = new Set(r.tasks.map((t) => t.id));
+        seedNotes[r.id] = new Set((r.notes ?? []).map((n) => n.id));
+      }
       setKeep(seed);
+      setKeepNotes(seedNotes);
       setReviews(resp);
       setError(null);
     } catch (err) {
@@ -74,6 +87,16 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
       const set = new Set(prev[entryId] ?? []);
       if (set.has(taskId)) set.delete(taskId);
       else set.add(taskId);
+      return { ...prev, [entryId]: set };
+    });
+  };
+
+  const toggleNote = (entryId: number, noteId: number) => {
+    haptic("select");
+    setKeepNotes((prev) => {
+      const set = new Set(prev[entryId] ?? []);
+      if (set.has(noteId)) set.delete(noteId);
+      else set.add(noteId);
       return { ...prev, [entryId]: set };
     });
   };
@@ -189,14 +212,85 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
     }
   }, []);
 
+  const startEditNote = (note: Note) => {
+    haptic("select");
+    setTitleError(null);
+    setNoteTitleDraft(note.title);
+    setEditingNote(note.id);
+  };
+
+  const saveNoteTitle = useCallback(
+    async (note: Note) => {
+      const trimmed = noteTitleDraft.trim();
+      setEditingNote(null);
+      if (!trimmed || trimmed === note.title) return;
+      setSavingNoteTitle(note.id);
+      setTitleError(null);
+      try {
+        const fresh = await apiClient.patchNote(note.id, { title: trimmed });
+        haptic("success");
+        setReviews((prev) =>
+          prev
+            ? prev.map((r) => ({
+                ...r,
+                notes: r.notes.map((n) =>
+                  n.id === note.id ? { ...n, title: fresh.title } : n,
+                ),
+              }))
+            : prev,
+        );
+      } catch (err) {
+        haptic("error");
+        console.error("patch inbox note title failed", err);
+        setTitleError(
+          err instanceof ApiError && err.status === 422
+            ? "Не получилось — проверь название."
+            : "Не удалось сохранить название.",
+        );
+      } finally {
+        setSavingNoteTitle(null);
+      }
+    },
+    [noteTitleDraft],
+  );
+
+  const saveNoteField = useCallback(
+    async (noteId: number, body: { category_id: number }, local: Partial<Note>) => {
+      setSavingNoteField(noteId);
+      setTitleError(null);
+      try {
+        const fresh = await apiClient.patchNote(noteId, body);
+        haptic("success");
+        setReviews((prev) =>
+          prev
+            ? prev.map((r) => ({
+                ...r,
+                notes: r.notes.map((n) =>
+                  n.id === noteId ? { ...n, ...fresh, ...local } : n,
+                ),
+              }))
+            : prev,
+        );
+      } catch (err) {
+        haptic("error");
+        console.error("patch inbox note field failed", err);
+        setTitleError("Не удалось сохранить изменение.");
+      } finally {
+        setSavingNoteField(null);
+      }
+    },
+    [],
+  );
+
   const confirm = useCallback(
     async (review: Review) => {
       const keepIds = [...(keep[review.id] ?? new Set<number>())];
+      const keepNoteIdsArr = [...(keepNotes[review.id] ?? new Set<number>())];
       setBusy(review.id);
       // Optimistically drop the card — it's resolved either way.
       setReviews((prev) => (prev ? prev.filter((r) => r.id !== review.id) : prev));
       try {
-        await apiClient.confirmInbox(review.id, keepIds);
+        await apiClient.confirmInbox(review.id, keepIds, keepNoteIdsArr);
         haptic("success");
         onResolved();
       } catch (err) {
@@ -207,7 +301,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
         setBusy(null);
       }
     },
-    [keep, onResolved, load],
+    [keep, keepNotes, onResolved, load],
   );
 
   if (reviews === null) {
@@ -238,6 +332,10 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
       )}
       {reviews.map((review) => {
         const keepSet = keep[review.id] ?? new Set<number>();
+        const keepNoteSet = keepNotes[review.id] ?? new Set<number>();
+        const notes = review.notes ?? [];
+        const totalItems = review.tasks.length + notes.length;
+        const checkedItems = keepSet.size + keepNoteSet.size;
         return (
           <li
             key={review.id}
@@ -417,9 +515,139 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                 );
               })}
             </ul>
+            {notes.length > 0 && (
+              <>
+                <div className="mb-1 mt-3 text-[12px] uppercase tracking-wide text-tg-hint">
+                  Заметки
+                </div>
+                <ul className="flex flex-col gap-1.5">
+                  {notes.map((note) => {
+                    const checked = keepNoteSet.has(note.id);
+                    const isEditing = editingNote === note.id;
+                    const isSaving = savingNoteTitle === note.id;
+                    const isSavingField = savingNoteField === note.id;
+                    const bodyPreview = note.body
+                      ? note.body.split("\n")[0]?.trim() ?? ""
+                      : "";
+                    return (
+                      <li key={note.id}>
+                        <div
+                          className={
+                            "ease-apple flex w-full items-start gap-2.5 rounded-2xl px-3 py-2 transition-all duration-150 " +
+                            (checked ? "bg-bento" : "bg-bento/40 opacity-60")
+                          }
+                        >
+                          <button
+                            type="button"
+                            aria-pressed={checked}
+                            aria-label={checked ? "Не оставлять" : "Оставить"}
+                            onClick={() => toggleNote(review.id, note.id)}
+                            className={
+                              "ease-apple mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 transition-all duration-150 active:scale-90 " +
+                              (checked
+                                ? "bg-tg-button text-white ring-tg-button"
+                                : "bg-transparent text-transparent ring-tg-hint/50")
+                            }
+                          >
+                            <Check size={13} strokeWidth={3} aria-hidden />
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            {isEditing ? (
+                              <textarea
+                                autoFocus
+                                value={noteTitleDraft}
+                                maxLength={256}
+                                rows={2}
+                                disabled={isSaving}
+                                onChange={(e) => setNoteTitleDraft(e.target.value)}
+                                onBlur={() => void saveNoteTitle(note)}
+                                className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button"
+                                placeholder="Название заметки"
+                              />
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-pressed={checked}
+                                  onClick={() => toggleNote(review.id, note.id)}
+                                  className="block w-full min-w-0 text-left"
+                                >
+                                  <span
+                                    className={
+                                      "block text-[14px] leading-snug " +
+                                      (checked ? "text-tg-text" : "text-tg-hint line-through")
+                                    }
+                                  >
+                                    {note.title}
+                                  </span>
+                                </button>
+                                {bodyPreview && (
+                                  <span className="mt-0.5 block truncate text-[12px] text-tg-hint">
+                                    {bodyPreview}
+                                  </span>
+                                )}
+                                <span className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[12px] text-tg-hint">
+                                  <button
+                                    type="button"
+                                    aria-label="Изменить категорию заметки"
+                                    disabled={isSavingField || categories.length === 0}
+                                    onClick={() => {
+                                      haptic("select");
+                                      setNoteCategorySheet(note.id);
+                                    }}
+                                    className="ease-apple rounded-md px-1.5 py-0.5 text-tg-hint ring-1 ring-tg-hint/30 transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                                  >
+                                    {note.category_name ?? "Категория"}
+                                  </button>
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {!isEditing && (
+                            <div className="mt-0.5 flex shrink-0 flex-col items-end gap-0.5">
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                aria-label="Исправить название заметки"
+                                onClick={() => startEditNote(note)}
+                                className="ease-apple inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[12px] text-tg-hint transition-all duration-150 active:scale-95 hover:text-tg-text disabled:opacity-50"
+                              >
+                                <Pencil size={12} strokeWidth={2.25} aria-hidden />
+                                Исправить
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <BottomSheetSelect
+                          open={noteCategorySheet === note.id}
+                          onClose={() => setNoteCategorySheet(null)}
+                          title="Категория"
+                          options={categories.map((c) => ({
+                            value: String(c.id),
+                            label: c.name,
+                          }))}
+                          value={note.category_id === null ? "" : String(note.category_id)}
+                          onSelect={(value) => {
+                            const id = Number.parseInt(value, 10);
+                            if (Number.isFinite(id) && id > 0) {
+                              const hit = categories.find((c) => c.id === id);
+                              void saveNoteField(
+                                note.id,
+                                { category_id: id },
+                                { category_id: id, category_name: hit ? hit.name : null },
+                              );
+                            }
+                          }}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
             <div className="mt-3 flex items-center justify-between gap-3">
               <span className="text-[12px] text-tg-hint">
-                Оставлю {keepSet.size} из {review.tasks.length}
+                Оставлю {checkedItems} из {totalItems}
               </span>
               <button
                 type="button"

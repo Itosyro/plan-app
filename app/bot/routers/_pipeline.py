@@ -42,7 +42,7 @@ from app.bot.services import (
     persist_classification,
 )
 from app.db.base import session_scope
-from app.db.models import InboxEntry, Task
+from app.db.models import InboxEntry, Note, Task
 from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
@@ -355,6 +355,7 @@ async def _run_pipeline_inner(
     # «Входящие» tab surfaces it for a quick confirm / cleanup.
     items: list[SummaryItem] = []
     created_task_count = 0
+    created_note_count = 0
     any_low_confidence = False
     review_flagged = False
 
@@ -405,6 +406,8 @@ async def _run_pipeline_inner(
                 if isinstance(row, Task):
                     touch_last_task(user_id, row.id)
                     created_task_count += 1
+                elif isinstance(row, Note):
+                    created_note_count += 1
                 # PR-Subtask-Tree: pull just-created child titles so
                 # courier can render a Unicode tree under the
                 # confirmation. Same-session SELECT is cheap and avoids
@@ -454,7 +457,7 @@ async def _run_pipeline_inner(
         if (
             review_enabled
             and inbox_id is not None
-            and (created_task_count >= 2 or any_low_confidence)
+            and ((created_task_count + created_note_count) >= 2 or any_low_confidence)
         ):
             entry = await session.get(InboxEntry, inbox_id)
             if entry is not None:

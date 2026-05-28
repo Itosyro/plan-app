@@ -13,11 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 
 from app.api.auth import current_user
+from app.api.routers.notes import _note_to_out
 from app.api.routers.tasks import _task_to_out
 from app.api.schemas import InboxConfirmIn, InboxEntryOut, InboxReviewOut
-from app.bot.services import delete_task
+from app.bot.services import delete_note, delete_task
 from app.db.base import session_scope
-from app.db.models import Category, Horizon, InboxEntry, Task, User
+from app.db.models import Category, Horizon, InboxEntry, Note, Task, User
 
 router = APIRouter()
 
@@ -65,9 +66,21 @@ async def list_pending_reviews(
                     .order_by(Task.created_at.asc())  # type: ignore[attr-defined]
                 )
             ).all()
-            if not rows:
+            note_rows = (
+                await session.exec(
+                    select(Note, Category.name)
+                    .where(
+                        Note.source_inbox_id == entry.id,
+                        Note.deleted_at.is_(None),  # type: ignore[union-attr]
+                    )
+                    .join(Category, Category.id == Note.category_id, isouter=True)  # type: ignore[arg-type]
+                    .order_by(Note.created_at.asc())  # type: ignore[attr-defined]
+                )
+            ).all()
+            if not rows and not note_rows:
                 continue
             tasks_out = [_task_to_out(t, hslug, cname) for t, hslug, cname in rows]
+            notes_out = [_note_to_out(n, cname) for n, cname in note_rows]
             reviews.append(
                 InboxReviewOut.model_validate(
                     {
@@ -76,6 +89,7 @@ async def list_pending_reviews(
                         "text": entry.transcript or entry.raw_text,
                         "received_at": entry.received_at,
                         "tasks": [t.model_dump() for t in tasks_out],
+                        "notes": [n.model_dump() for n in notes_out],
                     }
                 )
             )
@@ -97,6 +111,7 @@ async def confirm_review(
         raise RuntimeError("authenticated user has no id")
 
     keep = set(body.keep_task_ids)
+    keep_notes = set(body.keep_note_ids)
     async with session_scope() as session:
         entry = await session.get(InboxEntry, entry_id)
         if entry is None or entry.user_id != user.id:
@@ -117,6 +132,19 @@ async def confirm_review(
         for task in rows:
             if task.id not in keep:
                 await delete_task(session, task, user.id)
+
+        note_rows = (
+            await session.exec(
+                select(Note).where(
+                    Note.source_inbox_id == entry_id,
+                    Note.user_id == user.id,
+                    Note.deleted_at.is_(None),  # type: ignore[union-attr]
+                )
+            )
+        ).all()
+        for note in note_rows:
+            if note.id not in keep_notes:
+                await delete_note(session, note, user.id)
 
         entry.needs_review = False
         session.add(entry)
