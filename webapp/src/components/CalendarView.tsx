@@ -39,6 +39,8 @@ const MODE_OPTIONS: SegmentOption<CalMode>[] = [
 interface Props {
   tz: string;
   refreshSignal: number;
+  /** Optimistic drop payload: shift one task's due_at in place. */
+  optimisticReschedule?: { id: number; dueAt: string; nonce: number } | null;
   onOpen: (id: number) => void;
 }
 
@@ -67,7 +69,7 @@ function timeKey(t: Task): string {
   return t.due_at ?? "";
 }
 
-export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
+export function CalendarView({ tz, refreshSignal, optimisticReschedule, onOpen }: Props) {
   const now = useMemo(() => new Date(), []);
   const [mode, setMode] = useState<CalMode>("month");
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -137,6 +139,20 @@ export function CalendarView({ tz, refreshSignal, onOpen }: Props) {
       cancelled = true;
     };
   }, [refreshSignal, dueAtFrom, dueAtTo]);
+
+  // Apply an optimistic reschedule the instant App.tsx resolves a day
+  // drop — the event re-buckets onto the target day with no refetch.
+  // Keyed on ``nonce`` so an identical re-drop still re-fires. Cache for
+  // the current window is updated so a quick re-nav doesn't flash stale.
+  useEffect(() => {
+    if (!optimisticReschedule) return;
+    const { id, dueAt } = optimisticReschedule;
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === id ? { ...t, due_at: dueAt } : t));
+      setCache(`cal:${dueAtFrom}:${dueAtTo}`, next);
+      return next;
+    });
+  }, [optimisticReschedule?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();
