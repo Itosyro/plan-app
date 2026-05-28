@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, StickyNote, X } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
+import { getCache, setCache } from "../lib/cache";
 import { haptic } from "../lib/telegram";
 import type { Note } from "../types";
 import { EmptyState } from "./EmptyState";
@@ -21,8 +22,12 @@ interface Props {
   onOpen: (id: number) => void;
 }
 
+const NOTES_CACHE_KEY = "notes";
+
 export function NotesList({ refreshSignal, onOpen }: Props) {
-  const [notes, setNotes] = useState<Note[] | null>(null);
+  const [notes, setNotes] = useState<Note[] | null>(
+    () => getCache<Note[]>(NOTES_CACHE_KEY) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
@@ -31,6 +36,7 @@ export function NotesList({ refreshSignal, onOpen }: Props) {
     (async () => {
       try {
         const resp = await apiClient.notes();
+        setCache(NOTES_CACHE_KEY, resp);
         if (!cancelled) {
           setNotes(resp);
           setError(null);

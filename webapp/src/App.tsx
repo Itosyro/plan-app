@@ -718,6 +718,10 @@ export default function App() {
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
         />
+        <div
+          key={activeTab === "tasks" ? `tasks:${tasksView}` : activeTab}
+          className="animate-tab-in"
+        >
         {activeTab === "tasks" ? (
           <>
             {tasksView === "board" ? (
@@ -808,6 +812,7 @@ export default function App() {
         ) : me ? (
           <SettingsPage me={me} onUpdated={setMe} />
         ) : null}
+        </div>
       </div>
       <CategoryFilter
         open={showCategorySheet}
