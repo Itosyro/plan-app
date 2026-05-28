@@ -504,6 +504,13 @@ export default function App() {
     setCalendarRefresh((n) => n + 1);
   }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
 
+  // Optimistic delete from the detail screen: drop the row from the list
+  // instantly so closing the detail reveals it already gone. The detail's
+  // background DELETE then calls ``handleDetailMutated`` to reconcile.
+  const handleTaskOptimisticDelete = useCallback((id: number) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const handleOpenNote = useCallback((id: number) => {
     haptic("select");
     navigate(`/note/${id}`);
@@ -637,6 +644,7 @@ export default function App() {
             onClose={handleCloseDetail}
             onMutated={handleDetailMutated}
             onDeleted={handleCloseDetail}
+            onOptimisticDelete={handleTaskOptimisticDelete}
           />
         </Suspense>
         <BottomNav
