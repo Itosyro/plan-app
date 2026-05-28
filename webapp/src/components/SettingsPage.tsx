@@ -157,7 +157,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
   return (
     <div className="flex flex-col gap-6 pb-4">
       {error && (
-        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 animate-fade-in">
           {error}
         </div>
       )}
@@ -351,13 +351,15 @@ interface RowProps {
   disabled?: boolean;
   onClick?: () => void;
   ariaPressed?: boolean;
+  className?: string;
 }
 
-function Row({ children, as = "div", disabled, onClick, ariaPressed }: RowProps) {
+function Row({ children, as = "div", disabled, onClick, ariaPressed, className: extraClassName }: RowProps) {
   const className =
     "ease-apple flex min-h-[56px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-150 " +
     (disabled ? "opacity-60 " : "") +
-    (onClick && !disabled ? "hover:bg-bento/60 active:bg-bento" : "");
+    (onClick && !disabled ? "hover:bg-bento/60 active:bg-bento" : "") +
+    (extraClassName ? " " + extraClassName : "");
   if (as === "button") {
     return (
       <button
@@ -574,7 +576,7 @@ function SettingsTextRow({
 
   if (!editing) {
     return (
-      <Row as="button" disabled={pending} onClick={onEdit}>
+      <Row as="button" disabled={pending} onClick={onEdit} className="animate-fade-in">
         <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
           <IconTile icon={icon} tone={tone} size="md" />
           <span className="truncate font-medium">{label}</span>
@@ -590,7 +592,7 @@ function SettingsTextRow({
 
   return (
     <form
-      className="flex items-center gap-2 px-4 py-3"
+      className="flex items-center gap-2 px-4 py-3 animate-fade-in"
       onSubmit={(e) => {
         e.preventDefault();
         void onSubmit(draft);
@@ -682,7 +684,7 @@ function SettingsTimezoneRow({
 
   if (!editing) {
     return (
-      <Row as="button" disabled={pending} onClick={onEdit}>
+      <Row as="button" disabled={pending} onClick={onEdit} className="animate-fade-in">
         <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
           <IconTile icon={icon} tone={tone} size="md" />
           <span className="truncate font-medium">{label}</span>
@@ -701,7 +703,7 @@ function SettingsTimezoneRow({
   return (
     <>
       <form
-        className="flex flex-col gap-2 px-4 py-3"
+        className="flex flex-col gap-2 px-4 py-3 animate-fade-in"
         onSubmit={(e) => {
           e.preventDefault();
           void onSubmit(draft);
@@ -713,7 +715,7 @@ function SettingsTimezoneRow({
             <input
               autoFocus
               type="text"
-              className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button"
+              className="min-w-0 flex-1 rounded-xl bg-bento px-3 py-1.5 text-[14px] text-tg-text focus:outline-none focus:ring-2 focus:ring-tg-button animate-fade-in"
               value={draft}
               maxLength={64}
               placeholder="Europe/Moscow"
@@ -732,7 +734,7 @@ function SettingsTimezoneRow({
               type="button"
               onClick={() => setSheetOpen(true)}
               disabled={pending || timezones.length === 0}
-              className="ease-apple flex min-w-0 flex-1 items-center justify-between rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text transition-all duration-200 active:scale-[0.99] hover:bg-bento/70"
+              className="ease-apple flex min-w-0 flex-1 items-center justify-between rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text transition-all duration-200 active:scale-[0.99] hover:bg-bento/70 animate-fade-in"
             >
               <span className="truncate">
                 {timezones.find((t) => t.iana === draft)?.label ?? draft}

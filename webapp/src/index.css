@@ -112,11 +112,19 @@ body::before {
   animation: tab-in 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* In-place fade for content that appears/disappears without a layout
+   switch — error banners, inline editors, revealed captions/buttons.
+   Softer + shorter than tab-in (no rise) so it doesn't draw the eye. */
+.animate-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   body::before {
     animation: none;
   }
-  .animate-tab-in {
+  .animate-tab-in,
+  .animate-fade-in {
     animation: none;
   }
 }

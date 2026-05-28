@@ -326,7 +326,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
   return (
     <ul className="flex flex-col gap-3">
       {titleError && (
-        <li className="rounded-2xl bg-rose-50 px-4 py-3 text-[13px] text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+        <li className="rounded-2xl bg-rose-50 px-4 py-3 text-[13px] text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200 animate-fade-in">
           {titleError}
         </li>
       )}
@@ -385,12 +385,12 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                             disabled={isSaving}
                             onChange={(e) => setTitleDraft(e.target.value)}
                             onBlur={() => void saveTitle(task)}
-                            className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button"
+                            className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button animate-fade-in"
                             placeholder="Что нужно сделать?"
                           />
                         ) : (
                           <>
-                            <span className="flex items-start gap-1.5">
+                            <span className="flex items-start gap-1.5 animate-fade-in">
                               <button
                                 type="button"
                                 aria-label="Изменить приоритет"
@@ -438,7 +438,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                         )}
                       </div>
                       {!isEditing && (
-                        <div className="mt-0.5 flex shrink-0 flex-col items-end gap-0.5">
+                        <div className="mt-0.5 flex shrink-0 flex-col items-end gap-0.5 animate-fade-in">
                           <button
                             type="button"
                             disabled={isSaving}
@@ -465,7 +465,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                       )}
                     </div>
                     {splitChildren[task.id] && splitChildren[task.id].length > 0 && (
-                      <ul className="mt-1 flex flex-col gap-0.5 pl-7">
+                      <ul className="mt-1 flex flex-col gap-0.5 pl-7 animate-fade-in">
                         {splitChildren[task.id].map((child) => (
                           <li
                             key={child.id}
