@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-05-28 — feat: заметки во «Входящих» (ревью покрывает и notes)
+
+**Контекст.** «Входящие» (вариант Б) флагали `needs_review` только по
+числу задач, и в карточке ревью показывали только задачи. Многонотные
+сообщения и слабоуверенные заметки проскакивали без проверки. Расширил
+ревью на заметки — единая UX, как у задач: keep/drop + правка названия и
+категории.
+
+**Бэкенд (`#TBD`).**
+- `app/bot/routers/_pipeline.py` — добавил `created_note_count`,
+  инкремент в `elif isinstance(row, Note)`, триггер теперь
+  `((tasks + notes) >= 2 or any_low_confidence)`.
+- `app/api/schemas.py` — `InboxReviewOut.notes: list[NoteOut] = []`,
+  `InboxConfirmIn.keep_note_ids: list[int] = []`.
+- `app/api/routers/inbox.py` — `/pending` параллельно тянет заметки
+  (`Note where source_inbox_id == entry.id`), join с `Category`,
+  переиспользует `_note_to_out`. `/confirm` симметрично soft-удаляет
+  неотмеченные заметки через `delete_note`. Запись попадает в выдачу
+  если есть **хотя бы что-то** из задач/заметок.
+- Тесты: +3 API (lists notes / drops unkept notes / back-compat) +1 e2e
+  (2 заметки → флаг ревью). 529 → **533**.
+
+**Фронт.**
+- `webapp/src/types.ts` — `InboxReview.notes: Note[]`.
+- `webapp/src/api/client.ts` — `confirmInbox(id, keepTaskIds, keepNoteIds)`,
+  всегда шлёт оба ключа.
+- `webapp/src/components/InboxReview.tsx` — секция «Заметки» под задачами
+  (если есть): чекбокс keep/drop + название (зачёркнуто когда не оставляем)
+  + опц. body-превью первой строки + чип категории (тап → `BottomSheetSelect`
+  → `patchNote`) + «Исправить» (textarea → `patchNote`). Никакого
+  приоритета/Разбить (у заметок нет). Счётчик «Оставлю N из M» и кнопка
+  «Подтвердить» учитывают сумму tasks + notes.
+
+**Гейты:** ruff/mypy/pytest (533) + webapp build — зелёные.
+
+---
+
 ## 2026-05-28 — chore: дроп мёртвой колонки `Task.needs_clarification`
 
 **Контекст.** В #149 убрал in-chat clarify-код, но саму колонку оставил

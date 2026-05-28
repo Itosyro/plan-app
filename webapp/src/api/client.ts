@@ -128,10 +128,10 @@ export const apiClient = {
     api<Note>(`/notes/${id}`, { method: "PATCH", body }),
   deleteNote: (id: number) => api<void>(`/notes/${id}`, { method: "DELETE" }),
   pendingInbox: () => api<InboxReview[]>("/inbox/pending"),
-  confirmInbox: (id: number, keepTaskIds: number[]) =>
+  confirmInbox: (id: number, keepTaskIds: number[], keepNoteIds: number[]) =>
     api<void>(`/inbox/${id}/confirm`, {
       method: "POST",
-      body: { keep_task_ids: keepTaskIds },
+      body: { keep_task_ids: keepTaskIds, keep_note_ids: keepNoteIds },
     }),
   trash: () => api<TrashItem[]>("/trash"),
   trashCounts: () => api<TrashCounts>("/trash/counts"),

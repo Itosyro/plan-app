@@ -175,4 +175,5 @@ export interface InboxReview {
   text: string | null;
   received_at: string;
   tasks: Task[];
+  notes: Note[];
 }

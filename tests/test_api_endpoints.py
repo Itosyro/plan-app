@@ -1053,6 +1053,128 @@ async def test_inbox_confirm_empty_keep_drops_all(
             assert task is not None and task.deleted_at is not None
 
 
+async def _seed_review_entry_with_notes(
+    user_id: int,
+    *,
+    n_tasks: int = 1,
+    n_notes: int = 2,
+    category_name: str | None = None,
+) -> tuple[int, list[int], list[int]]:
+    """Seed an inbox entry with both tasks and notes for review tests."""
+    async with session_scope() as session:
+        hor = await get_or_create_horizon(session, user_id, "today")
+        category_id: int | None = None
+        if category_name is not None:
+            cat = await get_or_create_category(session, user_id, category_name)
+            category_id = cat.id
+        entry = InboxEntry(
+            user_id=user_id,
+            kind="text",
+            raw_text="смешанная заметка и задача",
+            needs_review=True,
+        )
+        session.add(entry)
+        await session.flush()
+        task_ids: list[int] = []
+        for i in range(n_tasks):
+            task = Task(
+                user_id=user_id,
+                horizon_id=hor.id,
+                title=f"Задача {i + 1}",
+                priority="medium",
+                source_inbox_id=entry.id,
+            )
+            session.add(task)
+            await session.flush()
+            assert task.id is not None
+            task_ids.append(task.id)
+        note_ids: list[int] = []
+        for i in range(n_notes):
+            note = Note(
+                user_id=user_id,
+                title=f"Заметка {i + 1}",
+                body="тело",
+                category_id=category_id,
+                source_inbox_id=entry.id,
+            )
+            session.add(note)
+            await session.flush()
+            assert note.id is not None
+            note_ids.append(note.id)
+        assert entry.id is not None
+        return entry.id, task_ids, note_ids
+
+
+@pytest.mark.asyncio
+async def test_inbox_pending_lists_notes(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    entry_id, task_ids, note_ids = await _seed_review_entry_with_notes(
+        seeded, n_tasks=1, n_notes=2, category_name="Идеи"
+    )
+    resp = await aclient.get("/api/inbox/pending", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    review = body[0]
+    assert review["id"] == entry_id
+    assert {t["id"] for t in review["tasks"]} == set(task_ids)
+    assert {n["id"] for n in review["notes"]} == set(note_ids)
+    # Category name hydrated.
+    assert all(n["category_name"] == "Идеи" for n in review["notes"])
+
+
+@pytest.mark.asyncio
+async def test_inbox_confirm_drops_unkept_notes(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    entry_id, _task_ids, note_ids = await _seed_review_entry_with_notes(
+        seeded, n_tasks=0, n_notes=2
+    )
+    keep, drop = note_ids[0], note_ids[1]
+
+    resp = await aclient.post(
+        f"/api/inbox/{entry_id}/confirm",
+        headers=auth_headers,
+        json={"keep_task_ids": [], "keep_note_ids": [keep]},
+    )
+    assert resp.status_code == 204
+
+    async with session_scope() as session:
+        kept = await session.get(Note, keep)
+        dropped = await session.get(Note, drop)
+        entry = await session.get(InboxEntry, entry_id)
+        assert kept is not None and kept.deleted_at is None
+        assert dropped is not None and dropped.deleted_at is not None
+        assert entry is not None and entry.needs_review is False
+
+
+@pytest.mark.asyncio
+async def test_inbox_confirm_back_compat_no_keep_note_ids(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """Older clients that POST without ``keep_note_ids`` drop all notes
+    (default empty list = keep nothing) — mirrors current task semantics."""
+    entry_id, task_ids, note_ids = await _seed_review_entry_with_notes(seeded, n_tasks=1, n_notes=1)
+    resp = await aclient.post(
+        f"/api/inbox/{entry_id}/confirm",
+        headers=auth_headers,
+        json={"keep_task_ids": [task_ids[0]]},
+    )
+    assert resp.status_code == 204
+    async with session_scope() as session:
+        kept_task = await session.get(Task, task_ids[0])
+        note = await session.get(Note, note_ids[0])
+        assert kept_task is not None and kept_task.deleted_at is None
+        assert note is not None and note.deleted_at is not None
+
+
 @pytest.mark.asyncio
 async def test_inbox_confirm_rejects_other_user(
     aclient: httpx.AsyncClient,

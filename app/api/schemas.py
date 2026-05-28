@@ -284,6 +284,7 @@ class InboxReviewOut(_ConfiguredModel):
     text: str | None = None
     received_at: datetime
     tasks: list[TaskOut] = []
+    notes: list[NoteOut] = []
 
 
 class InboxConfirmIn(BaseModel):
@@ -297,6 +298,7 @@ class InboxConfirmIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     keep_task_ids: list[int] = Field(default_factory=list)
+    keep_note_ids: list[int] = Field(default_factory=list)
 
 
 # ── /api/trash ───────────────────────────────────────────────────────

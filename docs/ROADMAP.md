@@ -94,7 +94,7 @@
 > + кнопка `[➡️ Ещё]` пагинация + голосовой `cancel_reminder` с
 > локальными временами и склонением.
 >
-> **529 тестов**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
+> **533 теста**, ruff/mypy clean, https://plan-app-t6nx.onrender.com .
 >
 > Все critical (C-1..C-6) и important (I-1..I-8) findings из
 > `docs/REVIEW-2026-05-09-v2.md` — закрыты.
