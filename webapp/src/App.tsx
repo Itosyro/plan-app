@@ -25,6 +25,7 @@ import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
 import { NotesList } from "./components/NotesList";
 import { LayoutSheet } from "./components/LayoutSheet";
+import { SkeletonAppShell } from "./components/Skeleton";
 import { TaskCard } from "./components/TaskCard";
 import { localDateKey } from "./lib/format";
 
@@ -620,11 +621,11 @@ export default function App() {
   );
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-tg-hint">
-        Загружаем…
-      </div>
-    );
+    // Show the future shell (header + horizon tabs + task cards) as
+    // outlines instantly. The user sees structure on the first frame
+    // instead of a centred "Загружаем…", and the real layout drops in
+    // without a shift when the API resolves.
+    return <SkeletonAppShell />;
   }
 
   if (authError) {

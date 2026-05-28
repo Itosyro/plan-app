@@ -10,6 +10,7 @@ import { haptic } from "../lib/telegram";
 import type { Note } from "../types";
 import { EmptyState } from "./EmptyState";
 import { NoteCard } from "./NoteCard";
+import { SkeletonList } from "./Skeleton";
 
 interface Props {
   /**
@@ -89,9 +90,7 @@ export function NotesList({ refreshSignal, optimisticDelete, onOpen }: Props) {
   }, [notes, query]);
 
   if (notes === null) {
-    return (
-      <div className="py-10 text-center text-sm text-tg-hint">Загружаем…</div>
-    );
+    return <SkeletonList rows={5} kind="note" />;
   }
 
   if (error !== null && notes.length === 0) {

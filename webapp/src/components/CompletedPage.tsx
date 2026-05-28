@@ -14,6 +14,7 @@ import { navigateHome } from "../lib/router";
 import { localDateKey } from "../lib/format";
 import type { Task } from "../types";
 import { IconTile } from "./IconTile";
+import { SkeletonList } from "./Skeleton";
 
 interface Props {
   tz: string;
@@ -97,7 +98,11 @@ export function CompletedPage({ tz }: Props) {
         <h2 className="text-[17px] font-semibold text-tg-text">Выполненные</h2>
       </div>
 
-      {loading && <p className="px-4 text-sm text-tg-hint">Загрузка…</p>}
+      {loading && (
+        <div className="px-4">
+          <SkeletonList rows={4} kind="task" />
+        </div>
+      )}
 
       {!loading && tasks.length === 0 && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
