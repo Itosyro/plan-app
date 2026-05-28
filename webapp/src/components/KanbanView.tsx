@@ -35,6 +35,8 @@ const KANBAN_CACHE_KEY = "kanban-tasks";
 interface Props {
   categories: Category[];
   refreshSignal: number;
+  /** Optimistic drop payload: move one card to a column in place. */
+  optimisticMove?: { id: number; categoryId: number | null; nonce: number } | null;
   onOpen: (id: number) => void;
   onDone: (id: number) => Promise<void> | void;
   onCreateCategory: (name: string) => Promise<void> | void;
@@ -43,6 +45,7 @@ interface Props {
 export function KanbanView({
   categories,
   refreshSignal,
+  optimisticMove,
   onOpen,
   onDone,
   onCreateCategory,
@@ -66,6 +69,20 @@ export function KanbanView({
       cancelled = true;
     };
   }, [refreshSignal]);
+
+  // Apply an optimistic drop the instant App.tsx resolves it — the card
+  // re-buckets into the target column with no refetch. Keyed on ``nonce``
+  // so re-dropping the same card onto the same column re-fires. Cache is
+  // kept in sync so navigating away and back doesn't show the stale spot.
+  useEffect(() => {
+    if (!optimisticMove) return;
+    const { id, categoryId } = optimisticMove;
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === id ? { ...t, category_id: categoryId } : t));
+      setCache(KANBAN_CACHE_KEY, next);
+      return next;
+    });
+  }, [optimisticMove?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Group open tasks by category. Columns follow the categories prop
   // order; uncategorized tasks land in the trailing "Без категории".

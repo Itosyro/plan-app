@@ -125,6 +125,19 @@ export default function App() {
   const [notesRefresh, setNotesRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
+  // Optimistic drag payloads: dispatched the instant a drop resolves so
+  // the board/calendar move the card in place (no full refetch flash).
+  // The bumped ``nonce`` is what the child effect keys on.
+  const [boardOptimistic, setBoardOptimistic] = useState<{
+    id: number;
+    categoryId: number | null;
+    nonce: number;
+  } | null>(null);
+  const [calendarOptimistic, setCalendarOptimistic] = useState<{
+    id: number;
+    dueAt: string;
+    nonce: number;
+  } | null>(null);
   // «Входящие» pending-review count for the nav badge.
   const [inboxCount, setInboxCount] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
@@ -449,15 +462,15 @@ export default function App() {
   );
 
   // Kanban drop: re-assign the task's category (null = "Без категории"
-  // column). The board owns its own task list, so we just patch + bump
-  // ``boardRefresh`` to re-pull every column.
+  // column). Move the card in place optimistically, then patch. Only on
+  // failure do we bump ``boardRefresh`` to refetch and revert.
   const handleSetCategory = useCallback(
     async (id: number, categoryId: number | null) => {
+      setBoardOptimistic({ id, categoryId, nonce: Date.now() });
       try {
         await apiClient.patchTask(id, { category_id: categoryId });
         void loadCounts();
         void refreshCategories();
-        setBoardRefresh((n) => n + 1);
       } catch (err) {
         setBoardRefresh((n) => n + 1);
         console.error("set category failed", err);
@@ -518,9 +531,11 @@ export default function App() {
 
   const handleReschedule = useCallback(
     async (id: number, dueAtIso: string) => {
+      // Shift the event onto the target day in place; refetch only on
+      // failure to revert.
+      setCalendarOptimistic({ id, dueAt: dueAtIso, nonce: Date.now() });
       try {
         await apiClient.patchTask(id, { due_at: dueAtIso });
-        setCalendarRefresh((n) => n + 1);
         void loadCounts();
       } catch (err) {
         console.error("reschedule failed", err);
@@ -786,6 +801,7 @@ export default function App() {
               <KanbanView
                 categories={categories}
                 refreshSignal={boardRefresh}
+                optimisticMove={boardOptimistic}
                 onOpen={handleOpenTask}
                 onDone={handleDone}
                 onCreateCategory={handleCreateCategoryColumn}
@@ -852,6 +868,7 @@ export default function App() {
           <CalendarView
             tz={tz}
             refreshSignal={calendarRefresh}
+            optimisticReschedule={calendarOptimistic}
             onOpen={handleOpenTask}
           />
         ) : activeTab === "inbox" ? (
