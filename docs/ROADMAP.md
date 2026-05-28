@@ -110,9 +110,10 @@
 >   на Render (юзер должен сделать).
 >
 > **Что осталось (см. секцию «Next Up» внизу для приоритетов):**
-> - **Bot-рендер дерева подзадач** — после #108 дети есть в БД, но
->   в чате classifier-summary показывает только родителя. Нужен
->   Unicode-tree (◯/●) и опциональный «свернуть/развернуть».
+> - **Опциональная «свернуть/развернуть» subtask-tree в чате** — сам
+>   Unicode-tree уже рендерится в `courier.py::render_subtask_tree`
+>   после #108; можно добавить кнопку, чтобы пользователь сворачивал
+>   длинные деревья. Низкий приоритет.
 > - **Phase 7d** — ✅ в основном закрыта: детальный API с подзадачами
 >   (#108), вкладка «Календарь» месячной сеткой (#116), drag-n-drop
 >   задач по дням календаря (#117), канбан-доска по горизонтам (#118),
@@ -123,7 +124,9 @@
 >   задачи по мере прохождения пайплайна. Следующая крупная веха.
 > - **Rate limiting + API versioning** — из security-ревью, отложено
 >   на отдельную hardening-волну.
-> - **Архивация старых HANDOFF** в `docs/archive/` — гигиена.
+> - ✅ ~~**Архивация старых HANDOFF**~~ — 20 файлов v1..v20 переехали в
+>   `docs/archive/`; в `docs/` остался актуальный v21 + общий
+>   `HANDOFF.md`.
 > - **Phase 5.5** (FullCalendar) — полу-готовая ветка
 >   `devin/*-phase5-5-calendar`.
 > - **PR-H Critic refinement** — multi-stage critic, golden-set,
@@ -135,10 +138,12 @@
 >   `[Подтвердить]` (#146), `[Исправить]` названия (#150), правкой
 >   категории/приоритета (#152), выключателем в /settings (#153) и
 >   ИИ-`[Разбить]` (#155).
-> - **`TaskEvent` для cancel-reminders** — отложенный долг из PR-J.
-> - **Windows TZ-bug fix** — `utcnow_naive().timestamp()` на naive
->   datetime ломает 40 API-тестов на Windows (на Linux/TZ=UTC чисто).
->   Mini-PR ~30 LOC.
+> - ✅ ~~**`TaskEvent` для cancel-reminders**~~ — закрыто; и одиночный
+>   `cancel_reminder`, и пакетный `cancel_task_reminders` пишут
+>   `TaskEvent(kind="reminder_cancelled", payload_json={"reminder_id", "fire_at", "scope"})`.
+> - ✅ ~~**Windows TZ-bug fix**~~ — закрыто; `utcnow_naive()` теперь
+>   правильно навешивает UTC перед `.timestamp()` (см.
+>   `app/shared/time.py`).
 > - **Excel export/import** + table-classifier — отдельная фаза.
 > - **Phase 8 (Graph view, Obsidian-style)** — future.
 > - Phase 7 polish (наблюдаемость + эвалы) — частично (structlog ✓,
@@ -561,11 +566,9 @@ Mode / Biometric auth) — **отложены явно, не приоритет�
 > сделанные пункты вычеркнуты, открытые сохранены.
 
 ### P0 — гигиена и долги
-1. **Windows TZ-bug fix** — `app/shared/time.py::utcnow_naive().timestamp()`
-   на naive datetime интерпретируется как local на Windows. Падает 40
-   тестов локально без `TZ=UTC`. На Linux/Render маскируется.
-   ~30 LOC, нужно правильно считать epoch через `datetime.now(UTC).timestamp()`.
-2. **`TaskEvent` для cancel-reminders** — отложенный долг PR-J.
+1. ✅ ~~**Windows TZ-bug fix**~~ — закрыто, см. `app/shared/time.py`.
+2. ✅ ~~**`TaskEvent` для cancel-reminders**~~ — закрыто, аудит-события
+   эмитятся в обоих путях отмены.
    Audit-история reminder-изменений.
 
 ### P1 — продуктовое

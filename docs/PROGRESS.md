@@ -6,6 +6,26 @@
 
 ---
 
+## 2026-05-28 — chore: archival + ROADMAP truth-up
+
+**Контекст.** В ROADMAP-секции «Что осталось» накопились stale-пункты,
+которые уже сделаны (`TaskEvent` для cancel-reminders, Windows TZ-bug,
+Bot-рендер subtask-tree). Плюс 21 HANDOFF файл лежал в `docs/` —
+гигиена давно просилась.
+
+**Сделано.**
+- `docs/archive/` — заведено; **20** старых HANDOFF (v1..v20) переехали
+  туда; в `docs/` остались актуальный `v21` + `HANDOFF.md`. Ссылка
+  v21 → v20 обновлена на `docs/archive/...`.
+- `docs/ROADMAP.md` — вычеркнул всё, что де-факто закрыто:
+  `TaskEvent для cancel-reminders` (✅, уже эмитятся события в обоих
+  путях отмены), `Windows TZ-bug fix` (✅, починено в `app/shared/time.py`),
+  `Bot-рендер дерева подзадач` (✅, рендерится `courier.py::render_subtask_tree`).
+
+**Кода не правил**, гейты остались зелёными.
+
+---
+
 ## 2026-05-28 — feat: заметки во «Входящих» (ревью покрывает и notes)
 
 **Контекст.** «Входящие» (вариант Б) флагали `needs_review` только по
