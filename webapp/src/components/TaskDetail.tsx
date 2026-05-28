@@ -214,13 +214,13 @@ export function TaskDetail({
       </header>
 
       {loadError && (
-        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200 animate-fade-in">
           {loadError}
         </div>
       )}
 
       {saveError && (
-        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200 animate-fade-in">
           {saveError}
         </div>
       )}
@@ -253,7 +253,7 @@ export function TaskDetail({
               disabled={pending === "title"}
             />
             {task.title_original && (
-              <div className="mt-2 border-t border-tg-hint/10 pt-2">
+              <div className="mt-2 border-t border-tg-hint/10 pt-2 animate-fade-in">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
                   Изначально
                 </div>
@@ -289,7 +289,7 @@ export function TaskDetail({
           </section>
 
           {task.subtasks.length > 0 && (
-            <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
+            <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5 animate-fade-in">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
                   Подзадачи

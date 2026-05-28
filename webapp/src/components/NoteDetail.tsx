@@ -185,13 +185,13 @@ export function NoteDetail({
       </header>
 
       {loadError && (
-        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200 animate-fade-in">
           {loadError}
         </div>
       )}
 
       {saveError && (
-        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200">
+        <div className="rounded-3xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-200 animate-fade-in">
           {saveError}
         </div>
       )}
@@ -270,7 +270,7 @@ export function NoteDetail({
                 setConfirmDelete(true);
               }}
               disabled={pending === "delete"}
-              className="ease-apple mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[15px] font-medium text-rose-700 transition-all duration-200 active:scale-[0.97] disabled:opacity-60 dark:text-rose-300"
+              className="ease-apple mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[15px] font-medium text-rose-700 transition-all duration-200 active:scale-[0.97] disabled:opacity-60 dark:text-rose-300 animate-fade-in"
             >
               <Trash2 size={16} strokeWidth={2.25} aria-hidden />
               Удалить заметку

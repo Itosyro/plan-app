@@ -55,7 +55,7 @@ export function Header({
           {title}
         </h1>
         {subtitle && (
-          <p className="mt-0.5 truncate text-[13px] text-tg-hint">{subtitle}</p>
+          <p className="mt-0.5 truncate text-[13px] text-tg-hint animate-fade-in">{subtitle}</p>
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
