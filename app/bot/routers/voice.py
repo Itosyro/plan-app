@@ -124,6 +124,14 @@ def create_router() -> Router:
         from_user_id = message.from_user.id
         msg_id = message.message_id
 
+        async def _on_stage(stage_text: str) -> None:
+            # Live-draft progress ping (mirrors the text router).
+            # Best-effort: a failed edit must never break the pipeline.
+            try:
+                await placeholder.edit_text(stage_text)
+            except Exception:
+                logger.debug("pipeline.stage_edit_failed", exc_info=True)
+
         async def _background() -> None:
             try:
                 audio_bytes = await _download_voice(message)
@@ -178,6 +186,7 @@ def create_router() -> Router:
                     evening_anchor=evening_anchor,
                     concretize_tasks=concretize_tasks,
                     review_enabled=review_enabled,
+                    on_stage=_on_stage,
                 )
                 await stream_reply(
                     placeholder,

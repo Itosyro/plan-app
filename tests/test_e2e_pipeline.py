@@ -23,6 +23,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
 from app.bot.routers._pipeline import (
+    _plural_ru,
     run_pipeline,
 )
 from app.bot.services import get_or_create_category, get_or_create_user
@@ -906,3 +907,106 @@ async def test_e2e_classifier_receives_user_existing_categories(
     assert "existing_categories: []" not in body, (
         "classifier still receives empty user_categories — R-NEW-C-4 not fixed"
     )
+
+
+# ── live-draft: on_stage progress callback ───────────────────────────
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_on_stage_called_once_for_multi_unit(session: AsyncSession) -> None:
+    """Two create-units → ``on_stage`` fires exactly once, before classify,
+    with a «Нашёл 2» live-draft progress string."""
+    user, _ = await get_or_create_user(session, telegram_id=320)
+    await session.commit()
+    assert user.id is not None
+
+    tracker = _CallTracker(
+        [
+            _intent_response("create"),
+            _splitter_response([{"text": "купить хлеб"}, {"text": "записаться к врачу"}]),
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _intent_response("create"),  # PR-I3: per-unit intent
+            _classifier_response(_cr_dict(category="Покупки", title="Купить хлеб")),
+            _classifier_response(
+                _cr_dict(category="Здоровье", horizon="week", title="Записаться к врачу")
+            ),
+        ]
+    )
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        side_effect=tracker.side_effect
+    )
+
+    stages: list[str] = []
+
+    async def on_stage(message: str) -> None:
+        stages.append(message)
+
+    text, _keyboard = await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "купить хлеб, записаться к врачу",
+        tg_user_id=320,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=None,
+        courier_mode="template_only",
+        on_stage=on_stage,
+    )
+
+    assert text  # pipeline ran to completion
+    assert len(stages) == 1
+    assert "Нашёл 2" in stages[0]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_e2e_on_stage_not_called_for_single_unit(session: AsyncSession) -> None:
+    """A single create-unit is fast enough that no live-draft ping is
+    emitted — ``on_stage`` is never invoked."""
+    user, _ = await get_or_create_user(session, telegram_id=321)
+    await session.commit()
+    assert user.id is not None
+
+    tracker = _CallTracker(
+        [
+            _intent_response("create"),
+            _splitter_response([{"text": "утром пробежка"}]),
+            _classifier_response(
+                _cr_dict(category="Здоровье", horizon="today", title="Утренняя пробежка")
+            ),
+        ]
+    )
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        side_effect=tracker.side_effect
+    )
+
+    stages: list[str] = []
+
+    async def on_stage(message: str) -> None:
+        stages.append(message)
+
+    text, _keyboard = await run_pipeline(
+        GroqKeyRouter(keys=_FAKE_KEYS),
+        "утром пробежка",
+        tg_user_id=321,
+        user_id=user.id,
+        user_tz="Europe/Moscow",
+        inbox_id=None,
+        courier_mode="template_only",
+        on_stage=on_stage,
+    )
+
+    assert text  # pipeline ran to completion
+    assert stages == []
+
+
+# ── unit: Russian pluralization helper ───────────────────────────────
+
+
+def test_plural_ru() -> None:
+    """``_plural_ru`` picks the correct Russian plural form for a count."""
+    assert _plural_ru(1, "пункт", "пункта", "пунктов") == "пункт"
+    assert _plural_ru(2, "пункт", "пункта", "пунктов") == "пункта"
+    assert _plural_ru(5, "пункт", "пункта", "пунктов") == "пунктов"
+    assert _plural_ru(11, "пункт", "пункта", "пунктов") == "пунктов"
+    assert _plural_ru(22, "пункт", "пункта", "пунктов") == "пункта"

@@ -127,6 +127,15 @@ def create_router() -> Router:
             reply_parameters=reply_to(chat_id=chat_id, message_id=user_message_id),
         )
 
+        async def _on_stage(stage_text: str) -> None:
+            # Live-draft: edit the placeholder with a progress line while
+            # the pipeline works. Best-effort — a failed edit (429/no-op)
+            # must never break the pipeline.
+            try:
+                await placeholder.edit_text(stage_text)
+            except Exception:
+                logger.debug("pipeline.stage_edit_failed", exc_info=True)
+
         async def _background() -> None:
             try:
                 reply, keyboard = await run_pipeline(
@@ -145,6 +154,7 @@ def create_router() -> Router:
                     evening_anchor=evening_anchor,
                     concretize_tasks=concretize_tasks,
                     review_enabled=review_enabled,
+                    on_stage=_on_stage,
                 )
                 await stream_reply(
                     placeholder,

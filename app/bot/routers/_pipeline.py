@@ -23,6 +23,7 @@ descriptors, and trip the rate-limiter for every other user.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from aiogram.types import InlineKeyboardMarkup
 from sqlmodel import select
@@ -147,6 +148,24 @@ def log_task_exception(task: asyncio.Task[object]) -> None:
 
 PipelineReply = tuple[str, InlineKeyboardMarkup | None]
 
+# Callback the router supplies to receive progressive status updates while
+# the pipeline runs (live-draft). Best-effort: the pipeline never blocks
+# on it and swallows nothing — the router decides how to render (edit the
+# placeholder). ``None`` disables progress reporting.
+StageCallback = Callable[[str], Awaitable[None]]
+
+
+def _plural_ru(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural for a count: 1 пункт, 2 пункта, 5 пунктов."""
+    if 11 <= (n % 100) <= 14:
+        return many
+    last = n % 10
+    if last == 1:
+        return one
+    if 2 <= last <= 4:
+        return few
+    return many
+
 
 async def run_pipeline(
     groq_router: GroqKeyRouter,
@@ -165,6 +184,7 @@ async def run_pipeline(
     evening_anchor: str = "19:00",
     concretize_tasks: bool = False,
     review_enabled: bool = True,
+    on_stage: StageCallback | None = None,
 ) -> PipelineReply:
     """Detect reorder or run split → time → classify → critic → persist → reply.
 
@@ -206,6 +226,7 @@ async def run_pipeline(
             evening_anchor=evening_anchor,
             concretize_tasks=concretize_tasks,
             review_enabled=review_enabled,
+            on_stage=on_stage,
         )
 
 
@@ -226,8 +247,19 @@ async def _run_pipeline_inner(
     evening_anchor: str = "19:00",
     concretize_tasks: bool = False,
     review_enabled: bool = True,
+    on_stage: StageCallback | None = None,
 ) -> PipelineReply:
     """Inner pipeline body, called only while both semaphores are held."""
+
+    async def _emit_stage(text: str) -> None:
+        """Best-effort progress ping — never let it break the pipeline."""
+        if on_stage is None:
+            return
+        try:
+            await on_stage(text)
+        except Exception:
+            logger.debug("pipeline.stage_emit_failed", exc_info=True)
+
     # PR-I1: detect edit intent before falling through to create-path.
     # detect_intent and split_message both call the 8b model on the raw
     # text and don't depend on each other, so run them concurrently — this
@@ -278,6 +310,14 @@ async def _run_pipeline_inner(
     if not create_units:
         # All units were edits — return combined replies.
         return "\n".join(edit_replies), None
+
+    # Live-draft: for multi-item messages, tell the user what we found
+    # before the slower classify+critic pass runs. Single-item messages
+    # are fast enough that an extra edit would just be noise — skip them.
+    create_count = len(create_units)
+    if create_count >= 2:
+        word = _plural_ru(create_count, "пункт", "пункта", "пунктов")
+        await _emit_stage(f"✍️ Нашёл {create_count} {word}, раскладываю по полочкам…")
 
     # Resolve time for each remaining create-unit (pure Python, fast)
     resolved_list: list[ResolvedTime | None] = [
