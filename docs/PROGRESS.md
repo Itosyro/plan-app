@@ -6,6 +6,39 @@
 
 ---
 
+## 2026-05-29 — feat: глобальный поиск по задачам
+
+**Контекст.** В заметках был клиентский поиск, в задачах — никакого.
+Найти задачу можно было только глазами или переключая горизонты/фильтры.
+
+**Сделано (backend).**
+- `GET /api/tasks` — параметр `q` (1..200 символов). Case-insensitive
+  substring по `title` / `description` / `title_original` через
+  `lower(col) LIKE lower(needle)` (Postgres и SQLite ведут себя
+  одинаково для ASCII; для Cyrillic в проде работает Postgres-`lower`,
+  тесты подтверждают это lowercase-cyrillic кейсом). SQL-wildcards
+  (`%` / `_`) в needle экранируются — `50%` ищет литерально.
+- Тест `test_tasks_list_search_q` — три кейса (Cyrillic match,
+  ASCII case-insensitive, экранирование wildcard).
+
+**Сделано (frontend).**
+- `components/SearchOverlay.tsx` — full-screen sheet с автофокусом
+  input, debounced (200ms) запросом, dropping stale responses через
+  seq-cursor, подсветкой совпавшего фрагмента в названии. Esc и стрелка
+  «назад» закрывают. Минимум 2 символа до запроса (избегаем
+  лишних round-trip'ов на одиночные буквы). Lazy-chunk, prefetch
+  в idle. Skeleton-плейсхолдер во время загрузки.
+- `Header.tsx` — новая иконка 🔍 рядом с фильтром/раскладкой. Показ
+  условный (только на вкладке «Задачи»).
+- `App.tsx` — состояние `showSearch`, проброшен `onOpenSearch` в
+  Header, overlay рендерится поверх через Suspense.
+- `apiClient.tasks` — новое поле `q?: string` в типе query.
+
+**Гейты.** ruff/mypy/pytest — 538 passed. webapp `tsc` + `build`
+зелёные (SearchOverlay вышел отдельным lazy-чанком).
+
+---
+
 ## 2026-05-29 — infra: переезд прод-БД с Neon на Render Postgres
 
 **Контекст.** Прод лёг: внешняя Neon-БД исчерпала free compute-квоту

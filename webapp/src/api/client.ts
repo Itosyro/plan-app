@@ -115,6 +115,7 @@ export const apiClient = {
     limit?: number;
     due_at_from?: string;
     due_at_to?: string;
+    q?: string;
   }) => api<Task[]>("/tasks", { query: q }),
   taskCounts: () => api<TaskCounts>("/tasks/counts"),
   task: (id: number) => api<TaskDetail>(`/tasks/${id}`),

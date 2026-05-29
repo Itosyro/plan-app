@@ -40,6 +40,7 @@ const importSettingsPage = () => import("./components/SettingsPage");
 const importInboxReview = () => import("./components/InboxReview");
 const importTrashPage = () => import("./components/TrashPage");
 const importCompletedPage = () => import("./components/CompletedPage");
+const importSearchOverlay = () => import("./components/SearchOverlay");
 
 const TaskDetail = lazy(() =>
   importTaskDetail().then((m) => ({ default: m.TaskDetail })),
@@ -58,6 +59,9 @@ const TrashPage = lazy(() =>
 );
 const CompletedPage = lazy(() =>
   importCompletedPage().then((m) => ({ default: m.CompletedPage })),
+);
+const SearchOverlay = lazy(() =>
+  importSearchOverlay().then((m) => ({ default: m.SearchOverlay })),
 );
 
 function ScreenFallback() {
@@ -147,6 +151,7 @@ export default function App() {
   const [inboxCount, setInboxCount] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
   const [showLayoutSheet, setShowLayoutSheet] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   // Phase 7e/F1: «Раскладка» toggle — show/hide done tasks in the list.
   const [showCompleted, setShowCompleted] = useState(true);
   // Phase 7e/F2: «Раскладка» list grouping / sorting / filtering. One blob
@@ -280,6 +285,7 @@ export default function App() {
       void importInboxReview();
       void importTrashPage();
       void importCompletedPage();
+      void importSearchOverlay();
     };
     const ric = window.requestIdleCallback;
     if (ric) {
@@ -805,6 +811,14 @@ export default function App() {
           filterLabel={activeFilterLabel}
           onOpenFilter={() => setShowCategorySheet(true)}
           onOpenLayout={() => setShowLayoutSheet(true)}
+          onOpenSearch={
+            activeTab === "tasks"
+              ? () => {
+                  haptic("select");
+                  setShowSearch(true);
+                }
+              : undefined
+          }
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
         />
@@ -952,6 +966,15 @@ export default function App() {
       <DragOverlay dropAnimation={null}>
         {activeDragTask ? <KanbanCardView task={activeDragTask} overlay /> : null}
       </DragOverlay>
+      {showSearch && (
+        <Suspense fallback={null}>
+          <SearchOverlay
+            tz={tz}
+            onClose={() => setShowSearch(false)}
+            onOpen={handleOpenTask}
+          />
+        </Suspense>
+      )}
     </DndContext>
   );
 }

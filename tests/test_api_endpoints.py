@@ -441,6 +441,59 @@ async def test_tasks_list_filtered_by_due_at_range(
 
 
 @pytest.mark.asyncio
+async def test_tasks_list_search_q(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``q`` filters case-insensitively across title / description / title_original.
+
+    Note: SQLite's ``lower()`` is ASCII-only, so we seed with lowercase
+    Cyrillic and use a lowercase Cyrillic query — that matches the actual
+    Postgres-prod behaviour without depending on a Cyrillic case-fold
+    that only Postgres provides. ASCII case-insensitivity is checked in
+    a second assertion that works in both engines.
+    """
+    async with session_scope() as session:
+        session.add(Task(user_id=seeded, title="Купить хлеб", priority="medium"))
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Поход в магазин",
+                description="взять молоко и хлеб",
+                priority="medium",
+            )
+        )
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Помыть посуду",
+                title_original="посуда + хлеб на доске",
+                priority="medium",
+            )
+        )
+        session.add(Task(user_id=seeded, title="Гулять с собакой", priority="medium"))
+        session.add(Task(user_id=seeded, title="Call Bob", priority="medium"))
+        await session.flush()
+
+    # Cyrillic substring matches title, description, and title_original.
+    resp = await aclient.get("/api/tasks?q=хлеб", headers=auth_headers)
+    assert resp.status_code == 200
+    titles = {row["title"] for row in resp.json()}
+    assert titles == {"Купить хлеб", "Поход в магазин", "Помыть посуду"}
+
+    # ASCII case-insensitivity works in both engines.
+    resp = await aclient.get("/api/tasks?q=BOB", headers=auth_headers)
+    assert resp.status_code == 200
+    assert [row["title"] for row in resp.json()] == ["Call Bob"]
+
+    # Wildcards must be treated as literal characters (escape worked).
+    resp = await aclient.get("/api/tasks?q=%25", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
 async def test_tasks_unknown_horizon_empty(
     aclient: httpx.AsyncClient,
     seeded: int,

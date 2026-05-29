@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -89,6 +89,12 @@ async def list_tasks(
     status_filter: str | None = Query(default=None, alias="status"),
     due_at_from: datetime | None = Query(None, description="Inclusive lower bound on due_at."),
     due_at_to: datetime | None = Query(None, description="Exclusive upper bound on due_at."),
+    q: str | None = Query(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Case-insensitive substring search over title / description / title_original.",
+    ),
     include_done: bool = Query(default=False),
     include_subtasks: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
@@ -99,6 +105,9 @@ async def list_tasks(
       yield an empty list so the Mini-App never crashes on a stale tab.
     * ``category_id`` — only tasks with this category.
     * ``status`` — exact status match (overrides ``include_done``).
+    * ``q`` — case-insensitive substring match across ``title``,
+      ``description`` and ``title_original``. SQL wildcards (`%`/`_`) in
+      the needle are escaped so they're treated as literal characters.
     * ``include_done`` — when no ``status`` is set, controls whether
       completed tasks are returned. Default ``False`` matches the
       Russian inbox semantics (done tasks live in archive, not list).
@@ -135,6 +144,24 @@ async def list_tasks(
             stmt = stmt.where(Task.due_at >= due_at_from)  # type: ignore[operator]
         if due_at_to is not None:
             stmt = stmt.where(Task.due_at < due_at_to)  # type: ignore[operator]
+
+        if q is not None:
+            # Case-insensitive substring match. We use ``lower(col) LIKE
+            # lower(needle)`` instead of ``ilike`` so case-folding is
+            # consistent across Postgres (prod) and SQLite (tests) —
+            # SQLite's default ILIKE folds only ASCII, which would miss
+            # uppercase Cyrillic. SQL wildcards in the user's needle are
+            # escaped so ``50%`` matches the literal string.
+            needle = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            if needle:
+                pattern = f"%{needle.lower()}%"
+                stmt = stmt.where(
+                    or_(
+                        func.lower(Task.title).like(pattern, escape="\\"),
+                        func.lower(Task.description).like(pattern, escape="\\"),
+                        func.lower(Task.title_original).like(pattern, escape="\\"),
+                    )
+                )
 
         if status_filter is not None:
             if status_filter not in _TASK_STATUSES:
