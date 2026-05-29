@@ -5,6 +5,7 @@ import { haptic } from "../lib/telegram";
 import { navigateHome } from "../lib/router";
 import type { TrashItem } from "../types";
 import { IconTile } from "./IconTile";
+import { SkeletonList } from "./Skeleton";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso + "Z").getTime();
@@ -80,7 +81,9 @@ export function TrashPage() {
       </div>
 
       {loading && (
-        <p className="px-4 text-sm text-tg-hint">Загрузка…</p>
+        <div className="px-4">
+          <SkeletonList rows={4} kind="task" />
+        </div>
       )}
 
       {!loading && items.length === 0 && (

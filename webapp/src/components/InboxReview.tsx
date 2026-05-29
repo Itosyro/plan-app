@@ -13,6 +13,7 @@ import { haptic } from "../lib/telegram";
 import type { Category, InboxReview as Review, Note, Task, TaskPriority } from "../types";
 import { BottomSheetSelect } from "./BottomSheetSelect";
 import { EmptyState } from "./EmptyState";
+import { SkeletonInboxList } from "./Skeleton";
 
 interface Props {
   tz: string;
@@ -305,7 +306,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
   );
 
   if (reviews === null) {
-    return <div className="py-10 text-center text-sm text-tg-hint">Загружаем…</div>;
+    return <SkeletonInboxList rows={3} />;
   }
 
   if (error !== null && reviews.length === 0) {

@@ -6,6 +6,37 @@
 
 ---
 
+## 2026-05-28 — ux: skeleton-плейсхолдеры на холодных загрузках
+
+**Контекст.** На первом заходе во вкладку без SWR-кэша экран
+показывал пустоту → центрированное «Загружаем…» → резким прыжком
+появлялся контент. Это сильнее всего било по первому впечатлению
+после открытия Mini-App.
+
+**Сделано (frontend).**
+- `components/Skeleton.tsx` — общий набор скелетонов:
+  `SkeletonLine`, `SkeletonTaskCard`, `SkeletonNoteCard`,
+  `SkeletonList` (task/note), `SkeletonInboxList`,
+  `SkeletonAppShell`. Формы совпадают с реальными карточками
+  (тот же `rounded-2xl`, `bg-bento-card`, `shadow-bento`,
+  `ring-1 ring-black/5`) — когда данные приходят, layout не
+  дёргается. Пульс через Tailwind `animate-pulse`, reduced-motion
+  глобально его отключает.
+- Подключено в местах с холодным гейтом:
+  - `App.tsx` — boot-гейт (`loading === true`) → `SkeletonAppShell`
+    (хедер + горизонт-табы + 4 карточки).
+  - `NotesList` (`notes === null`) → `SkeletonList kind="note"`.
+  - `InboxReview` (`reviews === null`) → `SkeletonInboxList`.
+  - `CompletedPage`, `TrashPage` (loading flag) → `SkeletonList`.
+
+**Эффект.** На первом кадре пользователь видит готовую структуру
+будущего экрана; реальный контент проявляется поверх без визуального
+рывка.
+
+**Гейты.** webapp `tsc` + `build` — зелёные.
+
+---
+
 ## 2026-05-28 — ux: оптимистичное удаление заметки из детали
 
 **Контекст.** В `NoteDetail` удаление было блокирующим (как раньше в
