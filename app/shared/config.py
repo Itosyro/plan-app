@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     )
     critic_default_mode: Literal["confidence", "paranoid"] = "confidence"
 
+    # Per-stage model overrides. ``None`` → use the registry default
+    # (see ``app/ai/models.py``). Set these to roll a new model in
+    # production without a deploy — e.g. point ``GROQ_MODEL_CLASSIFIER``
+    # at a stronger or cheaper ID. When OpenRouter keys are wired in,
+    # the same hooks can pin individual stages to OpenRouter IDs.
+    groq_model_whisper: str | None = None
+    groq_model_splitter: str | None = None
+    groq_model_intent: str | None = None
+    groq_model_reorder: str | None = None
+    groq_model_courier: str | None = None
+    groq_model_task_splitter: str | None = None
+    groq_model_classifier: str | None = None
+    groq_model_critic: str | None = None
+
     # Phase 4 — in-process scheduler (used on Render free tier instead of a
     # standalone cron service).
     scheduler_inproc_enabled: bool = True

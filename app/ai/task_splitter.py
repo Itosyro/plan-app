@@ -16,12 +16,11 @@ from groq import AsyncGroq
 from pydantic import BaseModel, Field
 
 from app.ai._safety import wrap_untrusted
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-SPLITTER_MODEL = "llama-3.1-8b-instant"
 
 # Hard cap on suggested subtasks — mirrors ``_persist_subtasks`` in
 # ``app.bot.services.tasks``. The prompt and schema both enforce this,
@@ -73,7 +72,7 @@ async def split_task_to_subtasks(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=SPLITTER_MODEL,
+            model=get_models().task_splitter,
             response_model=TaskSplitResult,
             messages=[
                 {"role": "system", "content": system_prompt},

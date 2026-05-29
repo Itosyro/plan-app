@@ -6,6 +6,41 @@
 
 ---
 
+## 2026-05-29 — refactor: центральный реестр моделей + апгрейд (WS1)
+
+**Контекст.** Каждый AI-модуль хардкодил свой Groq-ID константой
+(`CLASSIFIER_MODEL = "..."` × 8 файлов). Свап модели = 8 правок и
+гарантированный дрейф. Критик висел на `qwen-qwq-32b`, которой Groq
+больше не обслуживает — тихая поломка.
+
+**Сделано.**
+- Новый `app/ai/models.py`: frozen `ModelRegistry` + кэшированный
+  `get_models()` — единая точка истины для всех восьми стадий.
+- В `app/shared/config.py` добавлено восемь env-override полей
+  (`GROQ_MODEL_CLASSIFIER`, `GROQ_MODEL_CRITIC` и т.д.) — модель меняется
+  без редеплоя кода; те же хуки переиспользуем под OpenRouter позже.
+- Дефолты (май 2026, production Groq):
+  - whisper: `whisper-large-v3` (точность на длинной русской речи)
+  - splitter/intent/reorder/courier/task_splitter: `openai/gpt-oss-20b`
+    (~1000 tok/s, smart, fast)
+  - classifier/critic: `openai/gpt-oss-120b` (smartest на Groq, всё ещё
+    очень быстрый на LPU)
+- Заменены константы во всех восьми AI-модулях (`whisper`, `splitter`,
+  `intent`, `reorder`, `courier`, `task_splitter`, `classifier`, `critic`)
+  на `get_models().<stage>` в момент вызова. Удалены устаревшие
+  module-level константы.
+- Поправлены `log_ai_run`-вызовы в `_pipeline.py` и `voice.py` —
+  записывают актуальный model-ID, а не хардкод.
+
+**Гейты.** ruff/mypy/pytest — **538 passed**. Тесты не были привязаны
+к конкретным модельным строкам жёстко (использовали их как метки в
+моках), поэтому миграция прошла без правок тестов.
+
+**Дальше.** WS2 (троттл/таймауты для длинных ГС), WS3 (reply/forward),
+WS5 (плавность мини-аппы), WS6 (drill-in настройки), WS4 (напоминания).
+
+---
+
 ## 2026-05-29 — feat: глобальный поиск по задачам
 
 **Контекст.** В заметках был клиентский поиск, в задачах — никакого.

@@ -32,6 +32,7 @@ from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.intent import detect_intent
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
@@ -411,7 +412,7 @@ async def _run_pipeline_inner(
             user_id=user_id,
             inbox_id=inbox_id,
             stage="splitter",
-            model="llama-3.1-8b-instant",
+            model=get_models().splitter,
             key_index=groq_router.current_key_id,
         )
 
@@ -492,7 +493,7 @@ async def _run_pipeline_inner(
                 user_id=user_id,
                 inbox_id=inbox_id,
                 stage="classifier",
-                model="llama-3.3-70b-versatile",
+                model=get_models().classifier,
                 key_index=groq_router.current_key_id,
             )
 

@@ -15,13 +15,12 @@ from zoneinfo import ZoneInfo
 import instructor
 from groq import AsyncGroq
 
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-CLASSIFIER_MODEL = "llama-3.3-70b-versatile"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "classifier.md"
 _prompt_cache: str | None = None
@@ -87,7 +86,7 @@ async def classify_intent(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=CLASSIFIER_MODEL,
+            model=get_models().classifier,
             response_model=ClassifierResult,
             messages=[
                 {"role": "system", "content": system_prompt},

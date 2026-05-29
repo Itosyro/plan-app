@@ -14,13 +14,12 @@ from pathlib import Path
 import instructor
 from groq import AsyncGroq
 
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult, CriticVerdict, ResolvedTime
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-CRITIC_MODEL = "qwen-qwq-32b"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "critic.md"
 _prompt_cache: str | None = None
@@ -101,7 +100,7 @@ async def critique_classification(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=CRITIC_MODEL,
+            model=get_models().critic,
             response_model=CriticVerdict,
             messages=[
                 {"role": "system", "content": system_prompt},

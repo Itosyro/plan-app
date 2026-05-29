@@ -13,6 +13,7 @@ import asyncio
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.ai.models import get_models
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
@@ -160,7 +161,7 @@ def create_router() -> Router:
                         user_id=user_id,
                         inbox_id=inbox_id,
                         stage="whisper",
-                        model="whisper-large-v3",
+                        model=get_models().whisper,
                         key_index=groq_router.current_key_id,
                     )
 

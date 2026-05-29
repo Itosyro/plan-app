@@ -10,12 +10,11 @@ import time
 
 from groq import AsyncGroq
 
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-WHISPER_MODEL = "whisper-large-v3"
 
 
 async def transcribe_voice(
@@ -32,7 +31,7 @@ async def transcribe_voice(
     async def _do_call(r: GroqKeyRouter) -> object:
         client = AsyncGroq(api_key=r.current_key)
         return await client.audio.transcriptions.create(
-            model=WHISPER_MODEL,
+            model=get_models().whisper,
             file=(filename, audio_bytes),
             language="ru",
             response_format="text",

@@ -16,13 +16,12 @@ import instructor
 from groq import AsyncGroq
 
 from app.ai._safety import wrap_untrusted
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ReorderRequest
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-REORDER_MODEL = "llama-3.1-8b-instant"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "reorder.md"
 _prompt_cache: str | None = None
@@ -63,7 +62,7 @@ async def detect_reorder(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=REORDER_MODEL,
+            model=get_models().reorder,
             response_model=ReorderRequest,
             messages=[
                 {"role": "system", "content": system_prompt},
