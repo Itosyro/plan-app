@@ -75,7 +75,26 @@ services:
         sync: false
       - key: WEBHOOK_BASE_URL
         sync: false
+      # DATABASE_URL is wired automatically from the managed Postgres
+      # declared in the ``databases`` block below — Render injects the
+      # internal connection string, so no manual dashboard edit is
+      # needed. (Previously this was ``sync: false`` and pointed at an
+      # external Neon instance, which hit its free compute quota.)
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: plan-app-db
+          property: connectionString
       - key: GROQ_API_KEYS
         sync: false
+
+# Managed Postgres on Render. Free plan, same region as the web service
+# so the internal connection string resolves and traffic stays in-network
+# (no egress cost). Render provisions it on the first Blueprint sync and
+# injects its connection string into ``DATABASE_URL`` above.
+databases:
+  - name: plan-app-db
+    databaseName: plan_app
+    user: plan_app
+    plan: free
+    region: frankfurt
+
