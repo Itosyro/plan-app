@@ -6,6 +6,37 @@
 
 ---
 
+## 2026-05-29 — infra: переезд прод-БД с Neon на Render Postgres
+
+**Контекст.** Прод лёг: внешняя Neon-БД исчерпала free compute-квоту
+(`OperationalError: exceeded the compute time quota`), каждый деплой
+падал на `alembic upgrade head`, Mini-App показывал «Ошибка
+соединения». Решили начать с чистой БД (данные не сохраняли).
+
+**Сделано (инфраструктура, вручную в Render dashboard — у агента нет
+доступа к Render API/прод-хостам из-за egress-allowlist окружения).**
+- `render.yaml` — добавлен managed-Postgres `plan-app-db` в `databases:`
+  и `DATABASE_URL` через `fromDatabase` (PR #169). На практике сервис
+  оказался не Blueprint-managed, поэтому переключение сделано руками.
+- Создан/задействован Render Postgres `plan-db` (PostgreSQL 16). База в
+  регионе **oregon**, web-сервис во **frankfurt** → межрегионально, так
+  что используется **External Database URL** (Internal между регионами
+  не резолвится). В inbound IP rules добавлен `0.0.0.0/0` (иначе внешний
+  трафик заблокирован).
+- `DATABASE_URL` на сервисе `plan-app` переключён с Neon на External URL
+  Render-БД. Деплой прошёл `alembic upgrade head` на чистой схеме →
+  `Application startup complete`. Юзер регистрируется заново через
+  `/start`.
+
+**TODO (отложено, не блокирует).** БД в oregon, сервис во frankfurt —
+каждый запрос к БД идёт через Атлантик (~150 мс). Пересоздать БД во
+frankfurt и переключить на Internal URL для скорости.
+
+**Гейты.** N/A (инфраструктура). Прод проверен вручную: `/healthz` 200,
+бот отвечает.
+
+---
+
 ## 2026-05-28 — feat: live-draft — прогрессивный статус пайплайна
 
 **Контекст.** Бот показывал статичное «⏳ Разбираю…» весь пайплайн.
