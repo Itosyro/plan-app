@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { TabPanel } from "./components/TabPanel";
 import {
   closestCorners,
   DndContext,
@@ -129,12 +128,6 @@ export default function App() {
   // Phase 7c: Tasks + Settings tabs are real screens. Calendar still
   // renders a "coming soon" placeholder (Phase 5.5).
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
-  // WS5-A: track which tabs have been visited so we can keep them
-  // mounted in the DOM (preserving scroll + child state) without
-  // pre-mounting tabs the user has never opened.
-  const [visitedTabs, setVisitedTabs] = useState<Set<NavTab>>(
-    () => new Set<NavTab>(["tasks"]),
-  );
 
   const route = useRoute();
   // «Входящие» pending-review count for the nav badge.
@@ -307,13 +300,6 @@ export default function App() {
     const t = window.setTimeout(prefetch, 1200);
     return () => window.clearTimeout(t);
   }, []);
-
-  // WS5-A: mark the active tab as visited so its panel stays mounted.
-  useEffect(() => {
-    setVisitedTabs((prev) =>
-      prev.has(activeTab) ? prev : new Set(prev).add(activeTab),
-    );
-  }, [activeTab]);
 
   // If the user lands on a note URL (deep link, refresh on /note/123),
   // make sure the Notes tab is the one we fall back to when they hit
@@ -858,80 +844,94 @@ export default function App() {
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveDragTask(null)}
     >
-      {/* WS5-A: fixed viewport shell — header strip + scrollable panel stack */}
-      <div className="app-shell-viewport">
-        <header className="app-shell-header">
-          <div className="mx-auto max-w-md px-4 pb-3">
-            <Header
-              title={
-                activeTab === "tasks"
-                  ? buildHeaderTitle(horizons, activeHorizon, counts)
-                  : activeTab === "notes"
-                    ? "Заметки"
-                    : activeTab === "settings"
-                      ? "Настройки"
-                      : activeTab === "inbox"
-                        ? "Входящие"
-                        : "Календарь"
-              }
-              subtitle={titleSubtitle}
-              showFilter={activeTab === "tasks"}
-              selectedCategoryId={selectedCategory}
-              filterLabel={activeFilterLabel}
-              onOpenFilter={() => setShowCategorySheet(true)}
-              onOpenLayout={() => setShowLayoutSheet(true)}
-              onOpenSearch={
-                activeTab === "tasks"
-                  ? () => {
-                      haptic("select");
-                      setShowSearch(true);
-                    }
-                  : undefined
-              }
-              onCreate={activeTab === "notes" ? handleCreateNote : undefined}
-              createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
-            />
-          </div>
-        </header>
-
-        <main className="panel-stack relative flex-1">
-          {/* Tasks tab — always mounted (default tab); inner list/board switch
-              keeps its own keyed animate-tab-in so that animation still fires */}
-          <TabPanel
-            active={activeTab === "tasks"}
-            mounted={visitedTabs.has("tasks")}
-          >
-            <div className="mx-auto max-w-md">
-              <Suspense fallback={<ScreenFallback />}>
-                <div
-                  key={`tasks:${tasksView}`}
-                  className="animate-tab-in"
-                >
-                  {tasksView === "board" ? (
-                    <KanbanView
-                      categories={categories}
-                      onOpen={handleOpenTask}
-                      onDone={handleDone}
-                      onCreateCategory={handleCreateCategoryColumn}
-                    />
-                  ) : (
-                    <>
-                      <HorizonTabs
-                        horizons={horizons}
-                        active={activeHorizon}
-                        counts={counts}
-                        onChange={handleHorizonChange}
-                      />
-                      {!hasVisibleTasks ? (
-                        <EmptyState
-                          icon={Sparkles}
-                          tone="emerald"
-                          title="Ничего на горизонте"
-                          hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+      <div
+        className="mx-auto max-w-md px-4"
+        style={{
+          paddingTop: "calc(var(--safe-top) + 0.75rem)",
+          paddingBottom: "calc(var(--safe-bottom) + 5.5rem)",
+        }}
+      >
+        <Header
+          title={
+            activeTab === "tasks"
+              ? buildHeaderTitle(horizons, activeHorizon, counts)
+              : activeTab === "notes"
+                ? "Заметки"
+                : activeTab === "settings"
+                  ? "Настройки"
+                  : activeTab === "inbox"
+                    ? "Входящие"
+                    : "Календарь"
+          }
+          subtitle={titleSubtitle}
+          showFilter={activeTab === "tasks"}
+          selectedCategoryId={selectedCategory}
+          filterLabel={activeFilterLabel}
+          onOpenFilter={() => setShowCategorySheet(true)}
+          onOpenLayout={() => setShowLayoutSheet(true)}
+          onOpenSearch={
+            activeTab === "tasks"
+              ? () => {
+                  haptic("select");
+                  setShowSearch(true);
+                }
+              : undefined
+          }
+          onCreate={activeTab === "notes" ? handleCreateNote : undefined}
+          createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
+        />
+        <div
+          key={activeTab === "tasks" ? `tasks:${tasksView}` : activeTab}
+          className="animate-tab-in"
+        >
+        <Suspense fallback={<ScreenFallback />}>
+        {activeTab === "tasks" ? (
+          <>
+            {tasksView === "board" ? (
+              <KanbanView
+                categories={categories}
+                onOpen={handleOpenTask}
+                onDone={handleDone}
+                onCreateCategory={handleCreateCategoryColumn}
+              />
+            ) : (
+              <>
+                <HorizonTabs
+                  horizons={horizons}
+                  active={activeHorizon}
+                  counts={counts}
+                  onChange={handleHorizonChange}
+                />
+                {!hasVisibleTasks ? (
+                  <EmptyState
+                    icon={Sparkles}
+                    tone="emerald"
+                    title="Ничего на горизонте"
+                    hint="Скинь голос или текст в бот — задачи появятся здесь автоматически."
+                  />
+                ) : layoutPrefs.groupBy === "none" ? (
+                  <ul className="flex flex-col gap-2">
+                    {taskGroups[0]?.tasks.map((task) => (
+                      <li key={task.id}>
+                        <TaskCard
+                          task={task}
+                          tz={tz}
+                          onDone={handleDone}
+                          onReopen={handleReopen}
+                          onOpen={handleOpenTask}
                         />
-                      ) : layoutPrefs.groupBy === "none" ? (
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="flex flex-col gap-5">
+                    {taskGroups.map((group) => (
+                      <section key={group.key}>
+                        <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
+                          {group.label}
+                        </header>
                         <ul className="flex flex-col gap-2">
-                          {taskGroups[0]?.tasks.map((task) => (
+                          {group.tasks.map((task) => (
                             <li key={task.id}>
                               <TaskCard
                                 task={task}
@@ -943,94 +943,36 @@ export default function App() {
                             </li>
                           ))}
                         </ul>
-                      ) : (
-                        <div className="flex flex-col gap-5">
-                          {taskGroups.map((group) => (
-                            <section key={group.key}>
-                              <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
-                                {group.label}
-                              </header>
-                              <ul className="flex flex-col gap-2">
-                                {group.tasks.map((task) => (
-                                  <li key={task.id}>
-                                    <TaskCard
-                                      task={task}
-                                      tz={tz}
-                                      onDone={handleDone}
-                                      onReopen={handleReopen}
-                                      onOpen={handleOpenTask}
-                                    />
-                                  </li>
-                                ))}
-                              </ul>
-                            </section>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </Suspense>
-            </div>
-          </TabPanel>
-
-          <TabPanel
-            active={activeTab === "notes"}
-            mounted={visitedTabs.has("notes")}
-          >
-            <div className="mx-auto max-w-md">
-              <Suspense fallback={<ScreenFallback />}>
-                <NotesList onOpen={handleOpenNote} />
-              </Suspense>
-            </div>
-          </TabPanel>
-
-          <TabPanel
-            active={activeTab === "calendar"}
-            mounted={visitedTabs.has("calendar")}
-          >
-            <div className="mx-auto max-w-md">
-              <Suspense fallback={<ScreenFallback />}>
-                <CalendarView tz={tz} onOpen={handleOpenTask} />
-              </Suspense>
-            </div>
-          </TabPanel>
-
-          <TabPanel
-            active={activeTab === "inbox"}
-            mounted={visitedTabs.has("inbox")}
-          >
-            <div className="mx-auto max-w-md">
-              <Suspense fallback={<ScreenFallback />}>
-                <InboxReview
-                  tz={tz}
-                  categories={categories}
-                  onResolved={() => {
-                    void loadInboxCount();
-                    refetchTasks();
-                    void loadCounts();
-                    void refreshCategories();
-                    invalidate(CAL_CACHE_PREFIX, { prefix: true });
-                    invalidate(KANBAN_CACHE_KEY);
-                  }}
-                />
-              </Suspense>
-            </div>
-          </TabPanel>
-
-          <TabPanel
-            active={activeTab === "settings"}
-            mounted={visitedTabs.has("settings")}
-          >
-            <div className="mx-auto max-w-md">
-              <Suspense fallback={<ScreenFallback />}>
-                {me && <SettingsPage me={me} onUpdated={setMe} />}
-              </Suspense>
-            </div>
-          </TabPanel>
-        </main>
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        ) : activeTab === "notes" ? (
+          <NotesList onOpen={handleOpenNote} />
+        ) : activeTab === "calendar" ? (
+          <CalendarView tz={tz} onOpen={handleOpenTask} />
+        ) : activeTab === "inbox" ? (
+          <InboxReview
+            tz={tz}
+            categories={categories}
+            onResolved={() => {
+              void loadInboxCount();
+              refetchTasks();
+              void loadCounts();
+              void refreshCategories();
+              invalidate(CAL_CACHE_PREFIX, { prefix: true });
+              invalidate(KANBAN_CACHE_KEY);
+            }}
+          />
+        ) : me ? (
+          <SettingsPage me={me} onUpdated={setMe} />
+        ) : null}
+        </Suspense>
+        </div>
       </div>
-
       <CategoryFilter
         open={showCategorySheet}
         onClose={() => setShowCategorySheet(false)}
