@@ -129,6 +129,74 @@ body::before {
   }
 }
 
+/* ─── WS5-A keep-mounted tab panels ─────────────────────────────────────────
+   Fixed-viewport shell so each panel owns its own scroll container and
+   the browser preserves scrollTop across tab switches (iOS-native behaviour).
+   The outer <html>/#root height:100% provides the anchor for position:fixed.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Outermost fixed shell: header strip + panel stack fill the whole viewport */
+.app-shell-viewport {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header strip: safe-area top padding lives here now */
+.app-shell-header {
+  flex-shrink: 0;
+  padding-top: var(--safe-top);
+}
+
+/* Stacking context for the absolute-positioned panels */
+.panel-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Each tab panel: absolute, full-bleed, own scroll container */
+.tab-panel {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  padding-top: 0.75rem;
+  padding-bottom: calc(var(--safe-bottom) + 5.5rem);
+}
+
+/* Hidden panel: invisible but still in DOM (preserves scroll position).
+   visibility is delayed by the full fade duration so the outgoing fade
+   finishes before the element becomes truly non-interactive. */
+.tab-panel-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.18s;
+  pointer-events: none;
+}
+
+/* Active panel: on top of the stack, fully visible */
+.tab-panel-active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-panel-hidden,
+  .tab-panel-active {
+    transition: none;
+  }
+}
+
 /* Display optical sizing — used for big titles and headings. The Inter
    Variable opsz axis ranges 14–32. 32 picks the Display (looser) variant. */
 .font-display {
