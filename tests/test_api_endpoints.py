@@ -245,6 +245,79 @@ async def test_me_patch_review_enabled(
 
 
 @pytest.mark.asyncio
+async def test_me_patch_reminder_offsets(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``default_reminder_offsets`` round-trips and is sorted descending."""
+    # GET first — defaults are populated.
+    initial = await aclient.get("/api/me", headers=auth_headers)
+    assert initial.status_code == 200
+    defaults = initial.json()["settings"]["default_reminder_offsets"]
+    assert defaults["same_day"] == [60, 15]
+    assert defaults["multi_day"] == [1440, 60]
+
+    # PATCH with unsorted, duplicated offsets — server must sort desc + dedup.
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [10, 60, 10, 30],
+                    "multi_day": [60, 1440],
+                }
+            }
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    out = resp.json()["settings"]["default_reminder_offsets"]
+    assert out["same_day"] == [60, 30, 10]
+    assert out["multi_day"] == [1440, 60]
+
+    # Survives a fresh GET (persisted, not just echoed).
+    fresh = await aclient.get("/api/me", headers=auth_headers)
+    assert fresh.json()["settings"]["default_reminder_offsets"]["same_day"] == [60, 30, 10]
+
+
+@pytest.mark.asyncio
+async def test_me_patch_reminder_offsets_rejects_out_of_range(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """Negative or absurdly-large offsets are rejected with 422."""
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [-5, 60],
+                    "multi_day": [],
+                }
+            }
+        },
+    )
+    assert resp.status_code == 422
+
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [60],
+                    "multi_day": [99999],  # >1 week
+                }
+            }
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_me_patch_rejects_invalid_tz(
     aclient: httpx.AsyncClient,
     seeded: int,
