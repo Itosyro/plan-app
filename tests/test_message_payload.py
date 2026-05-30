@@ -277,3 +277,47 @@ class TestResolveEffectivePayload:
         )
         assert isinstance(result, TextPayload)
         assert result.text == replied.caption
+
+
+# ---------------------------------------------------------------------------
+# looks_like_reply_to_voice (cheap pre-flight; no network)
+# ---------------------------------------------------------------------------
+
+
+from app.bot.routers._message_payload import looks_like_reply_to_voice  # noqa: E402
+
+
+class TestLooksLikeReplyToVoice:
+    def test_reply_to_voice_with_instruction(self) -> None:
+        replied = _FakeMessage(voice=_Voice())
+        msg = _FakeMessage(text="разбери", reply_to_message=replied)
+        assert looks_like_reply_to_voice(msg) is True  # type: ignore[arg-type]
+
+    def test_reply_to_voice_with_empty_body(self) -> None:
+        replied = _FakeMessage(voice=_Voice())
+        msg = _FakeMessage(text="", reply_to_message=replied)
+        assert looks_like_reply_to_voice(msg) is True  # type: ignore[arg-type]
+
+    def test_reply_to_text_returns_false(self) -> None:
+        replied = _FakeMessage(text="Какой-то текст")
+        msg = _FakeMessage(text="разбери", reply_to_message=replied)
+        assert looks_like_reply_to_voice(msg) is False  # type: ignore[arg-type]
+
+    def test_substantial_own_text_returns_false(self) -> None:
+        """If the user wrote substantial content themselves, we don't
+        plan to transcribe the reply target — even if it's a voice."""
+        replied = _FakeMessage(voice=_Voice())
+        msg = _FakeMessage(text="Купить молоко и хлеб завтра", reply_to_message=replied)
+        assert looks_like_reply_to_voice(msg) is False  # type: ignore[arg-type]
+
+    def test_no_reply_returns_false(self) -> None:
+        msg = _FakeMessage(text="разбери")
+        assert looks_like_reply_to_voice(msg) is False  # type: ignore[arg-type]
+
+    def test_own_voice_returns_false(self) -> None:
+        """A direct voice message hits the voice router, not text — so
+        even if it has a reply target, we don't flag for text-side
+        transcription."""
+        replied = _FakeMessage(voice=_Voice())
+        msg = _FakeMessage(voice=_Voice(), reply_to_message=replied)
+        assert looks_like_reply_to_voice(msg) is False  # type: ignore[arg-type]

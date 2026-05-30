@@ -122,6 +122,34 @@ Payload = TextPayload | VoicePayload
 
 
 # ---------------------------------------------------------------------------
+# Cheap pre-flight check (no network)
+# ---------------------------------------------------------------------------
+
+
+def looks_like_reply_to_voice(message: Message) -> bool:
+    """Return True if this message is a reply with an empty/instruction body
+    and the replied-to message is voice/audio.
+
+    Used by the text router to *predict* whether ``resolve_effective_payload``
+    will spend time on Whisper, so it can post a tailored
+    "🎤 Расшифровываю реплай-голосовое…" placeholder before the
+    transcription starts. Purely string + attribute inspection — no
+    network, no DB.
+    """
+    own_voice = getattr(message, "voice", None) or getattr(message, "audio", None)
+    if own_voice is not None:
+        return False  # own voice path is handled by the voice router
+    own_text: str = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+    if own_text and not is_short_instruction(own_text):
+        return False
+    reply = getattr(message, "reply_to_message", None)
+    if reply is None:
+        return False
+    reply_voice = getattr(reply, "voice", None) or getattr(reply, "audio", None)
+    return reply_voice is not None
+
+
+# ---------------------------------------------------------------------------
 # Resolver
 # ---------------------------------------------------------------------------
 
