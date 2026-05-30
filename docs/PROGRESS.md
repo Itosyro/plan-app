@@ -95,9 +95,24 @@ KanbanView, Tasks list в App.tsx. Smart skeleton (300мс гейт).
 разбора). Slide-in/back анимации, Telegram BackButton привязан.
 Все row-компоненты переиспользованы. Чанк +0.71KB gzip. (Агент Sonnet.)
 
-**Гейты.** Бэкенд: 572 pytest passed (+34 за сессию), ruff/mypy чисто.
-Webapp: tsc + build зелёные, main chunk нетто +0.4KB
-(хук+шина+TabPanel минус выпиленные nonce-props и старая логика).
+**Пост-план полировка (всё в том же спринте):**
+
+- **WS3 UX-фикс** — placeholder ДО Whisper при reply-на-voice.
+  `looks_like_reply_to_voice()` (чистая проверка без сети) →
+  сразу «🎤 Расшифровываю голосовое…» → после транскрипции свап
+  на «⏳ Разбираю…». Раньше пользователь видел 3-5 секунд тишины.
+  +6 unit-тестов для предиктора.
+- **Sentry опционально** — `sentry-sdk[fastapi]` дормант без
+  `SENTRY_DSN`. С DSN ловит unhandled exceptions из FastAPI и
+  background-pipeline задач (AsyncioIntegration — единственный
+  способ дотянуться до `asyncio.create_task(_background())`).
+  PII и request-bodies зачищены до отправки. +4 теста контракта.
+- **/healthz расширен** — env + кол-во Groq-ключей + sentry on/off
+  + текущий реестр моделей. Без секретов (smoke-assert в тесте).
+  Для дебага с телефона без shell.
+
+**Финальные гейты.** 583 pytest passed (+45 за всю сессию),
+ruff/mypy чисто, webapp tsc + build зелёные.
 
 ---
 
