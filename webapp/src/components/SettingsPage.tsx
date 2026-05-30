@@ -14,10 +14,11 @@
 // with an accent-colored section header above. Boolean prefs use an
 // iOS toggle Switch; multi-choice prefs open a bottom-sheet picker.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Globe,
   Inbox,
@@ -34,12 +35,15 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
-import { haptic } from "../lib/telegram";
+import { getWebApp, haptic } from "../lib/telegram";
 import { navigate } from "../lib/router";
 import type { Me, TrashCounts, Timezone } from "../types";
 import { BottomSheetSelect } from "./BottomSheetSelect";
 import { IconTile, type TileTone } from "./IconTile";
 import { Switch } from "./Switch";
+
+// ── Settings navigation stack ──────────────────────────────────────────
+type SettingsScreen = "main" | "profile" | "notifications" | "responses" | "behavior";
 
 // Option vocabularies. These match the labels used in
 // app/bot/routers/settings.py::SETTING_OPTIONS so the bot and the
@@ -101,6 +105,13 @@ export function SettingsPage({ me, onUpdated }: Props) {
   const [editingTz, setEditingTz] = useState(false);
   const [trashCounts, setTrashCounts] = useState<TrashCounts | null>(null);
 
+  // Local navigation stack — never touches the global hash router.
+  const [stack, setStack] = useState<SettingsScreen[]>(["main"]);
+  const [navDirection, setNavDirection] = useState<"forward" | "back">("forward");
+  // Ref so the BackButton handler closure always sees fresh stack.
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
+
   useEffect(() => {
     let cancelled = false;
     apiClient
@@ -123,6 +134,33 @@ export function SettingsPage({ me, onUpdated }: Props) {
       cancelled = true;
     };
   }, []);
+
+  // Telegram BackButton wiring — show when depth > 1, hide at root.
+  useEffect(() => {
+    const bb = getWebApp()?.BackButton;
+    if (!bb) return;
+
+    const handler = () => {
+      const current = stackRef.current;
+      if (current.length > 1) {
+        haptic("select");
+        setNavDirection("back");
+        setStack((s) => s.slice(0, -1));
+      }
+    };
+
+    if (stack.length > 1) {
+      bb.show();
+      bb.onClick(handler);
+    } else {
+      bb.hide();
+    }
+
+    return () => {
+      // offClick is part of Bot API 6.1+; guard defensively for very old clients.
+      try { bb.offClick(handler); } catch { /* ignore */ }
+    };
+  }, [stack.length]);
 
   const tzLabel = useMemo(() => {
     if (timezones === null) return me.tz;
@@ -152,7 +190,48 @@ export function SettingsPage({ me, onUpdated }: Props) {
     }
   }
 
+  function push(screen: SettingsScreen) {
+    haptic("select");
+    setNavDirection("forward");
+    setStack((s) => [...s, screen]);
+  }
+
+  function back() {
+    haptic("select");
+    setNavDirection("back");
+    setStack((s) => s.slice(0, -1));
+  }
+
   const settings = me.settings;
+  const currentScreen = stack[stack.length - 1];
+  const animClass = navDirection === "forward" ? "animate-screen-in-right" : "animate-screen-in-left";
+
+  // Sub-screen back header
+  function SubHeader() {
+    return (
+      <header className="flex items-center gap-1 px-1 pb-2">
+        <button
+          onClick={back}
+          className="ease-apple flex items-center gap-0.5 text-tg-link active:scale-90 transition-transform"
+        >
+          <ChevronLeft size={20} />
+          <span>Настройки</span>
+        </button>
+      </header>
+    );
+  }
+
+  // Summary value helpers for main list
+  const responseSummary =
+    COURIER_TEMPLATE_OPTIONS.find((o) => o.value === (settings?.courier_template_style ?? "neutral"))?.label ?? "";
+  const profileSummary = me.display_name || tzLabel;
+  const morningLabel =
+    MORNING_DIGEST_OPTIONS.find((o) => o.value === (settings?.morning_digest_at ?? "08:00"))?.label ?? "";
+  const eveningLabel =
+    EVENING_DIGEST_OPTIONS.find((o) => o.value === (settings?.evening_digest_at ?? "21:00"))?.label ?? "";
+  const notifSummary = `${morningLabel} / ${eveningLabel}`;
+  const behaviorSummary =
+    CRITIC_MODE_OPTIONS.find((o) => o.value === (settings?.critic_mode ?? "confidence"))?.label ?? "";
 
   return (
     <div className="flex flex-col gap-6 pb-4">
@@ -162,154 +241,250 @@ export function SettingsPage({ me, onUpdated }: Props) {
         </div>
       )}
 
-      <SettingsSection title="Профиль" index={0}>
-        <SettingsTextRow
-          icon={User}
-          tone="indigo"
-          label="Имя"
-          value={me.display_name ?? ""}
-          placeholder="Без имени"
-          editing={editingName}
-          pending={pending === "display_name"}
-          onEdit={() => setEditingName(true)}
-          onCancel={() => setEditingName(false)}
-          onSubmit={async (value) => {
-            const trimmed = value.trim();
-            if (!trimmed || trimmed === me.display_name) {
-              setEditingName(false);
-              return;
-            }
-            await patch("display_name", { display_name: trimmed });
-            setEditingName(false);
-          }}
-        />
-        <SettingsTimezoneRow
-          icon={Globe}
-          tone="blue"
-          label="Часовой пояс"
-          currentIana={me.tz}
-          currentLabel={tzLabel}
-          timezones={timezones ?? []}
-          editing={editingTz}
-          pending={pending === "tz"}
-          onEdit={() => setEditingTz(true)}
-          onCancel={() => setEditingTz(false)}
-          onSubmit={async (iana) => {
-            const trimmed = iana.trim();
-            if (!trimmed || trimmed === me.tz) {
-              setEditingTz(false);
-              return;
-            }
-            await patch("tz", { tz: trimmed });
-            setEditingTz(false);
-          }}
-        />
-      </SettingsSection>
+      {/* ── Main list ── */}
+      {currentScreen === "main" && (
+        <div key="main" className={animClass}>
+          <div className="flex flex-col gap-6">
+            <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+              <div className="divide-y divide-tg-divider/40">
+                <MainCategoryRow
+                  emoji="👤"
+                  label="Профиль"
+                  summary={profileSummary}
+                  onClick={() => push("profile")}
+                />
+                <MainCategoryRow
+                  emoji="🔔"
+                  label="Уведомления и дайджесты"
+                  summary={notifSummary}
+                  onClick={() => push("notifications")}
+                />
+                <MainCategoryRow
+                  emoji="💬"
+                  label="Ответы бота"
+                  summary={`Тон: ${responseSummary}`}
+                  onClick={() => push("responses")}
+                />
+                <MainCategoryRow
+                  emoji="🧠"
+                  label="Поведение разбора"
+                  summary={`Критик: ${behaviorSummary}`}
+                  onClick={() => push("behavior")}
+                />
+              </div>
+            </div>
 
-      <SettingsSection title="Дайджест" index={1}>
-        <SettingsSelectRow
-          icon={Sun}
-          tone="orange"
-          label="Утром"
-          value={settings?.morning_digest_at ?? "08:00"}
-          options={MORNING_DIGEST_OPTIONS}
-          disabled={pending === "morning_digest_at"}
-          onChange={(value) =>
-            patch("morning_digest_at", { settings: { morning_digest_at: value } })
-          }
-        />
-        <SettingsSelectRow
-          icon={Sunset}
-          tone="amber"
-          label="Вечером"
-          value={settings?.evening_digest_at ?? "21:00"}
-          options={EVENING_DIGEST_OPTIONS}
-          disabled={pending === "evening_digest_at"}
-          onChange={(value) =>
-            patch("evening_digest_at", { settings: { evening_digest_at: value } })
-          }
-        />
-      </SettingsSection>
+            <SettingsSection title="Данные" index={0}>
+              <CompletedRow />
+              <TrashRow trashCounts={trashCounts} />
+            </SettingsSection>
+          </div>
+        </div>
+      )}
 
-      <SettingsSection title="Ответы бота" index={2}>
-        <SettingsSelectRow
-          icon={Languages}
-          tone="teal"
-          label="Источник"
-          value={settings?.response_style_source ?? "mix"}
-          options={RESPONSE_STYLE_OPTIONS}
-          disabled={pending === "response_style_source"}
-          onChange={(value) =>
-            patch("response_style_source", { settings: { response_style_source: value } })
-          }
-        />
-        <SettingsSelectRow
-          icon={MessageSquare}
-          tone="emerald"
-          label="Тон"
-          value={settings?.courier_template_style ?? "neutral"}
-          options={COURIER_TEMPLATE_OPTIONS}
-          disabled={pending === "courier_template_style"}
-          onChange={(value) =>
-            patch("courier_template_style", { settings: { courier_template_style: value } })
-          }
-        />
-      </SettingsSection>
+      {/* ── Profile sub-screen ── */}
+      {currentScreen === "profile" && (
+        <div key="profile" className={animClass}>
+          <SubHeader />
+          <SettingsSection title="Профиль" index={0}>
+            <SettingsTextRow
+              icon={User}
+              tone="indigo"
+              label="Имя"
+              value={me.display_name ?? ""}
+              placeholder="Без имени"
+              editing={editingName}
+              pending={pending === "display_name"}
+              onEdit={() => setEditingName(true)}
+              onCancel={() => setEditingName(false)}
+              onSubmit={async (value) => {
+                const trimmed = value.trim();
+                if (!trimmed || trimmed === me.display_name) {
+                  setEditingName(false);
+                  return;
+                }
+                await patch("display_name", { display_name: trimmed });
+                setEditingName(false);
+              }}
+            />
+            <SettingsTimezoneRow
+              icon={Globe}
+              tone="blue"
+              label="Часовой пояс"
+              currentIana={me.tz}
+              currentLabel={tzLabel}
+              timezones={timezones ?? []}
+              editing={editingTz}
+              pending={pending === "tz"}
+              onEdit={() => setEditingTz(true)}
+              onCancel={() => setEditingTz(false)}
+              onSubmit={async (iana) => {
+                const trimmed = iana.trim();
+                if (!trimmed || trimmed === me.tz) {
+                  setEditingTz(false);
+                  return;
+                }
+                await patch("tz", { tz: trimmed });
+                setEditingTz(false);
+              }}
+            />
+          </SettingsSection>
+        </div>
+      )}
 
-      <SettingsSection title="Поведение" index={3}>
-        <SettingsToggleRow
-          icon={ListChecks}
-          tone="sky"
-          label="Первый шаг"
-          hint="Абстрактную задачу превращаю в конкретный первый шаг 🎯"
-          checked={settings?.concretize_tasks ?? false}
-          disabled={pending === "concretize_tasks"}
-          onChange={(next) =>
-            patch("concretize_tasks", { settings: { concretize_tasks: next } })
-          }
-        />
-        <SettingsToggleRow
-          icon={Inbox}
-          tone="amber"
-          label="Входящие"
-          hint="Сомнительные и большие разборы отправляю на проверку во вкладку «Входящие»"
-          checked={settings?.review_enabled ?? true}
-          disabled={pending === "review_enabled"}
-          onChange={(next) =>
-            patch("review_enabled", { settings: { review_enabled: next } })
-          }
-        />
-        <SettingsSelectRow
-          icon={ShieldCheck}
-          tone="violet"
-          label="Критик"
-          value={settings?.critic_mode ?? "confidence"}
-          options={CRITIC_MODE_OPTIONS}
-          disabled={pending === "critic_mode"}
-          onChange={(value) => patch("critic_mode", { settings: { critic_mode: value } })}
-        />
-        <SettingsSelectRow
-          icon={Moon}
-          tone="slate"
-          label="«На неделе»"
-          value={settings?.week_due_semantic ?? "deadline_sunday"}
-          options={WEEK_DUE_SEMANTIC_OPTIONS}
-          disabled={pending === "week_due_semantic"}
-          onChange={(value) =>
-            patch("week_due_semantic", { settings: { week_due_semantic: value } })
-          }
-        />
-      </SettingsSection>
+      {/* ── Notifications sub-screen ── */}
+      {currentScreen === "notifications" && (
+        <div key="notifications" className={animClass}>
+          <SubHeader />
+          <div className="flex flex-col gap-6">
+            <SettingsSection title="Дайджест" index={0}>
+              <SettingsSelectRow
+                icon={Sun}
+                tone="orange"
+                label="Утром"
+                value={settings?.morning_digest_at ?? "08:00"}
+                options={MORNING_DIGEST_OPTIONS}
+                disabled={pending === "morning_digest_at"}
+                onChange={(value) =>
+                  patch("morning_digest_at", { settings: { morning_digest_at: value } })
+                }
+              />
+              <SettingsSelectRow
+                icon={Sunset}
+                tone="amber"
+                label="Вечером"
+                value={settings?.evening_digest_at ?? "21:00"}
+                options={EVENING_DIGEST_OPTIONS}
+                disabled={pending === "evening_digest_at"}
+                onChange={(value) =>
+                  patch("evening_digest_at", { settings: { evening_digest_at: value } })
+                }
+              />
+            </SettingsSection>
+            <SettingsSection title="Уведомления" index={1}>
+              <BellRow />
+            </SettingsSection>
+          </div>
+        </div>
+      )}
 
-      <SettingsSection title="Уведомления" index={4}>
-        <BellRow />
-      </SettingsSection>
+      {/* ── Responses sub-screen ── */}
+      {currentScreen === "responses" && (
+        <div key="responses" className={animClass}>
+          <SubHeader />
+          <SettingsSection title="Ответы бота" index={0}>
+            <SettingsSelectRow
+              icon={Languages}
+              tone="teal"
+              label="Источник"
+              value={settings?.response_style_source ?? "mix"}
+              options={RESPONSE_STYLE_OPTIONS}
+              disabled={pending === "response_style_source"}
+              onChange={(value) =>
+                patch("response_style_source", { settings: { response_style_source: value } })
+              }
+            />
+            <SettingsSelectRow
+              icon={MessageSquare}
+              tone="emerald"
+              label="Тон"
+              value={settings?.courier_template_style ?? "neutral"}
+              options={COURIER_TEMPLATE_OPTIONS}
+              disabled={pending === "courier_template_style"}
+              onChange={(value) =>
+                patch("courier_template_style", { settings: { courier_template_style: value } })
+              }
+            />
+          </SettingsSection>
+        </div>
+      )}
 
-      <SettingsSection title="Данные" index={5}>
-        <CompletedRow />
-        <TrashRow trashCounts={trashCounts} />
-      </SettingsSection>
+      {/* ── Behavior sub-screen ── */}
+      {currentScreen === "behavior" && (
+        <div key="behavior" className={animClass}>
+          <SubHeader />
+          <SettingsSection title="Поведение разбора" index={0}>
+            <SettingsToggleRow
+              icon={ListChecks}
+              tone="sky"
+              label="Первый шаг"
+              hint="Абстрактную задачу превращаю в конкретный первый шаг 🎯"
+              checked={settings?.concretize_tasks ?? false}
+              disabled={pending === "concretize_tasks"}
+              onChange={(next) =>
+                patch("concretize_tasks", { settings: { concretize_tasks: next } })
+              }
+            />
+            <SettingsToggleRow
+              icon={Inbox}
+              tone="amber"
+              label="Входящие"
+              hint="Сомнительные и большие разборы отправляю на проверку во вкладку «Входящие»"
+              checked={settings?.review_enabled ?? true}
+              disabled={pending === "review_enabled"}
+              onChange={(next) =>
+                patch("review_enabled", { settings: { review_enabled: next } })
+              }
+            />
+            <SettingsSelectRow
+              icon={ShieldCheck}
+              tone="violet"
+              label="Критик"
+              value={settings?.critic_mode ?? "confidence"}
+              options={CRITIC_MODE_OPTIONS}
+              disabled={pending === "critic_mode"}
+              onChange={(value) => patch("critic_mode", { settings: { critic_mode: value } })}
+            />
+            <SettingsSelectRow
+              icon={Moon}
+              tone="slate"
+              label="«На неделе»"
+              value={settings?.week_due_semantic ?? "deadline_sunday"}
+              options={WEEK_DUE_SEMANTIC_OPTIONS}
+              disabled={pending === "week_due_semantic"}
+              onChange={(value) =>
+                patch("week_due_semantic", { settings: { week_due_semantic: value } })
+              }
+            />
+          </SettingsSection>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Main-list category row ──────────────────────────────────────────────
+
+function MainCategoryRow({
+  emoji,
+  label,
+  summary,
+  onClick,
+}: {
+  emoji: string;
+  label: string;
+  summary?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="ease-apple flex min-h-[56px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-bento/60 active:bg-bento"
+    >
+      <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[18px]" aria-hidden>
+          {emoji}
+        </span>
+        <span className="truncate font-medium">{label}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">
+        {summary && (
+          <span className="max-w-[130px] truncate">{summary}</span>
+        )}
+        <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
+      </span>
+    </button>
   );
 }
 

@@ -50,6 +50,16 @@ interface TelegramCloudStorage {
   getKeys: (callback: (error: Error | null, keys: string[]) => void) => void;
 }
 
+// Bot API 6.1+ BackButton — available in Telegram 8.0+.
+// Older clients don't expose this field at all, so it's optional.
+interface TelegramBackButton {
+  isVisible: boolean;
+  show: () => void;
+  hide: () => void;
+  onClick: (callback: () => void) => void;
+  offClick: (callback: () => void) => void;
+}
+
 export interface TelegramWebApp {
   initData: string;
   initDataUnsafe: {
@@ -68,6 +78,7 @@ export interface TelegramWebApp {
   ready: () => void;
   close: () => void;
   HapticFeedback: TelegramHapticFeedback;
+  BackButton?: TelegramBackButton;
   CloudStorage?: TelegramCloudStorage;
   onEvent: (event: string, callback: () => void) => void;
   offEvent: (event: string, callback: () => void) => void;
