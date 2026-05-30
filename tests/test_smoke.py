@@ -40,11 +40,16 @@ def test_app_importable() -> None:
 
 
 def test_healthz_ok() -> None:
-    """`/healthz` is a 200 OK liveness probe."""
+    """`/healthz` is a 200 OK liveness probe with light diagnostics."""
     with TestClient(app) as client:
         response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    # Diagnostics fields (see ``app.main::healthz``). Probe only cares
+    # about ``status``, but humans use the rest.
+    assert "env" in body
+    assert "models" in body
 
 
 def test_settings_default_env(_clean_env: None) -> None:
