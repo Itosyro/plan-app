@@ -29,6 +29,7 @@ import { LayoutSheet } from "./components/LayoutSheet";
 import { SkeletonAppShell } from "./components/Skeleton";
 import { TaskCard } from "./components/TaskCard";
 import { invalidate, mutateCache } from "./lib/cache";
+import { useCachedResource } from "./lib/useCachedResource";
 import { localDateKey } from "./lib/format";
 
 // Screens that aren't part of the first paint (the Tasks tab) are
@@ -117,7 +118,6 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [horizons, setHorizons] = useState<Horizon[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [counts, setCounts] = useState<TaskCounts>(EMPTY_COUNTS);
   const [activeHorizon, setActiveHorizon] = useState<string>(DEFAULT_HORIZON);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -195,30 +195,52 @@ export default function App() {
     }
   }, []);
 
-  const loadTasks = useCallback(
-    async (horizon: string, categoryId: number | null) => {
-      try {
-        const resp = await apiClient.tasks({
-          horizon,
-          category_id: categoryId ?? undefined,
-          // Phase 7e/C: pull recently-done tasks too so they can linger
-          // struck-through in the list; the render filter hides ones
-          // completed > 24h ago (they live in the «Выполненные» screen).
-          include_done: true,
-        });
-        setTasks(resp);
-      } catch (err) {
-        if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
-          console.error("loadTasks failed", err);
-        }
-      }
+  // Per (horizon, category) key. Reused below as the optimistic-mutate
+  // target and the explicit-invalidation target.
+  const tasksCacheKey = `tasks:${activeHorizon}:${selectedCategory ?? "all"}`;
+  const {
+    data: tasksData,
+    refetch: refetchTasks,
+  } = useCachedResource<Task[]>(
+    tasksCacheKey,
+    async () => {
+      if (!prefsHydrated || authError !== null) return [];
+      return apiClient.tasks({
+        horizon: activeHorizon,
+        category_id: selectedCategory ?? undefined,
+        // Phase 7e/C: pull recently-done tasks too so they can linger
+        // struck-through in the list; the render filter hides ones
+        // completed > 24h ago (they live in the «Выполненные» screen).
+        include_done: true,
+      });
+    },
+    [activeHorizon, selectedCategory, prefsHydrated, authError],
+  );
+  const tasks = tasksData ?? [];
+
+  // Optimistic badge tick. Mutating a task locally (done / reopen /
+  // move) used to fire ``loadCounts()`` immediately after the patch —
+  // one extra RTT per action just to redraw the per-horizon badge.
+  // Most mutations are simple +/- 1 on one or two slugs, so we do
+  // the arithmetic in the client and reconcile only on error.
+  const adjustCount = useCallback(
+    (slug: string | null | undefined, delta: number) => {
+      if (slug === null || slug === undefined) return;
+      setCounts((prev) => {
+        const current = (prev as unknown as Record<string, number>)[slug];
+        if (typeof current !== "number") return prev;
+        return {
+          ...prev,
+          [slug]: Math.max(0, current + delta),
+        } as TaskCounts;
+      });
     },
     [],
   );
 
-  // Phase 5.4: per-horizon badges. Single round-trip → counts for all
-  // horizons. Refreshed on every mutation so badges stay live without
-  // optimistic logic per-action (cheap query, predictable answer).
+  // Full reconcile from the server. Still used on shell load and on
+  // mutation-error paths; no longer fires after every successful
+  // local action — ``adjustCount`` covers that case.
   const loadCounts = useCallback(async () => {
     try {
       const resp = await apiClient.taskCounts();
@@ -333,12 +355,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!authError && prefsHydrated) {
-      loadTasks(activeHorizon, selectedCategory);
-    }
-  }, [activeHorizon, selectedCategory, authError, prefsHydrated, loadTasks]);
-
   // Counts don't depend on the active horizon — fetch once when the
   // shell is ready and again after each successful mutation. Category
   // filter does NOT scope the badges (we want to show «3 tasks today»
@@ -394,65 +410,85 @@ export default function App() {
       // with a fresh completed_at — the render filter keeps it visible
       // for 24h. No more 350ms removal; re-tap (handleReopen) undoes it.
       const nowIso = new Date().toISOString();
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id ? { ...t, status: "done", completed_at: nowIso } : t,
-        ),
+      let touchedSlug: string | null | undefined;
+      mutateCache<Task[]>(tasksCacheKey, (prev) =>
+        (prev ?? []).map((t) => {
+          if (t.id !== id) return t;
+          touchedSlug = t.horizon_slug;
+          return { ...t, status: "done", completed_at: nowIso };
+        }),
       );
+      adjustCount(touchedSlug, -1);
       try {
         await apiClient.patchTask(id, { status: "done" });
-        void loadCounts();
         void refreshCategories();
         invalidate(CAL_CACHE_PREFIX, { prefix: true });
         invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
-        loadTasks(activeHorizon, selectedCategory);
+        // Optimism was wrong — reconcile both list and counts from
+        // the server so the user doesn't see a phantom done-tick.
+        refetchTasks();
+        void loadCounts();
         console.error("done failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
+    [tasksCacheKey, adjustCount, refetchTasks, loadCounts, refreshCategories],
   );
 
   const handleReopen = useCallback(
     async (id: number) => {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id ? { ...t, status: "new", completed_at: null } : t,
-        ),
+      let touchedSlug: string | null | undefined;
+      mutateCache<Task[]>(tasksCacheKey, (prev) =>
+        (prev ?? []).map((t) => {
+          if (t.id !== id) return t;
+          touchedSlug = t.horizon_slug;
+          return { ...t, status: "new", completed_at: null };
+        }),
       );
+      adjustCount(touchedSlug, +1);
       try {
         await apiClient.patchTask(id, { status: "new" });
-        void loadCounts();
         void refreshCategories();
         invalidate(CAL_CACHE_PREFIX, { prefix: true });
         invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
-        loadTasks(activeHorizon, selectedCategory);
+        refetchTasks();
+        void loadCounts();
         console.error("reopen failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories],
+    [tasksCacheKey, adjustCount, refetchTasks, loadCounts, refreshCategories],
   );
 
   const handleMove = useCallback(
     async (id: number, slug: HorizonSlug) => {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, horizon_slug: slug } : t)),
-      );
+      let oldSlug: string | null | undefined;
+      mutateCache<Task[]>(tasksCacheKey, (prev) => {
+        const next = (prev ?? []).map((t) => {
+          if (t.id !== id) return t;
+          oldSlug = t.horizon_slug;
+          return { ...t, horizon_slug: slug };
+        });
+        // If the moved task left the currently-visible horizon, drop it
+        // from this view's cached list — matches the post-patch refresh
+        // the old code used to do via setTasks(filter).
+        return slug !== activeHorizon ? next.filter((t) => t.id !== id) : next;
+      });
+      if (oldSlug !== slug) {
+        adjustCount(oldSlug, -1);
+        adjustCount(slug, +1);
+      }
       try {
         await apiClient.patchTask(id, { horizon_slug: slug });
-        if (slug !== activeHorizon) {
-          setTasks((prev) => prev.filter((t) => t.id !== id));
-        }
-        void loadCounts();
         invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
-        loadTasks(activeHorizon, selectedCategory);
+        refetchTasks();
+        void loadCounts();
         invalidate(KANBAN_CACHE_KEY);
         console.error("move failed", err);
       }
     },
-    [activeHorizon, selectedCategory, loadTasks, loadCounts],
+    [tasksCacheKey, activeHorizon, adjustCount, refetchTasks, loadCounts],
   );
 
   // Kanban drop: re-assign the task's category (null = "Без категории"
@@ -460,21 +496,29 @@ export default function App() {
   // failure we invalidate the kanban cache to refetch and revert.
   const handleSetCategory = useCallback(
     async (id: number, categoryId: number | null) => {
+      // Patch both the kanban cache (visible to the user) and the
+      // tasks-list cache so a switch to the list view shows the new
+      // category without a refetch.
       mutateCache<Task[]>(KANBAN_CACHE_KEY, (prev) =>
+        (prev ?? []).map((t) =>
+          t.id === id ? { ...t, category_id: categoryId } : t,
+        ),
+      );
+      mutateCache<Task[]>(tasksCacheKey, (prev) =>
         (prev ?? []).map((t) =>
           t.id === id ? { ...t, category_id: categoryId } : t,
         ),
       );
       try {
         await apiClient.patchTask(id, { category_id: categoryId });
-        void loadCounts();
         void refreshCategories();
       } catch (err) {
         invalidate(KANBAN_CACHE_KEY);
+        refetchTasks();
         console.error("set category failed", err);
       }
     },
-    [loadCounts, refreshCategories],
+    [tasksCacheKey, refetchTasks, refreshCategories],
   );
 
   // "+ Раздел" on the board creates a category = new column.
@@ -496,18 +540,30 @@ export default function App() {
   }, []);
 
   const handleDetailMutated = useCallback(() => {
-    void loadTasks(activeHorizon, selectedCategory);
+    refetchTasks();
     void loadCounts();
     void refreshCategories();
     invalidate(CAL_CACHE_PREFIX, { prefix: true });
-  }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
+    invalidate(KANBAN_CACHE_KEY);
+  }, [refetchTasks, loadCounts, refreshCategories]);
 
   // Optimistic delete from the detail screen: drop the row from the list
   // instantly so closing the detail reveals it already gone. The detail's
   // background DELETE then calls ``handleDetailMutated`` to reconcile.
-  const handleTaskOptimisticDelete = useCallback((id: number) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  const handleTaskOptimisticDelete = useCallback(
+    (id: number) => {
+      let removedSlug: string | null | undefined;
+      mutateCache<Task[]>(tasksCacheKey, (prev) => {
+        const list = prev ?? [];
+        const hit = list.find((t) => t.id === id);
+        removedSlug = hit?.horizon_slug;
+        return list.filter((t) => t.id !== id);
+      });
+      // Done tasks were already off the count; only adjust for live ones.
+      if (removedSlug) adjustCount(removedSlug, -1);
+    },
+    [tasksCacheKey, adjustCount],
+  );
 
   const handleOpenNote = useCallback((id: number) => {
     haptic("select");
@@ -904,7 +960,7 @@ export default function App() {
             categories={categories}
             onResolved={() => {
               void loadInboxCount();
-              void loadTasks(activeHorizon, selectedCategory);
+              refetchTasks();
               void loadCounts();
               void refreshCategories();
               invalidate(CAL_CACHE_PREFIX, { prefix: true });
