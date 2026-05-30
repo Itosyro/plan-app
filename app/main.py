@@ -42,6 +42,7 @@ from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
+from app.shared.sentry import init_sentry
 from app.workers.keepalive import start_keepalive, stop_keepalive
 from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
 
@@ -100,6 +101,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     settings = settings or get_settings()
     configure_logging()
+    # Optional crash reporter. No-op if ``SENTRY_DSN`` is unset.
+    # Initialised before any router is wired up so the FastAPI
+    # integration can hook into the app's middleware stack.
+    init_sentry(settings)
     logger = get_logger(__name__)
 
     bot: Bot | None = None

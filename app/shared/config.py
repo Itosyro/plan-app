@@ -107,6 +107,17 @@ class Settings(BaseSettings):
     pipeline_llm_fanout: int = 3
     pipeline_call_timeout_seconds: float = 30.0
 
+    # Optional Sentry crash reporting. ``None`` (default) keeps the SDK
+    # dormant — nothing is sent. Set ``SENTRY_DSN`` in prod to start
+    # capturing unhandled exceptions from the FastAPI side AND from the
+    # background pipeline tasks (which currently disappear into a
+    # ``logger.exception`` blob nobody reads). ``traces_sample_rate``
+    # at 0.0 disables performance/transaction monitoring — free-tier
+    # Sentry quota is for errors, not traces.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    sentry_environment: str | None = None  # defaults to ``env`` field
+
     @property
     def groq_keys_list(self) -> list[str]:
         """Parse `GROQ_API_KEYS` into a clean list of keys."""
