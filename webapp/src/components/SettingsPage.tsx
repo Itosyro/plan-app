@@ -361,8 +361,63 @@ export function SettingsPage({ me, onUpdated }: Props) {
                 }
               />
             </SettingsSection>
-            <SettingsSection title="Уведомления" index={1}>
-              <BellRow />
+            <SettingsSection title="Напоминания" index={1}>
+              <Row>
+                <RowLabel
+                  icon={Bell}
+                  tone="rose"
+                  label="В тот же день"
+                  hint="За сколько до срока"
+                />
+              </Row>
+              <OffsetChipRow
+                offsets={settings?.default_reminder_offsets?.same_day ?? []}
+                presets={SAME_DAY_PRESETS}
+                disabled={pending === "default_reminder_offsets"}
+                onChange={(next) =>
+                  patch("default_reminder_offsets", {
+                    settings: {
+                      default_reminder_offsets: {
+                        same_day: next,
+                        multi_day:
+                          settings?.default_reminder_offsets?.multi_day ?? [],
+                      },
+                    },
+                  })
+                }
+              />
+              <Row>
+                <RowLabel
+                  icon={Bell}
+                  tone="rose"
+                  label="За несколько дней"
+                  hint="Когда срок завтра и позже"
+                />
+              </Row>
+              <OffsetChipRow
+                offsets={settings?.default_reminder_offsets?.multi_day ?? []}
+                presets={MULTI_DAY_PRESETS}
+                disabled={pending === "default_reminder_offsets"}
+                onChange={(next) =>
+                  patch("default_reminder_offsets", {
+                    settings: {
+                      default_reminder_offsets: {
+                        same_day:
+                          settings?.default_reminder_offsets?.same_day ?? [],
+                        multi_day: next,
+                      },
+                    },
+                  })
+                }
+              />
+              <Row>
+                <RowLabel
+                  icon={Bell}
+                  tone="slate"
+                  label="Голосом"
+                  hint="«напомни в 15:00 про звонок» — поставит/перенесёт"
+                />
+              </Row>
             </SettingsSection>
           </div>
         </div>
@@ -616,14 +671,69 @@ function SettingsToggleRow({
 
 // ── Bell info row (static for now) ──────────────────────────────────
 
-function BellRow() {
+// ── Reminder offsets editor (WS4) ───────────────────────────────────
+//
+// Two presets — ``same_day`` (task due today) and ``multi_day`` (task
+// due tomorrow or later) — each rendered as a row of toggleable chips.
+// A chip stores its offset in minutes; toggling adds/removes the value
+// from the array, and we PATCH the whole structure server-side. The
+// server sorts desc + dedups + bounds 0..10080 min, so the UI just
+// needs to send a clean list — no further client-side validation.
+
+const SAME_DAY_PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 15, label: "15 мин" },
+  { minutes: 30, label: "30 мин" },
+  { minutes: 60, label: "1 час" },
+  { minutes: 240, label: "4 часа" },
+  { minutes: 720, label: "12 часов" },
+];
+
+const MULTI_DAY_PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 60, label: "1 час" },
+  { minutes: 240, label: "4 часа" },
+  { minutes: 1440, label: "1 день" },
+  { minutes: 2880, label: "2 дня" },
+  { minutes: 10080, label: "1 неделя" },
+];
+
+interface OffsetEditorProps {
+  offsets: number[];
+  presets: { minutes: number; label: string }[];
+  disabled: boolean;
+  onChange: (next: number[]) => void;
+}
+
+function OffsetChipRow({ offsets, presets, disabled, onChange }: OffsetEditorProps) {
+  const selected = new Set(offsets);
   return (
-    <Row>
-      <RowLabel icon={Bell} tone="rose" label="Напоминания" hint="Управляются ботом / голосом" />
-      <span className="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600">
-        Включены
-      </span>
-    </Row>
+    <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
+      {presets.map((p) => {
+        const isOn = selected.has(p.minutes);
+        return (
+          <button
+            key={p.minutes}
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              haptic("select");
+              const next = new Set(selected);
+              if (isOn) next.delete(p.minutes);
+              else next.add(p.minutes);
+              onChange([...next].sort((a, b) => b - a));
+            }}
+            className={
+              "ease-apple rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-150 active:scale-95 " +
+              (isOn
+                ? "bg-tg-button text-tg-button-text shadow-bento"
+                : "bg-bento text-tg-hint ring-1 ring-black/[0.04] hover:text-tg-text") +
+              (disabled ? " opacity-50" : "")
+            }
+          >
+            {p.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

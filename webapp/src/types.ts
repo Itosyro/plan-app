@@ -85,6 +85,14 @@ export interface UserSettings {
   // When true, uncertain/large breakdowns are routed to the «Входящие»
   // review tab instead of being applied directly. Defaults to true.
   review_enabled: boolean;
+  // WS4: default reminder advance offsets (minutes before ``due_at``).
+  // ``same_day`` applies to tasks due today, ``multi_day`` to tasks
+  // due tomorrow or later. Server keeps each list sorted descending
+  // (earliest reminder first) and bounded to 5 entries × 0..10080 min.
+  default_reminder_offsets: {
+    same_day: number[];
+    multi_day: number[];
+  };
 }
 
 // Mirrors app/api/schemas.py::UserSettingsUpdateIn — every field
@@ -99,6 +107,10 @@ export interface UserSettingsUpdate {
   week_due_semantic?: string;
   concretize_tasks?: boolean;
   review_enabled?: boolean;
+  default_reminder_offsets?: {
+    same_day: number[];
+    multi_day: number[];
+  };
 }
 
 // Mirrors app/api/schemas.py::MeUpdateIn.
