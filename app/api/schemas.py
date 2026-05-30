@@ -186,6 +186,25 @@ class NoteUpdateIn(BaseModel):
 # ── /api/me ──────────────────────────────────────────────────────────
 
 
+class ReminderOffsets(_ConfiguredModel):
+    """Default reminder advance-offsets (minutes before ``due_at``).
+
+    Two presets covering the two task types: ``same_day`` for tasks
+    due today, ``multi_day`` for tasks ≥ 1 day out. Each list is
+    sorted descending so the bot fires the earliest reminder first.
+
+    Constraints are validated server-side (lists ≤ 5 entries, each
+    value 0…10080 = one week of minutes). The defaults baked into
+    ``UserSettings.default_reminder_offsets`` are
+    ``{"same_day": [60, 15], "multi_day": [1440, 60]}``.
+    """
+
+    same_day: list[int] = Field(
+        default_factory=list, max_length=5, description="Minutes before due_at, sorted desc."
+    )
+    multi_day: list[int] = Field(default_factory=list, max_length=5)
+
+
 class UserSettingsOut(_ConfiguredModel):
     critic_mode: str
     morning_digest_at: str
@@ -195,6 +214,7 @@ class UserSettingsOut(_ConfiguredModel):
     week_due_semantic: str
     concretize_tasks: bool
     review_enabled: bool
+    default_reminder_offsets: ReminderOffsets
 
 
 class UserSettingsUpdateIn(BaseModel):
@@ -205,6 +225,10 @@ class UserSettingsUpdateIn(BaseModel):
     ``/settings`` callbacks (``ALLOWED_SETTING_VALUES``). Unknown values
     bubble up as 422 from the service layer; unknown keys are rejected
     here by ``extra="forbid"``.
+
+    ``default_reminder_offsets`` bypasses the allow-list because it's a
+    structured JSON value, not an enum; the handler validates lengths
+    and integer ranges before persisting.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -217,6 +241,7 @@ class UserSettingsUpdateIn(BaseModel):
     week_due_semantic: str | None = None
     concretize_tasks: bool | None = None
     review_enabled: bool | None = None
+    default_reminder_offsets: ReminderOffsets | None = None
 
 
 class MeUpdateIn(BaseModel):

@@ -19,7 +19,7 @@ import {
   ListTree,
 } from "lucide-react";
 import { apiClient } from "../api/client";
-import { getCache, setCache } from "../lib/cache";
+import { useCachedResource } from "../lib/useCachedResource";
 import { categoryColor, localDateKey, localTime } from "../lib/format";
 import { haptic } from "../lib/telegram";
 import { StorageKeys, storageGet, storageSet } from "../lib/storage";
@@ -38,11 +38,13 @@ const MODE_OPTIONS: SegmentOption<CalMode>[] = [
 
 interface Props {
   tz: string;
-  refreshSignal: number;
-  /** Optimistic drop payload: shift one task's due_at in place. */
-  optimisticReschedule?: { id: number; dueAt: string; nonce: number } | null;
   onOpen: (id: number) => void;
 }
+
+/** Cache-key prefix for CalendarView windows. App.tsx uses it to
+ *  invalidate / mutate every cached window after a task changes
+ *  without knowing which window the user is currently viewing. */
+export const CAL_CACHE_PREFIX = "cal:";
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const MONTHS = [
@@ -69,13 +71,12 @@ function timeKey(t: Task): string {
   return t.due_at ?? "";
 }
 
-export function CalendarView({ tz, refreshSignal, optimisticReschedule, onOpen }: Props) {
+export function CalendarView({ tz, onOpen }: Props) {
   const now = useMemo(() => new Date(), []);
   const [mode, setMode] = useState<CalMode>("month");
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(now));
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>(() => todayKey(tz));
 
   // Hydrate persisted mode once.
@@ -113,46 +114,26 @@ export function CalendarView({ tz, refreshSignal, optimisticReschedule, onOpen }
     return { dueAtFrom: start.toISOString(), dueAtTo: end.toISOString() };
   }, [mode, viewYear, viewMonth, weekStart, now]);
 
-  useEffect(() => {
-    let cancelled = false;
-    // Show the last-known tasks for this exact window instantly (so
-    // navigating back to a visited month/week doesn't flash empty),
-    // then revalidate in the background.
-    const cacheKey = `cal:${dueAtFrom}:${dueAtTo}`;
-    const cached = getCache<Task[]>(cacheKey);
-    if (cached) setTasks(cached);
-    void (async () => {
-      try {
-        const resp = await apiClient.tasks({
-          include_done: true,
-          due_at_from: dueAtFrom,
-          due_at_to: dueAtTo,
-        });
-        const dated = resp.filter((t) => t.due_at !== null);
-        setCache(cacheKey, dated);
-        if (!cancelled) setTasks(dated);
-      } catch (err) {
-        if (!cancelled) console.error("calendar load failed", err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshSignal, dueAtFrom, dueAtTo]);
-
-  // Apply an optimistic reschedule the instant App.tsx resolves a day
-  // drop — the event re-buckets onto the target day with no refetch.
-  // Keyed on ``nonce`` so an identical re-drop still re-fires. Cache for
-  // the current window is updated so a quick re-nav doesn't flash stale.
-  useEffect(() => {
-    if (!optimisticReschedule) return;
-    const { id, dueAt } = optimisticReschedule;
-    setTasks((prev) => {
-      const next = prev.map((t) => (t.id === id ? { ...t, due_at: dueAt } : t));
-      setCache(`cal:${dueAtFrom}:${dueAtTo}`, next);
-      return next;
-    });
-  }, [optimisticReschedule?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Window-keyed cache: revisiting a previously-seen month/week
+  // repaints instantly; navigating to a fresh window fetches. The
+  // ``cal:`` prefix subscription wakes us on cross-screen mutations
+  // (App.tsx reschedule / detail edits) without needing to know the
+  // exact current key.
+  const cacheKey = `${CAL_CACHE_PREFIX}${dueAtFrom}:${dueAtTo}`;
+  const { data } = useCachedResource<Task[]>(
+    cacheKey,
+    async () => {
+      const resp = await apiClient.tasks({
+        include_done: true,
+        due_at_from: dueAtFrom,
+        due_at_to: dueAtTo,
+      });
+      return resp.filter((t) => t.due_at !== null);
+    },
+    [dueAtFrom, dueAtTo],
+    { invalidationPrefix: CAL_CACHE_PREFIX },
+  );
+  const tasks = data ?? [];
 
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();

@@ -37,13 +37,12 @@ import instructor
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from groq import AsyncGroq
 
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-COURIER_MODEL = "llama-3.1-8b-instant"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "courier.md"
 _prompt_cache: str | None = None
@@ -165,7 +164,7 @@ async def generate_courier_reply(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=COURIER_MODEL,
+            model=get_models().courier,
             response_model=CourierReply,
             messages=[
                 {"role": "system", "content": system_prompt},

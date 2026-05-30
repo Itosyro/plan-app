@@ -6,6 +6,7 @@ Phase 2.2 adds the full pipeline: split → time → classify → persist → re
 Phase 2.3 adds the Critic (conditional review of classifier output).
 Phase 2.3c replaces the deterministic reply with Courier.
 Phase 2.3d adds reorder detection (move task to a different horizon).
+WS3: accept replies/forwards of voice or text as pipeline input.
 
 The pipeline body itself lives in ``app/bot/routers/_pipeline.py`` — this
 file is just the aiogram glue. See ``docs/REVIEW-2026-05-09.md::I-4``.
@@ -14,23 +15,34 @@ file is just the aiogram glue. See ``docs/REVIEW-2026-05-09.md::I-4``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from aiogram import F, Router
 from aiogram.types import Message
 
+from app.ai.whisper import transcribe_voice
 from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
+from app.bot.routers._message_payload import (
+    TextPayload,
+    VoicePayload,
+    looks_like_reply_to_voice,
+    resolve_effective_payload,
+)
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
     run_pipeline,
 )
+from app.bot.routers.voice import _download_voice
 from app.bot.services import (
     get_or_create_user,
     get_user_settings,
+    log_ai_run,
     store_inbox_text,
+    store_inbox_voice,
 )
 from app.bot.streaming import stream_reply
 from app.db.base import session_scope
@@ -45,7 +57,7 @@ def create_router() -> Router:
 
     @router.message(F.text)
     async def handle_text(message: Message) -> None:
-        """Persist incoming text, run full pipeline in background, reply."""
+        """Persist incoming text (or resolved reply/forward), run full pipeline, reply."""
         if message.from_user is None or message.text is None:
             return
 
@@ -58,6 +70,66 @@ def create_router() -> Router:
             )
             return
 
+        groq_router = get_groq_router()
+
+        # Acknowledge the message *before* any potentially-slow work so
+        # the user gets immediate feedback. If this is a reply to a voice
+        # message, the resolver below will spend a few seconds on Whisper —
+        # without the early placeholder the user sees nothing happening.
+        chat_id = message.chat.id
+        user_message_id = message.message_id
+        if message.bot is not None:
+            await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.RECEIVE)
+        will_transcribe = looks_like_reply_to_voice(message)
+        placeholder = await message.answer(
+            "🎤 Расшифровываю голосовое…" if will_transcribe else "⏳ Разбираю…",
+            reply_parameters=reply_to(chat_id=chat_id, message_id=user_message_id),
+        )
+
+        # Resolve the effective payload *before* the DB session so we can
+        # store the actual content (not the instruction trigger) in inbox.
+        # For reply-to-voice this calls Whisper — and the early placeholder
+        # above is already on screen so the user sees progress.
+        # Resolver can raise: Whisper rate-limit cascade
+        # (GroqKeysExhaustedError), per-call timeout, download failure.
+        # Without a try/except here the placeholder would hang forever
+        # on "🎤 Расшифровываю…" and the user has no feedback — which is
+        # the exact UX bug they reported (\"переотвечаю на гс — не разбирает\").
+        try:
+            payload = await resolve_effective_payload(
+                message,
+                transcribe=transcribe_voice,  # type: ignore[arg-type]
+                download_voice=_download_voice,
+                groq_router=groq_router,
+            )
+        except Exception:
+            logger.exception(
+                "text.resolve_failed",
+                tg_user_id=message.from_user.id,
+                will_transcribe=will_transcribe,
+            )
+            if message.bot is not None:
+                await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.ERROR)
+            with contextlib.suppress(Exception):
+                await placeholder.edit_text(
+                    "Не получилось расшифровать реплай-голосовое — попробуй ещё раз "
+                    "через минуту или перешли его снова."
+                    if will_transcribe
+                    else "Ошибка при разборе — попробуй ещё раз."
+                )
+            return
+
+        if payload is None:
+            try:
+                await placeholder.edit_text(
+                    "Не нашёл, на что ты отвечаешь — перешли голосовое или текст ещё раз."
+                )
+            except Exception:
+                await message.answer(
+                    "Не нашёл, на что ты отвечаешь — перешли голосовое или текст ещё раз."
+                )
+            return
+
         async with session_scope() as session:
             user, _ = await get_or_create_user(
                 session,
@@ -68,12 +140,36 @@ def create_router() -> Router:
                 await message.answer(NOT_ONBOARDED)
                 return
             assert user.id is not None
-            entry = await store_inbox_text(
-                session,
-                user_id=user.id,
-                raw_text=message.text,
-                telegram_message_id=message.message_id,
-            )
+
+            # Store the *resolved* payload so the audit trail reflects what
+            # actually went through the LLM pipeline.
+            if isinstance(payload, TextPayload):
+                entry = await store_inbox_text(
+                    session,
+                    user_id=user.id,
+                    raw_text=payload.text,
+                    telegram_message_id=message.message_id,
+                )
+            elif isinstance(payload, VoicePayload):
+                # VoicePayload — we already have the transcript from Whisper.
+                entry = await store_inbox_voice(
+                    session,
+                    user_id=user.id,
+                    transcript=payload.transcript,
+                    telegram_message_id=message.message_id,
+                )
+                if groq_router is not None:
+                    from app.ai.models import get_models
+
+                    await log_ai_run(
+                        session,
+                        user_id=user.id,
+                        inbox_id=entry.id,
+                        stage="whisper",
+                        model=get_models().whisper,
+                        key_index=groq_router.current_key_id,
+                    )
+
             user_id = user.id
             user_tz = user.tz
             inbox_id = entry.id
@@ -92,40 +188,32 @@ def create_router() -> Router:
             concretize_tasks = settings.concretize_tasks if settings else False
             review_enabled = settings.review_enabled if settings else True
 
+        effective_text = payload.text if isinstance(payload, TextPayload) else payload.transcript
         logger.info(
             "inbox.text_stored",
             user_id=message.from_user.id,
-            text_len=len(message.text),
+            text_len=len(effective_text),
+            payload_kind="text" if isinstance(payload, TextPayload) else "voice_transcript",
         )
 
-        groq_router = get_groq_router()
         if groq_router is None:
-            await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
+            try:
+                await placeholder.edit_text("AI-разбор временно недоступен — сохраняю во входящие.")
+            except Exception:
+                await message.answer("AI-разбор временно недоступен — сохраняю во входящие.")
             return
 
-        msg_text = message.text
         from_user_id = message.from_user.id
-        chat_id = message.chat.id
-        user_message_id = message.message_id
 
-        # Tell the user "I see you" immediately via a reaction. Bot API
-        # 10.0 ``setMessageReaction`` is cheap, doesn't bump unread badges
-        # in the chat list, and reads as ack without producing yet
-        # another bubble. Best-effort — never blocks the pipeline.
-        if message.bot is not None:
-            await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.RECEIVE)
-
-        # Send a placeholder and edit it progressively once the
-        # pipeline finishes. The user sees "⏳ Разбираю…" instantly,
-        # then the real reply types itself line-by-line.
-        # ``reply_parameters`` anchors the entire reply chain to the
-        # user's message — Telegram clients render a "↗" link the user
-        # can tap to scroll back to what they originally said. Bot API
-        # 7.0+ feature, harmless on older clients.
-        placeholder = await message.answer(
-            "⏳ Разбираю…",
-            reply_parameters=reply_to(chat_id=chat_id, message_id=user_message_id),
-        )
+        # If we already transcribed a reply-target voice, the placeholder
+        # currently shows "🎤 Расшифровываю…" — swap to the pipeline copy
+        # so the user knows we've moved on to the actual parsing stage.
+        # Best-effort: a failed edit is purely cosmetic.
+        if will_transcribe:
+            try:
+                await placeholder.edit_text("⏳ Разбираю…")
+            except Exception:
+                logger.debug("pipeline.placeholder_handoff_failed", exc_info=True)
 
         async def _on_stage(stage_text: str) -> None:
             # Live-draft: edit the placeholder with a progress line while
@@ -136,11 +224,13 @@ def create_router() -> Router:
             except Exception:
                 logger.debug("pipeline.stage_edit_failed", exc_info=True)
 
+        pipeline_text = effective_text
+
         async def _background() -> None:
             try:
                 reply, keyboard = await run_pipeline(
                     groq_router,
-                    msg_text,
+                    pipeline_text,
                     from_user_id,
                     user_id,
                     user_tz,
@@ -170,7 +260,7 @@ def create_router() -> Router:
                 logger.exception(
                     "pipeline.error",
                     tg_user_id=from_user_id,
-                    text_len=len(msg_text),
+                    text_len=len(pipeline_text),
                 )
                 if message.bot is not None:
                     await reactions.set_reaction(

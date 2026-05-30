@@ -213,6 +213,124 @@ def test_classifier_result_accepts_cancel_reminder_intent() -> None:
     assert intent.intent == "cancel_reminder"
 
 
+def test_classifier_result_accepts_set_reminder_intent() -> None:
+    intent = EditIntent(
+        intent="set_reminder",
+        task_query="звонок",
+        new_due_raw="15:00",
+        confidence=0.9,
+    )
+    assert intent.intent == "set_reminder"
+    assert intent.new_due_raw == "15:00"
+
+
+# ── WS4 set_reminder executor ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_edit_set_reminder_replaces_existing(
+    session: AsyncSession,
+) -> None:
+    """Setting a reminder cancels every prior pending reminder for the
+    task and persists exactly one new pending row at the parsed time."""
+    user_id, task_id, _ids = await _create_task_with_reminders(
+        session,
+        telegram_id=905,
+        title="Зум-колл",
+    )
+    intent = EditIntent(
+        intent="set_reminder",
+        task_query="Зум",
+        # Pick a far-future absolute datetime so dateparser lands
+        # squarely in the future regardless of when this test runs.
+        new_due_raw="2099-01-01 15:30",
+        confidence=0.95,
+    )
+
+    reply, kb = await execute_edit(intent, user_id)
+
+    assert kb is None
+    assert "Напомню" in reply
+    assert "Зум-колл" in reply
+    # Mentions the replacement so the user knows old reminders are gone.
+    assert "заменил" in reply.lower()
+
+    rows = (await session.exec(select(Reminder).where(Reminder.user_id == user_id))).all()
+    pending = [r for r in rows if r.status == "pending"]
+    cancelled = [r for r in rows if r.status == "cancelled"]
+    assert len(pending) == 1
+    assert len(cancelled) == 2  # the two seeded reminders
+    assert pending[0].fire_at == datetime(2099, 1, 1, 15, 30)
+
+    # Audit trail records the new reminder.
+    events = (
+        await session.exec(
+            select(TaskEvent).where(
+                TaskEvent.task_id == task_id, TaskEvent.kind == "reminder_scheduled"
+            )
+        )
+    ).all()
+    assert len(events) == 1
+    assert events[0].payload_json is not None
+    assert events[0].payload_json["replaced_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_edit_set_reminder_rejects_past(
+    session: AsyncSession,
+) -> None:
+    """A reminder in the past is refused — the worker would never fire it."""
+    user_id, _task_id, _ids = await _create_task_with_reminders(
+        session,
+        telegram_id=906,
+        title="Прошлое",
+    )
+    intent = EditIntent(
+        intent="set_reminder",
+        task_query="Прошлое",
+        new_due_raw="2000-01-01 10:00",
+        confidence=0.95,
+    )
+
+    reply, kb = await execute_edit(intent, user_id)
+
+    assert kb is None
+    assert "прошлом" in reply.lower()
+    # No new reminder created; the originals stay pending.
+    pending = (
+        await session.exec(
+            select(Reminder).where(Reminder.user_id == user_id, Reminder.status == "pending")
+        )
+    ).all()
+    assert len(pending) == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_edit_set_reminder_no_raw(session: AsyncSession) -> None:
+    """No ``new_due_raw`` → guidance, no mutation."""
+    user_id, _task_id, _ids = await _create_task_with_reminders(
+        session,
+        telegram_id=907,
+        title="Без времени",
+    )
+    intent = EditIntent(
+        intent="set_reminder",
+        task_query="Без времени",
+        confidence=0.7,
+    )
+
+    reply, _kb = await execute_edit(intent, user_id)
+
+    assert "Уточни" in reply or "Не понял" in reply
+    # Original reminders untouched.
+    pending = (
+        await session.exec(
+            select(Reminder).where(Reminder.user_id == user_id, Reminder.status == "pending")
+        )
+    ).all()
+    assert len(pending) == 2
+
+
 # ── New PR-J UX tests ────────────────────────────────────────────────
 
 

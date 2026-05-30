@@ -196,3 +196,12 @@ body::before {
     transform: translateY(0);
   }
 }
+
+/* Settings drill-in sub-screen slide animations (iOS-style). */
+@keyframes screen-in-right { from { opacity: 0; transform: translateX(16%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes screen-in-left  { from { opacity: 0; transform: translateX(-12%); } to { opacity: 1; transform: translateX(0); } }
+.animate-screen-in-right { animation: screen-in-right 0.24s cubic-bezier(0.4,0,0.2,1); }
+.animate-screen-in-left  { animation: screen-in-left  0.22s cubic-bezier(0.4,0,0.2,1); }
+@media (prefers-reduced-motion: reduce) {
+  .animate-screen-in-right, .animate-screen-in-left { animation: none; }
+}

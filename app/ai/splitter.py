@@ -16,13 +16,12 @@ import instructor
 from groq import AsyncGroq
 
 from app.ai._safety import wrap_untrusted
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import SplitterResult
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
-
-SPLITTER_MODEL = "llama-3.1-8b-instant"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "splitter.md"
 _prompt_cache: str | None = None
@@ -59,7 +58,7 @@ async def split_message(
             mode=instructor.Mode.JSON,
         )
         return await client.chat.completions.create(
-            model=SPLITTER_MODEL,
+            model=get_models().splitter,
             response_model=SplitterResult,
             messages=[
                 {"role": "system", "content": system_prompt},

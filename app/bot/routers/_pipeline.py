@@ -32,6 +32,7 @@ from app.ai.classifier import classify_intent
 from app.ai.courier import SummaryItem, courier_respond
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.intent import detect_intent
+from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
@@ -153,6 +154,26 @@ PipelineReply = tuple[str, InlineKeyboardMarkup | None]
 # on it and swallows nothing — the router decides how to render (edit the
 # placeholder). ``None`` disables progress reporting.
 StageCallback = Callable[[str], Awaitable[None]]
+
+
+async def _throttled_call[T](
+    sem: asyncio.Semaphore,
+    timeout: float,
+    awaitable: Awaitable[T],
+) -> T:
+    """Run ``awaitable`` under ``sem`` with a hard ``timeout``.
+
+    The semaphore caps how many heavy Groq calls a single pipeline
+    fans out at once; the timeout bounds any one of them. Both must
+    hold for the long-message resilience guarantee — without the
+    semaphore an 8-unit voice fires 8 simultaneous heavy requests;
+    without the timeout a single stuck call holds the per-user
+    pipeline slot until the user gives up. Exceptions (including
+    :class:`asyncio.TimeoutError`) propagate so the surrounding
+    ``gather(..., return_exceptions=True)`` can drop the unit.
+    """
+    async with sem:
+        return await asyncio.wait_for(awaitable, timeout=timeout)
 
 
 def _plural_ru(n: int, one: str, few: str, many: str) -> str:
@@ -338,29 +359,51 @@ async def _run_pipeline_inner(
     async with session_scope() as session:
         user_categories = await get_user_categories(session, user_id)
 
-    # Classify all units in parallel. ``return_exceptions=True`` keeps a single
-    # transient Groq failure (429, 5xx) from killing the whole batch — we drop
-    # the failed unit and continue with the rest.
+    # Classify all units in parallel — but fan out through a small
+    # per-pipeline semaphore so an 8-unit voice doesn't punch 8
+    # simultaneous ``gpt-oss-120b`` requests at the same key pool
+    # (which used to collapse free-tier Groq into 429 cascades).
+    # ``return_exceptions=True`` keeps a single transient failure
+    # (429, 5xx, our own TimeoutError) from killing the batch — we
+    # drop the failed unit and continue with the rest. The hard
+    # per-call timeout is the missing upper bound on a stuck Groq
+    # request: without it one hung call would hold the per-user
+    # pipeline semaphore indefinitely.
+    pipeline_settings = get_settings()
+    fanout_sem = asyncio.Semaphore(pipeline_settings.pipeline_llm_fanout)
+    call_timeout = pipeline_settings.pipeline_call_timeout_seconds
+
     classify_tasks = [
-        classify_intent(groq_router, unit.text, resolved, user_categories, user_tz)
+        _throttled_call(
+            fanout_sem,
+            call_timeout,
+            classify_intent(groq_router, unit.text, resolved, user_categories, user_tz),
+        )
         for unit, resolved in zip(create_units, resolved_list, strict=True)
     ]
     raw_results = await asyncio.gather(*classify_tasks, return_exceptions=True)
 
     survivors: list[tuple[ClassifierResult, ResolvedTime | None, str]] = []
+    classify_failures = 0
     for unit, resolved, item in zip(create_units, resolved_list, raw_results, strict=True):
         if isinstance(item, BaseException):
+            # Tag timeouts separately from generic LLM failures so
+            # ops can tell rate-limit cascades from one slow request.
+            failure_kind = "timeout" if isinstance(item, asyncio.TimeoutError) else "error"
             logger.exception(
                 "pipeline.classify_failed",
                 user_id=user_id,
+                failure_kind=failure_kind,
                 exc_info=(type(item), item, item.__traceback__),
             )
+            classify_failures += 1
             continue
         survivors.append((item, resolved, unit.text))
 
     if not survivors:
         return (
-            "Не удалось разобрать сообщение — сохранил его целиком во входящие, позже разберясь."
+            "Не удалось разобрать сообщение — сохранил его целиком во «Входящие», "
+            "загляни туда позже."
         ), None
 
     # Critic: review classifications that need it (only survivors). Critic
@@ -371,8 +414,16 @@ async def _run_pipeline_inner(
         should_run_critic(cr, critic_mode=critic_mode, confidence_threshold=confidence_threshold)
         for cr, _resolved, _unit_text in survivors
     ]
+    # Share the same fan-out semaphore + timeout: critic is just as
+    # heavy as the classifier (same ``gpt-oss-120b`` default in the
+    # registry) and the two stages never overlap, so reusing the
+    # semaphore caps total in-flight heavy calls without doubling up.
     critic_tasks = [
-        critique_classification(groq_router, unit_text, cr, resolved, user_tz)
+        _throttled_call(
+            fanout_sem,
+            call_timeout,
+            critique_classification(groq_router, unit_text, cr, resolved, user_tz),
+        )
         for (cr, resolved, unit_text), needed in zip(survivors, critic_needed, strict=True)
         if needed
     ]
@@ -411,7 +462,7 @@ async def _run_pipeline_inner(
             user_id=user_id,
             inbox_id=inbox_id,
             stage="splitter",
-            model="llama-3.1-8b-instant",
+            model=get_models().splitter,
             key_index=groq_router.current_key_id,
         )
 
@@ -492,7 +543,7 @@ async def _run_pipeline_inner(
                 user_id=user_id,
                 inbox_id=inbox_id,
                 stage="classifier",
-                model="llama-3.3-70b-versatile",
+                model=get_models().classifier,
                 key_index=groq_router.current_key_id,
             )
 
@@ -526,6 +577,14 @@ async def _run_pipeline_inner(
     if review_flagged:
         review_note = "📥 Отправил на проверку — открой «Входящие» в приложении."
         text_reply = f"{text_reply}\n\n{review_note}" if text_reply else review_note
+
+    # If we lost units to classifier failures (rate-limit, timeout)
+    # but still saved some — own up to it. The user wrote a long
+    # thought; pretending nothing was dropped silently loses items.
+    if classify_failures > 0 and survivors:
+        word = _plural_ru(classify_failures, "пункт", "пункта", "пунктов")
+        partial_note = f"⚠️ {classify_failures} {word} не разобрал — отложил во «Входящие»."
+        text_reply = f"{text_reply}\n\n{partial_note}" if text_reply else partial_note
 
     # PR-I3: prepend edit replies when message contained mixed intents.
     if edit_replies:

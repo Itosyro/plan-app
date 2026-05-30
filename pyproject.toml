@@ -26,6 +26,13 @@ dependencies = [
     "dateparser>=1.2",
     # observability
     "structlog>=24.4",
+    # Optional crash reporter. ``sentry-sdk`` is dormant when no
+    # ``SENTRY_DSN`` is set — it doesn't reach out to any service
+    # on import and adds ~150 KB to the wheel. With a DSN it captures
+    # uncaught pipeline errors and unhandled router exceptions, which
+    # the existing structlog stream loses inside a long
+    # ``logger.exception`` blob that nobody reads on free-tier Render.
+    "sentry-sdk[fastapi]>=2.20",
 ]
 
 [dependency-groups]

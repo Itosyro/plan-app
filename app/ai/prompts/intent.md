@@ -22,6 +22,7 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - **set_note_category** — move an existing *note* to a category. "перенеси заметку X в категорию Z".
 - **list_done** — show tasks completed today (read-only query).
 - **cancel_reminder** — cancel pending reminders for an existing task, without deleting the task.
+- **set_reminder** — schedule (or reschedule) a reminder for an existing task at a specific time. Replaces any existing pending reminders for that task with a single one at the new time.
 - **none** — unclear or not an intent directed at an existing task; fall back to create.
 
 ## Rules
@@ -49,6 +50,7 @@ Your job: determine whether the user wants to **modify an existing task** or **c
 - "срочно" / "горит" / "важно" / "критично" → high; "не срочно" / "не горит" / "можно потом" → low; "обычно" / "средне" → medium.
 - "отмени напоминание про X" / "убери напоминания для X" → **cancel_reminder**. Do not delete the task.
 - Bare "отмени напоминание" without a task name may use last-task anaphora: leave task_query empty.
+- "напомни в 15:00 про X" / "напомни о X завтра в 9" / "поставь напоминание X на пятницу" / "перенеси напоминание X на 20:00" → **set_reminder** with `task_query=X` and `new_due_raw` containing the time expression. Distinguishes from **set_due** (which moves the task's own deadline): a reminder is a one-shot ping that does not change due_at. The keyword «напомни / напоминание» is the signal.
 
 ## Output
 
@@ -102,6 +104,15 @@ User: "что я закрыл сегодня"
 
 User: "отмени напоминание про созвон"
 → {"intent": "cancel_reminder", "task_query": "созвон", "confidence": 0.95}
+
+User: "напомни в 15:00 про звонок"
+→ {"intent": "set_reminder", "task_query": "звонок", "new_due_raw": "15:00", "confidence": 0.95}
+
+User: "поставь напоминание о пробежке завтра в 7 утра"
+→ {"intent": "set_reminder", "task_query": "пробежке", "new_due_raw": "завтра в 7 утра", "confidence": 0.9}
+
+User: "перенеси напоминание звонка на 20:00"
+→ {"intent": "set_reminder", "task_query": "звонка", "new_due_raw": "20:00", "confidence": 0.9}
 
 User: "создай категорию Финансы"
 → {"intent": "create_category", "new_category": "Финансы", "confidence": 0.95}

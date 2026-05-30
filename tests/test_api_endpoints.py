@@ -245,6 +245,79 @@ async def test_me_patch_review_enabled(
 
 
 @pytest.mark.asyncio
+async def test_me_patch_reminder_offsets(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``default_reminder_offsets`` round-trips and is sorted descending."""
+    # GET first — defaults are populated.
+    initial = await aclient.get("/api/me", headers=auth_headers)
+    assert initial.status_code == 200
+    defaults = initial.json()["settings"]["default_reminder_offsets"]
+    assert defaults["same_day"] == [60, 15]
+    assert defaults["multi_day"] == [1440, 60]
+
+    # PATCH with unsorted, duplicated offsets — server must sort desc + dedup.
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [10, 60, 10, 30],
+                    "multi_day": [60, 1440],
+                }
+            }
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    out = resp.json()["settings"]["default_reminder_offsets"]
+    assert out["same_day"] == [60, 30, 10]
+    assert out["multi_day"] == [1440, 60]
+
+    # Survives a fresh GET (persisted, not just echoed).
+    fresh = await aclient.get("/api/me", headers=auth_headers)
+    assert fresh.json()["settings"]["default_reminder_offsets"]["same_day"] == [60, 30, 10]
+
+
+@pytest.mark.asyncio
+async def test_me_patch_reminder_offsets_rejects_out_of_range(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """Negative or absurdly-large offsets are rejected with 422."""
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [-5, 60],
+                    "multi_day": [],
+                }
+            }
+        },
+    )
+    assert resp.status_code == 422
+
+    resp = await aclient.patch(
+        "/api/me",
+        headers=auth_headers,
+        json={
+            "settings": {
+                "default_reminder_offsets": {
+                    "same_day": [60],
+                    "multi_day": [99999],  # >1 week
+                }
+            }
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_me_patch_rejects_invalid_tz(
     aclient: httpx.AsyncClient,
     seeded: int,
@@ -438,6 +511,59 @@ async def test_tasks_list_filtered_by_due_at_range(
     assert resp.status_code == 200
     titles = {row["title"] for row in resp.json()}
     assert titles == {"Feb"}  # Jan/Mar out of range; Undated excluded by comparison
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_search_q(
+    aclient: httpx.AsyncClient,
+    seeded: int,
+    auth_headers: dict[str, str],
+) -> None:
+    """``q`` filters case-insensitively across title / description / title_original.
+
+    Note: SQLite's ``lower()`` is ASCII-only, so we seed with lowercase
+    Cyrillic and use a lowercase Cyrillic query — that matches the actual
+    Postgres-prod behaviour without depending on a Cyrillic case-fold
+    that only Postgres provides. ASCII case-insensitivity is checked in
+    a second assertion that works in both engines.
+    """
+    async with session_scope() as session:
+        session.add(Task(user_id=seeded, title="Купить хлеб", priority="medium"))
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Поход в магазин",
+                description="взять молоко и хлеб",
+                priority="medium",
+            )
+        )
+        session.add(
+            Task(
+                user_id=seeded,
+                title="Помыть посуду",
+                title_original="посуда + хлеб на доске",
+                priority="medium",
+            )
+        )
+        session.add(Task(user_id=seeded, title="Гулять с собакой", priority="medium"))
+        session.add(Task(user_id=seeded, title="Call Bob", priority="medium"))
+        await session.flush()
+
+    # Cyrillic substring matches title, description, and title_original.
+    resp = await aclient.get("/api/tasks?q=хлеб", headers=auth_headers)
+    assert resp.status_code == 200
+    titles = {row["title"] for row in resp.json()}
+    assert titles == {"Купить хлеб", "Поход в магазин", "Помыть посуду"}
+
+    # ASCII case-insensitivity works in both engines.
+    resp = await aclient.get("/api/tasks?q=BOB", headers=auth_headers)
+    assert resp.status_code == 200
+    assert [row["title"] for row in resp.json()] == ["Call Bob"]
+
+    # Wildcards must be treated as literal characters (escape worked).
+    resp = await aclient.get("/api/tasks?q=%25", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 @pytest.mark.asyncio

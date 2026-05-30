@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     )
     critic_default_mode: Literal["confidence", "paranoid"] = "confidence"
 
+    # Per-stage model overrides. ``None`` → use the registry default
+    # (see ``app/ai/models.py``). Set these to roll a new model in
+    # production without a deploy — e.g. point ``GROQ_MODEL_CLASSIFIER``
+    # at a stronger or cheaper ID. When OpenRouter keys are wired in,
+    # the same hooks can pin individual stages to OpenRouter IDs.
+    groq_model_whisper: str | None = None
+    groq_model_splitter: str | None = None
+    groq_model_intent: str | None = None
+    groq_model_reorder: str | None = None
+    groq_model_courier: str | None = None
+    groq_model_task_splitter: str | None = None
+    groq_model_classifier: str | None = None
+    groq_model_critic: str | None = None
+
     # Phase 4 — in-process scheduler (used on Render free tier instead of a
     # standalone cron service).
     scheduler_inproc_enabled: bool = True
@@ -71,6 +85,38 @@ class Settings(BaseSettings):
     # ``rate_limit_per_minute`` to 0 to disable entirely.
     rate_limit_per_minute: int = 20
     rate_limit_burst: int = 10
+
+    # WS2 — pipeline resilience for long, multi-unit messages.
+    #
+    # ``pipeline_llm_fanout``: max simultaneous heavy Groq calls
+    # (classifier / critic) within a single pipeline run. A long
+    # voice that splits into 8 units used to fan out 8 parallel
+    # ``gpt-oss-120b`` requests on the same key pool, which Groq
+    # free-tier answers with 429-after-429 until every key is
+    # exhausted — the whole message then collapses into a generic
+    # "Ошибка при разборе". A small fan-out cap keeps the same
+    # parallelism for moderate messages but stops giant messages
+    # from punching through the rate limit. ``return_exceptions``
+    # in the gather already isolates per-unit failures; this is
+    # the missing throttle in front of them.
+    #
+    # ``pipeline_call_timeout_seconds``: hard upper bound on any
+    # single Groq call inside the pipeline. Without it a single
+    # stuck request would hold the per-user semaphore indefinitely
+    # and block all subsequent messages from the same user.
+    pipeline_llm_fanout: int = 3
+    pipeline_call_timeout_seconds: float = 30.0
+
+    # Optional Sentry crash reporting. ``None`` (default) keeps the SDK
+    # dormant — nothing is sent. Set ``SENTRY_DSN`` in prod to start
+    # capturing unhandled exceptions from the FastAPI side AND from the
+    # background pipeline tasks (which currently disappear into a
+    # ``logger.exception`` blob nobody reads). ``traces_sample_rate``
+    # at 0.0 disables performance/transaction monitoring — free-tier
+    # Sentry quota is for errors, not traces.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    sentry_environment: str | None = None  # defaults to ``env`` field
 
     @property
     def groq_keys_list(self) -> list[str]:

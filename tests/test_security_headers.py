@@ -66,3 +66,27 @@ async def test_no_csp_on_api_and_meta_paths(aclient: httpx.AsyncClient) -> None:
     assert "Content-Security-Policy" not in resp.headers
     # Base hardening headers still apply everywhere.
     assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_healthz_returns_diagnostics(aclient: httpx.AsyncClient) -> None:
+    """``/healthz`` returns light diagnostics — useful for debugging from
+    a phone with no shell access. Must NOT leak secrets (no DSN, no API
+    keys, no webhook secret), only the *fact* that something is configured.
+    """
+    resp = await aclient.get("/healthz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert "env" in body
+    assert "groq_keys_configured" in body  # int count, not the keys themselves
+    assert "sentry_enabled" in body
+    assert "models" in body
+    assert {"whisper", "splitter", "classifier", "critic"}.issubset(body["models"].keys())
+
+    # Smoke: no obvious secrets in the response. The body is built
+    # from settings without any of the secret-bearing fields, but
+    # check explicitly so a future refactor doesn't slip one in.
+    raw = resp.text.lower()
+    for forbidden in ("sentry_dsn", "tg-webhook-secret", "https://"):
+        assert forbidden not in raw, f"healthz leaked: {forbidden}"

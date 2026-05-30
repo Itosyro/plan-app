@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 
 from app.api.auth import current_user
-from app.api.schemas import MeOut, MeUpdateIn, UserSettingsOut
+from app.api.schemas import MeOut, MeUpdateIn, ReminderOffsets, UserSettingsOut
 from app.bot.services import (
     get_user_settings,
     is_valid_timezone,
@@ -25,6 +25,10 @@ router = APIRouter()
 def _settings_to_out(settings: UserSettings | None) -> UserSettingsOut | None:
     if settings is None:
         return None
+    # ``default_reminder_offsets`` is a JSON column shaped exactly like
+    # ``ReminderOffsets``; coerce defensively in case an older row is
+    # missing one of the two keys after a migration.
+    offsets = settings.default_reminder_offsets or {}
     return UserSettingsOut(
         critic_mode=settings.critic_mode,
         morning_digest_at=settings.morning_digest_at,
@@ -34,6 +38,10 @@ def _settings_to_out(settings: UserSettings | None) -> UserSettingsOut | None:
         week_due_semantic=settings.week_due_semantic,
         concretize_tasks=settings.concretize_tasks,
         review_enabled=settings.review_enabled,
+        default_reminder_offsets=ReminderOffsets(
+            same_day=list(offsets.get("same_day", [])),
+            multi_day=list(offsets.get("multi_day", [])),
+        ),
     )
 
 
@@ -111,7 +119,16 @@ async def patch_me(body: MeUpdateIn, user: User = Depends(current_user)) -> MeOu
             logger.info("api.me.tz_updated", user_id=user.id, tz=body.tz)
 
         if body.settings is not None:
-            patches = body.settings.model_dump(exclude_unset=True)
+            # ``default_reminder_offsets`` is structured JSON, not an
+            # enum-string, so it takes a separate path that writes
+            # directly to the row. The remaining fields keep flowing
+            # through the bot's ``ALLOWED_SETTING_VALUES`` allow-list
+            # so Mini-App and bot ``/settings`` callbacks stay
+            # byte-identical for the simple-value cases.
+            offsets_patch = body.settings.default_reminder_offsets
+            patches = body.settings.model_dump(
+                exclude_unset=True, exclude={"default_reminder_offsets"}
+            )
             for field, raw_value in patches.items():
                 if raw_value is None:
                     continue
@@ -140,6 +157,46 @@ async def patch_me(body: MeUpdateIn, user: User = Depends(current_user)) -> MeOu
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="settings not initialised",
                     )
+
+            if offsets_patch is not None:
+                # Bounds: 0…10080 minutes (one week). Negative offsets
+                # would fire after the due time; > 1 week is almost
+                # certainly a finger-slip — surface as a 422 instead of
+                # silently scheduling a 30-day-out reminder.
+                for label, lst in (
+                    ("same_day", offsets_patch.same_day),
+                    ("multi_day", offsets_patch.multi_day),
+                ):
+                    for v in lst:
+                        if v < 0 or v > 10080:
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail=(
+                                    f"reminder offset out of range in {label}: {v} "
+                                    "(must be 0..10080 minutes)"
+                                ),
+                            )
+                settings_row = await get_user_settings(session, user.id)
+                if settings_row is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="settings not initialised",
+                    )
+                # Sort descending so the first reminder fires earliest —
+                # matches the bot's existing ``_select_reminder_offsets``
+                # iteration order. Dedup conservatively.
+                settings_row.default_reminder_offsets = {
+                    "same_day": sorted(set(offsets_patch.same_day), reverse=True),
+                    "multi_day": sorted(set(offsets_patch.multi_day), reverse=True),
+                }
+                session.add(settings_row)
+                await session.flush()
+                logger.info(
+                    "api.me.reminder_offsets_updated",
+                    user_id=user.id,
+                    same_day=settings_row.default_reminder_offsets["same_day"],
+                    multi_day=settings_row.default_reminder_offsets["multi_day"],
+                )
 
         settings_row = await get_user_settings(session, user.id)
         return _user_to_out(user_row, settings_row)

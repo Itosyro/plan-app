@@ -1,11 +1,18 @@
 // «Заметки» tab. Plain list of notes for the current user, freshest
 // first. Tap a card → open detail. Plus a substring search on title
 // or body so the tab is usable when the list grows.
+//
+// Data lifecycle is owned by ``useCachedResource``: instant repaint
+// from the module-scoped cache, fresh fetch in the background,
+// skeleton only when the cold fetch is slow. Cross-screen
+// optimism (delete confirmed inside NoteDetail) lands here via
+// ``mutateCache("notes", ...)`` from App.tsx — no prop chain.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Search, StickyNote, X } from "lucide-react";
-import { ApiError, apiClient } from "../api/client";
-import { getCache, setCache } from "../lib/cache";
+import { ApiError } from "../api/client";
+import { apiClient } from "../api/client";
+import { useCachedResource } from "../lib/useCachedResource";
 import { haptic } from "../lib/telegram";
 import type { Note } from "../types";
 import { EmptyState } from "./EmptyState";
@@ -13,73 +20,21 @@ import { NoteCard } from "./NoteCard";
 import { SkeletonList } from "./Skeleton";
 
 interface Props {
-  /**
-   * Bumped by the parent whenever a mutation occurs (delete in detail
-   * page, create from the FAB). Each change triggers a refetch so the
-   * list reflects the truth without us having to plumb optimistic
-   * state through the detail page.
-   */
-  refreshSignal: number;
-  /**
-   * Optimistic delete payload — the detail screen drops the note from
-   * the list the instant the user confirms, before the background
-   * DELETE round-trip. Keyed by ``nonce`` so the same id can re-fire.
-   */
-  optimisticDelete?: { id: number; nonce: number } | null;
   onOpen: (id: number) => void;
 }
 
-const NOTES_CACHE_KEY = "notes";
+export const NOTES_CACHE_KEY = "notes";
 
-export function NotesList({ refreshSignal, optimisticDelete, onOpen }: Props) {
-  const [notes, setNotes] = useState<Note[] | null>(
-    () => getCache<Note[]>(NOTES_CACHE_KEY) ?? null,
+export function NotesList({ onOpen }: Props) {
+  const { data: notes, showSkeleton, error } = useCachedResource<Note[]>(
+    NOTES_CACHE_KEY,
+    () => apiClient.notes(),
+    [],
   );
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const resp = await apiClient.notes();
-        setCache(NOTES_CACHE_KEY, resp);
-        if (!cancelled) {
-          setNotes(resp);
-          setError(null);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 401) {
-          setError("Не удалось проверить вход.");
-        } else {
-          setError("Не удалось загрузить заметки.");
-        }
-        setNotes([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshSignal]);
-
-  // Apply an optimistic delete the instant NoteDetail confirms — the
-  // row vanishes from the list without waiting for the network. The
-  // background DELETE then bumps ``refreshSignal``, which refetches
-  // and reconciles (or, on failure, restores the row).
-  useEffect(() => {
-    if (!optimisticDelete) return;
-    const { id } = optimisticDelete;
-    setNotes((prev) => {
-      if (prev === null) return prev;
-      const next = prev.filter((n) => n.id !== id);
-      setCache(NOTES_CACHE_KEY, next);
-      return next;
-    });
-  }, [optimisticDelete?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const filtered = useMemo(() => {
-    if (notes === null) return null;
+    if (notes === undefined) return null;
     const q = query.trim().toLowerCase();
     if (q.length === 0) return notes;
     return notes.filter(
@@ -89,17 +44,23 @@ export function NotesList({ refreshSignal, optimisticDelete, onOpen }: Props) {
     );
   }, [notes, query]);
 
-  if (notes === null) {
-    return <SkeletonList rows={5} kind="note" />;
+  if (notes === undefined) {
+    // Cold first paint and the fetch is slow — show a skeleton.
+    // Warm re-entry uses cached data and skips this branch entirely.
+    return showSkeleton ? <SkeletonList rows={5} kind="note" /> : null;
   }
 
   if (error !== null && notes.length === 0) {
+    const message =
+      error instanceof ApiError && error.status === 401
+        ? "Не удалось проверить вход."
+        : "Не удалось загрузить заметки.";
     return (
       <EmptyState
         icon={StickyNote}
         tone="amber"
         title="Не получилось"
-        hint={error}
+        hint={message}
       />
     );
   }

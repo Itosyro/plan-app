@@ -6,6 +6,180 @@
 
 ---
 
+## 2026-05-29 — refactor: центральный реестр моделей + апгрейд (WS1)
+
+**Контекст.** Каждый AI-модуль хардкодил свой Groq-ID константой
+(`CLASSIFIER_MODEL = "..."` × 8 файлов). Свап модели = 8 правок и
+гарантированный дрейф. Критик висел на `qwen-qwq-32b`, которой Groq
+больше не обслуживает — тихая поломка.
+
+**Сделано.**
+- Новый `app/ai/models.py`: frozen `ModelRegistry` + кэшированный
+  `get_models()` — единая точка истины для всех восьми стадий.
+- В `app/shared/config.py` добавлено восемь env-override полей
+  (`GROQ_MODEL_CLASSIFIER`, `GROQ_MODEL_CRITIC` и т.д.) — модель меняется
+  без редеплоя кода; те же хуки переиспользуем под OpenRouter позже.
+- Дефолты (май 2026, production Groq):
+  - whisper: `whisper-large-v3` (точность на длинной русской речи)
+  - splitter/intent/reorder/courier/task_splitter: `openai/gpt-oss-20b`
+    (~1000 tok/s, smart, fast)
+  - classifier/critic: `openai/gpt-oss-120b` (smartest на Groq, всё ещё
+    очень быстрый на LPU)
+- Заменены константы во всех восьми AI-модулях (`whisper`, `splitter`,
+  `intent`, `reorder`, `courier`, `task_splitter`, `classifier`, `critic`)
+  на `get_models().<stage>` в момент вызова. Удалены устаревшие
+  module-level константы.
+- Поправлены `log_ai_run`-вызовы в `_pipeline.py` и `voice.py` —
+  записывают актуальный model-ID, а не хардкод.
+
+**Гейты.** ruff/mypy/pytest — **538 passed**. Тесты не были привязаны
+к конкретным модельным строкам жёстко (использовали их как метки в
+моках), поэтому миграция прошла без правок тестов.
+
+**Дальше.** WS2 (троттл/таймауты для длинных ГС), WS3 (reply/forward),
+WS5 (плавность мини-аппы), WS6 (drill-in настройки), WS4 (напоминания).
+
+---
+
+## 2026-05-30 — Ночной спринт: ВСЕ 6 потоков плана (WS1/2/3/4/5/6)
+
+Большой план `/root/.claude/plans/resilient-baking-snowflake.md`.
+**Доставлены все шесть рабочих потоков** — надёжность бота, единый
+data-layer фронта, iOS-стиль настроек, keep-mounted табы и
+напоминания (голос + UI).
+
+**WS1 — реестр моделей + апгрейд** (`app/ai/models.py`). Один источник
+правды; `whisper-large-v3` + `gpt-oss-20b` (light) + `gpt-oss-120b`
+(heavy). Снят `qwen-qwq-32b` — Groq удалил его, критик тихо ломался.
+Env-override (`GROQ_MODEL_*`) под будущий OpenRouter.
+
+**WS2 — надёжность длинных ГС.** Per-pipeline `asyncio.Semaphore` (3)
+поверх classifier+critic, `asyncio.wait_for` (30s) на каждый Groq-
+вызов. UX честный: «⚠️ N пунктов не разобрал — отложил во Входящие»
+вместо «Ошибка при разборе». Env-tunable.
+
+**WS3 — reply/forward как вход пайплайна.** `resolve_effective_payload`
+читает контент из `reply_to_message` если своё короткое или
+инструкция-триггер («разбери», «разложи», …). Для reply-на-voice
+скачивает + транскрибирует. Forward'ы прозрачны. +26 unit-тестов
+(агент Sonnet).
+
+**WS4 — напоминания (полностью).** Голосовой интент `set_reminder`:
+«напомни в 15:00 о звонке», «перенеси напоминание на 20:00» — ставит
+или перезаписывает напоминание для существующей задачи. UI-редактор
+дефолтных офсетов в новом sub-экране настроек: чипы для same_day и
+multi_day пресетов. Бэк: `ReminderOffsets` Pydantic-модель + ветка в
+`PATCH /api/me`, валидация 0..10080 минут, сервер сортирует desc +
+dedup. +4 теста executor'а.
+
+**WS5-A — keep-mounted табы.** `TabPanel` поверх visited-tabs map: при
+первом тапе таб монтируется, дальше остаётся в DOM, видимость —
+через CSS opacity + delayed visibility (cross-fade). Per-panel scroll
+container (`position:absolute; inset:0; overflow-y:auto`) сохраняет
+позицию скролла нативно. Per-panel Suspense — первый mount lazy-чанка
+не гасит соседние табы. Никогда-не-посещённый таб в DOM не вставляется
+(lazy-chunk benefit сохранён). DndContext остаётся outer wrapper.
++0.19KB main chunk. Требует ручной QA на Telegram-клиенте перед
+мержем — известные риски: keyboard над fixed-viewport и cross-tab DnD
+collision на скрытых droppables. (Агент Sonnet.)
+
+**WS5-B — единый data layer фронта.** `useCachedResource<T>` поверх
+module-scoped Map + шина инвалидации (`invalidate`, `mutateCache`,
+`subscribeInvalidate`). Заменяет nonce-prop цепочки. Конвертированы
+все 4 экрана: NotesList, CalendarView (prefix-subscribe),
+KanbanView, Tasks list в App.tsx. Smart skeleton (300мс гейт).
+Оптимистичные счётчики — RTT после каждой мутации больше не делается.
+
+**WS6 — настройки iOS-style (drill-in).** Локальный стек в SettingsPage
++ 4 под-экрана (Профиль · Уведомления · Ответы бота · Поведение
+разбора). Slide-in/back анимации, Telegram BackButton привязан.
+Все row-компоненты переиспользованы. Чанк +0.71KB gzip. (Агент Sonnet.)
+
+**Пост-план полировка (всё в том же спринте):**
+
+- **WS3 UX-фикс** — placeholder ДО Whisper при reply-на-voice.
+  `looks_like_reply_to_voice()` (чистая проверка без сети) →
+  сразу «🎤 Расшифровываю голосовое…» → после транскрипции свап
+  на «⏳ Разбираю…». Раньше пользователь видел 3-5 секунд тишины.
+  +6 unit-тестов для предиктора.
+- **Sentry опционально** — `sentry-sdk[fastapi]` дормант без
+  `SENTRY_DSN`. С DSN ловит unhandled exceptions из FastAPI и
+  background-pipeline задач (AsyncioIntegration — единственный
+  способ дотянуться до `asyncio.create_task(_background())`).
+  PII и request-bodies зачищены до отправки. +4 теста контракта.
+- **/healthz расширен** — env + кол-во Groq-ключей + sentry on/off
+  + текущий реестр моделей. Без секретов (smoke-assert в тесте).
+  Для дебага с телефона без shell.
+
+**Финальные гейты.** 583 pytest passed (+45 за всю сессию),
+ruff/mypy чисто, webapp tsc + build зелёные.
+
+---
+
+## 2026-05-29 — feat: глобальный поиск по задачам
+
+**Контекст.** В заметках был клиентский поиск, в задачах — никакого.
+Найти задачу можно было только глазами или переключая горизонты/фильтры.
+
+**Сделано (backend).**
+- `GET /api/tasks` — параметр `q` (1..200 символов). Case-insensitive
+  substring по `title` / `description` / `title_original` через
+  `lower(col) LIKE lower(needle)` (Postgres и SQLite ведут себя
+  одинаково для ASCII; для Cyrillic в проде работает Postgres-`lower`,
+  тесты подтверждают это lowercase-cyrillic кейсом). SQL-wildcards
+  (`%` / `_`) в needle экранируются — `50%` ищет литерально.
+- Тест `test_tasks_list_search_q` — три кейса (Cyrillic match,
+  ASCII case-insensitive, экранирование wildcard).
+
+**Сделано (frontend).**
+- `components/SearchOverlay.tsx` — full-screen sheet с автофокусом
+  input, debounced (200ms) запросом, dropping stale responses через
+  seq-cursor, подсветкой совпавшего фрагмента в названии. Esc и стрелка
+  «назад» закрывают. Минимум 2 символа до запроса (избегаем
+  лишних round-trip'ов на одиночные буквы). Lazy-chunk, prefetch
+  в idle. Skeleton-плейсхолдер во время загрузки.
+- `Header.tsx` — новая иконка 🔍 рядом с фильтром/раскладкой. Показ
+  условный (только на вкладке «Задачи»).
+- `App.tsx` — состояние `showSearch`, проброшен `onOpenSearch` в
+  Header, overlay рендерится поверх через Suspense.
+- `apiClient.tasks` — новое поле `q?: string` в типе query.
+
+**Гейты.** ruff/mypy/pytest — 538 passed. webapp `tsc` + `build`
+зелёные (SearchOverlay вышел отдельным lazy-чанком).
+
+---
+
+## 2026-05-29 — infra: переезд прод-БД с Neon на Render Postgres
+
+**Контекст.** Прод лёг: внешняя Neon-БД исчерпала free compute-квоту
+(`OperationalError: exceeded the compute time quota`), каждый деплой
+падал на `alembic upgrade head`, Mini-App показывал «Ошибка
+соединения». Решили начать с чистой БД (данные не сохраняли).
+
+**Сделано (инфраструктура, вручную в Render dashboard — у агента нет
+доступа к Render API/прод-хостам из-за egress-allowlist окружения).**
+- `render.yaml` — добавлен managed-Postgres `plan-app-db` в `databases:`
+  и `DATABASE_URL` через `fromDatabase` (PR #169). На практике сервис
+  оказался не Blueprint-managed, поэтому переключение сделано руками.
+- Создан/задействован Render Postgres `plan-db` (PostgreSQL 16). База в
+  регионе **oregon**, web-сервис во **frankfurt** → межрегионально, так
+  что используется **External Database URL** (Internal между регионами
+  не резолвится). В inbound IP rules добавлен `0.0.0.0/0` (иначе внешний
+  трафик заблокирован).
+- `DATABASE_URL` на сервисе `plan-app` переключён с Neon на External URL
+  Render-БД. Деплой прошёл `alembic upgrade head` на чистой схеме →
+  `Application startup complete`. Юзер регистрируется заново через
+  `/start`.
+
+**TODO (отложено, не блокирует).** БД в oregon, сервис во frankfurt —
+каждый запрос к БД идёт через Атлантик (~150 мс). Пересоздать БД во
+frankfurt и переключить на Internal URL для скорости.
+
+**Гейты.** N/A (инфраструктура). Прод проверен вручную: `/healthz` 200,
+бот отвечает.
+
+---
+
 ## 2026-05-28 — feat: live-draft — прогрессивный статус пайплайна
 
 **Контекст.** Бот показывал статичное «⏳ Разбираю…» весь пайплайн.

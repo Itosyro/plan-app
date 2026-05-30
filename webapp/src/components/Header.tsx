@@ -1,4 +1,4 @@
-import { ListFilter, Plus, SlidersHorizontal } from "lucide-react";
+import { ListFilter, Plus, Search, SlidersHorizontal } from "lucide-react";
 import type { Horizon, TaskCounts } from "../types";
 
 interface Props {
@@ -29,6 +29,8 @@ interface Props {
   createLabel?: string;
   /** Open the «Раскладка» layout sheet (view + show-completed). */
   onOpenLayout?: () => void;
+  /** Open the task search overlay. */
+  onOpenSearch?: () => void;
 }
 
 // Bento-page header. One display title, optional subtitle, and a
@@ -46,6 +48,7 @@ export function Header({
   onCreate,
   createLabel,
   onOpenLayout,
+  onOpenSearch,
 }: Props) {
   const hasActiveFilter = selectedCategoryId !== null;
   return (
@@ -77,6 +80,16 @@ export function Header({
                 {filterLabel}
               </span>
             )}
+          </button>
+        )}
+        {onOpenSearch && (
+          <button
+            type="button"
+            onClick={onOpenSearch}
+            aria-label="Поиск"
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+          >
+            <Search size={16} strokeWidth={2.25} aria-hidden />
           </button>
         )}
         {showFilter && onOpenLayout && (

@@ -42,6 +42,7 @@ from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
+from app.shared.sentry import init_sentry
 from app.workers.keepalive import start_keepalive, stop_keepalive
 from app.workers.runner import start_inproc_scheduler, stop_inproc_scheduler
 
@@ -100,6 +101,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     settings = settings or get_settings()
     configure_logging()
+    # Optional crash reporter. No-op if ``SENTRY_DSN`` is unset.
+    # Initialised before any router is wired up so the FastAPI
+    # integration can hook into the app's middleware stack.
+    init_sentry(settings)
     logger = get_logger(__name__)
 
     bot: Bot | None = None
@@ -254,9 +259,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/healthz", tags=["meta"])
-    async def healthz() -> dict[str, str]:
-        """Liveness probe used by Render."""
-        return {"status": "ok"}
+    async def healthz() -> dict[str, object]:
+        """Liveness + light diagnostics.
+
+        Render's probe only looks at HTTP 200, but humans (and the
+        author, debugging from a phone with no shell access) want a
+        bit more than that — the current model registry, how many
+        Groq keys are configured, whether Sentry is wired, the env.
+        Cheap, no DB hit, no secrets leaked.
+        """
+        from app.ai.models import get_models
+
+        models = get_models()
+        return {
+            "status": "ok",
+            "env": settings.env,
+            "groq_keys_configured": len(settings.groq_keys_list),
+            "sentry_enabled": settings.sentry_dsn is not None,
+            "models": {
+                "whisper": models.whisper,
+                "splitter": models.splitter,
+                "classifier": models.classifier,
+                "critic": models.critic,
+            },
+        }
 
     @app.post("/tg/{secret}", tags=["telegram"])
     async def telegram_webhook(
