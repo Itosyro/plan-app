@@ -10,6 +10,7 @@ check ordering and concurrency.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 
 import pytest
 
@@ -24,7 +25,7 @@ from app.bot.routers._pipeline import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_semaphores() -> None:
+def _reset_semaphores() -> Generator[None, None, None]:
     """Each test gets a fresh semaphore registry (loops are per-test)."""
     reset_pipeline_semaphores_for_tests()
     yield
