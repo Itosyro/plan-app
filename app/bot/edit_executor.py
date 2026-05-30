@@ -43,7 +43,7 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Category, Task, TaskEditSnapshot, TaskEvent, User
+from app.db.models import Category, Reminder, Task, TaskEditSnapshot, TaskEvent, User
 from app.shared.logging import get_logger
 from app.shared.time import format_reminder_local, plural_ru
 
@@ -98,7 +98,7 @@ def pop_pending_edit(user_id: int) -> EditIntent | None:
 EDIT_INTENTS_I1 = frozenset({"complete", "delete", "reopen", "reorder_horizon"})
 EDIT_INTENTS_I2 = frozenset({"rename", "set_due", "set_priority", "set_category", "reorder_time"})
 EDIT_INTENTS_I3_READONLY = frozenset({"list_done"})
-EDIT_INTENTS_I4_REMINDERS = frozenset({"cancel_reminder"})
+EDIT_INTENTS_I4_REMINDERS = frozenset({"cancel_reminder", "set_reminder"})
 EDIT_INTENTS_CATEGORY = frozenset({"create_category", "rename_category", "delete_category"})
 EDIT_INTENTS_NOTE = frozenset({"rename_note", "delete_note", "set_note_category"})
 EDIT_INTENTS_ALL = (
@@ -408,6 +408,91 @@ async def _execute_reorder_time(
     return f"Перенёс «{title}» → {formatted}.", snap_id
 
 
+async def _execute_set_reminder(
+    task_id: int, user_id: int, intent: EditIntent
+) -> tuple[str, int | None]:
+    """Schedule (or reschedule) a one-shot reminder for an existing task.
+
+    Replaces *all* existing pending reminders for the task with a single
+    new reminder fired at the parsed time. Does NOT mutate the task's
+    own ``due_at`` — set_reminder and set_due are different intents on
+    purpose (a reminder is a ping; the deadline is the deadline).
+
+    Parses the user's free-form time expression with the same
+    ``dateparser`` settings as ``_execute_set_due`` so phrases like
+    «завтра в 9», «через час», «пятница 12:00» behave identically across
+    intents — one cognitive model for the user.
+    """
+    import dateparser
+
+    if not intent.new_due_raw:
+        return (
+            "Не понял, когда напомнить. Уточни: «напомни в 15:00», «напомни завтра в 9».",
+            None,
+        )
+
+    parsed = dateparser.parse(
+        intent.new_due_raw,
+        languages=["ru"],
+        settings={"PREFER_DATES_FROM": "future"},
+    )
+    if parsed is None:
+        return (
+            f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.",
+            None,
+        )
+
+    from app.shared.time import to_naive_utc
+
+    naive_utc = to_naive_utc(parsed)
+    # Refuse to schedule into the past — the worker would never fire it
+    # anyway, but silently swallowing the call would lie to the user.
+    if naive_utc <= datetime.now(UTC).replace(tzinfo=None):
+        return (
+            f"«{intent.new_due_raw}» — уже в прошлом. Напомнить можно только в будущем.",
+            None,
+        )
+
+    async with session_scope() as session:
+        task = await get_task_by_id(session, user_id, task_id)
+        if task is None:
+            return "Задача не найдена.", None
+        title = task.title
+        user_row = (await session.exec(select(User).where(User.id == user_id))).first()
+        user_tz = user_row.tz if user_row is not None else "UTC"
+
+        # Replace existing pending reminders with the single new one.
+        # ``cancel_task_reminders`` flips them to ``cancelled`` and emits
+        # the audit event itself, so we just have to insert the new row.
+        replaced = await cancel_task_reminders(session, user_id, task_id)
+
+        reminder = Reminder(
+            user_id=user_id,
+            task_id=task_id,
+            fire_at=naive_utc,
+            status="pending",
+        )
+        session.add(reminder)
+        await session.flush()
+        session.add(
+            TaskEvent(
+                task_id=task_id,
+                kind="reminder_scheduled",
+                payload_json={
+                    "reminder_id": reminder.id,
+                    "fire_at": naive_utc.isoformat(),
+                    "replaced_count": len(replaced),
+                },
+            )
+        )
+        await session.flush()
+
+    when = format_reminder_local(naive_utc, user_tz)
+    if replaced:
+        return f"Напомню о «{title}» в {when}. Прежние напоминания заменил.", None
+    return f"Напомню о «{title}» в {when}.", None
+
+
 async def _execute_cancel_reminder(task_id: int, user_id: int) -> tuple[str, int | None]:
     """Cancel pending reminders for a task without mutating the task itself.
 
@@ -688,6 +773,8 @@ async def _dispatch_single(
         return await _execute_reorder_time(task_id, user_id, intent)
     if intent.intent == "cancel_reminder":
         return await _execute_cancel_reminder(task_id, user_id)
+    if intent.intent == "set_reminder":
+        return await _execute_set_reminder(task_id, user_id, intent)
     return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю.", None
 
 
