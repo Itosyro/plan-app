@@ -12,7 +12,7 @@ import {
 import { Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
-import { CalendarView, CALDAY_PREFIX } from "./components/CalendarView";
+import { CalendarView, CAL_CACHE_PREFIX, CALDAY_PREFIX } from "./components/CalendarView";
 import { CategoryFilter } from "./components/CategoryFilter";
 import {
   KanbanView,
@@ -129,7 +129,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const route = useRoute();
-  const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
   // Optimistic drag payloads: dispatched the instant a drop resolves so
   // the board/calendar move the card in place (no full refetch flash).
@@ -137,11 +136,6 @@ export default function App() {
   const [boardOptimistic, setBoardOptimistic] = useState<{
     id: number;
     categoryId: number | null;
-    nonce: number;
-  } | null>(null);
-  const [calendarOptimistic, setCalendarOptimistic] = useState<{
-    id: number;
-    dueAt: string;
     nonce: number;
   } | null>(null);
   // «Входящие» pending-review count for the nav badge.
@@ -417,7 +411,7 @@ export default function App() {
         await apiClient.patchTask(id, { status: "done" });
         void loadCounts();
         void refreshCategories();
-        setCalendarRefresh((n) => n + 1);
+        invalidate(CAL_CACHE_PREFIX, { prefix: true });
         setBoardRefresh((n) => n + 1);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
@@ -438,7 +432,7 @@ export default function App() {
         await apiClient.patchTask(id, { status: "new" });
         void loadCounts();
         void refreshCategories();
-        setCalendarRefresh((n) => n + 1);
+        invalidate(CAL_CACHE_PREFIX, { prefix: true });
         setBoardRefresh((n) => n + 1);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
@@ -509,7 +503,7 @@ export default function App() {
     void loadTasks(activeHorizon, selectedCategory);
     void loadCounts();
     void refreshCategories();
-    setCalendarRefresh((n) => n + 1);
+    invalidate(CAL_CACHE_PREFIX, { prefix: true });
   }, [activeHorizon, selectedCategory, loadTasks, loadCounts, refreshCategories]);
 
   // Optimistic delete from the detail screen: drop the row from the list
@@ -558,15 +552,22 @@ export default function App() {
 
   const handleReschedule = useCallback(
     async (id: number, dueAtIso: string) => {
-      // Shift the event onto the target day in place; refetch only on
-      // failure to revert.
-      setCalendarOptimistic({ id, dueAt: dueAtIso, nonce: Date.now() });
+      // Shift the event onto the target day in place across every
+      // cached calendar window; refetch only on failure to revert.
+      mutateCache<Task[]>(
+        CAL_CACHE_PREFIX,
+        (prev) =>
+          (prev ?? []).map((t) =>
+            t.id === id ? { ...t, due_at: dueAtIso } : t,
+          ),
+        { prefix: true },
+      );
       try {
         await apiClient.patchTask(id, { due_at: dueAtIso });
         void loadCounts();
       } catch (err) {
         console.error("reschedule failed", err);
-        setCalendarRefresh((n) => n + 1); // refetch to revert optimistic UI
+        invalidate(CAL_CACHE_PREFIX, { prefix: true });
       }
     },
     [loadCounts],
@@ -902,12 +903,7 @@ export default function App() {
         ) : activeTab === "notes" ? (
           <NotesList onOpen={handleOpenNote} />
         ) : activeTab === "calendar" ? (
-          <CalendarView
-            tz={tz}
-            refreshSignal={calendarRefresh}
-            optimisticReschedule={calendarOptimistic}
-            onOpen={handleOpenTask}
-          />
+          <CalendarView tz={tz} onOpen={handleOpenTask} />
         ) : activeTab === "inbox" ? (
           <InboxReview
             tz={tz}
@@ -917,7 +913,7 @@ export default function App() {
               void loadTasks(activeHorizon, selectedCategory);
               void loadCounts();
               void refreshCategories();
-              setCalendarRefresh((n) => n + 1);
+              invalidate(CAL_CACHE_PREFIX, { prefix: true });
               setBoardRefresh((n) => n + 1);
             }}
           />

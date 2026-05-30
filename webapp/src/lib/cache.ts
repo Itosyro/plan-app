@@ -76,7 +76,28 @@ export function invalidate(key: string, opts: InvalidateOpts = {}): void {
 export function mutateCache<T>(
   key: string,
   updater: (prev: T | undefined) => T,
+  opts: InvalidateOpts = {},
 ): void {
+  if (opts.prefix) {
+    // Prefix mutate: apply ``updater`` to every existing entry
+    // whose key starts with ``key``. Skips keys without an entry —
+    // the typical use is "after a task reschedule, patch every
+    // already-cached calendar window in place". A new window that
+    // wasn't visited yet has no entry to patch and will fetch
+    // fresh on its first mount anyway.
+    for (const k of [...store.keys()]) {
+      if (!k.startsWith(key)) continue;
+      const next = updater(store.get(k) as T | undefined);
+      store.set(k, next);
+      exactListeners.get(k)?.forEach((fn) => fn());
+    }
+    for (const [listenerPrefix, set] of prefixListeners) {
+      if (listenerPrefix.startsWith(key) || key.startsWith(listenerPrefix)) {
+        for (const fn of set) fn();
+      }
+    }
+    return;
+  }
   const next = updater(store.get(key) as T | undefined);
   store.set(key, next);
   exactListeners.get(key)?.forEach((fn) => fn());
