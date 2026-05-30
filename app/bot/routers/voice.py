@@ -4,6 +4,7 @@ Phase 2.3a: download voice file from Telegram, transcribe via Groq Whisper,
 then run the same pipeline as text (split → time → classify → persist → reply).
 Phase 2.3c: reply via Courier instead of deterministic text.
 Phase 2.3d: reorder detection via the shared pipeline (``_pipeline.py``).
+WS3: accept replies/forwards of voice or text as pipeline input.
 """
 
 from __future__ import annotations
@@ -19,12 +20,19 @@ from app.bot import reactions
 from app.bot.courier_templates import NOT_ONBOARDED
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
+from app.bot.routers._message_payload import TextPayload, VoicePayload, resolve_effective_payload
 from app.bot.routers._pipeline import (
     get_groq_router,
     log_task_exception,
     run_pipeline,
 )
-from app.bot.services import get_or_create_user, get_user_settings, log_ai_run, store_inbox_voice
+from app.bot.services import (
+    get_or_create_user,
+    get_user_settings,
+    log_ai_run,
+    store_inbox_text,
+    store_inbox_voice,
+)
 from app.bot.streaming import stream_reply
 from app.db.base import session_scope
 from app.shared.logging import get_logger
@@ -35,10 +43,15 @@ MAX_VOICE_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram limit for voice
 
 
 async def _download_voice(message: Message) -> bytes | None:
-    """Download voice file bytes from Telegram."""
-    if message.voice is None or message.bot is None:
+    """Download voice/audio file bytes from Telegram.
+
+    Accepts both ``message.voice`` and ``message.audio`` so the same
+    helper works for voice notes and forwarded audio files.
+    """
+    voice = getattr(message, "voice", None) or getattr(message, "audio", None)
+    if voice is None or message.bot is None:
         return None
-    file = await message.bot.get_file(message.voice.file_id)
+    file = await message.bot.get_file(voice.file_id)
     if file.file_path is None:
         return None
     bio = await message.bot.download_file(file.file_path)
@@ -53,7 +66,7 @@ def create_router() -> Router:
 
     @router.message(F.voice)
     async def handle_voice(message: Message) -> None:
-        """Transcribe voice, run full pipeline, reply."""
+        """Transcribe voice (or resolved reply/forward), run full pipeline, reply."""
         if message.from_user is None or message.voice is None:
             return
 
@@ -135,45 +148,76 @@ def create_router() -> Router:
 
         async def _background() -> None:
             try:
-                audio_bytes = await _download_voice(message)
-                if audio_bytes is None:
-                    await placeholder.edit_text("Не удалось скачать голосовое.")
-                    return
-
-                transcript = await transcribe_voice(groq_router, audio_bytes)
-
-                if not transcript or len(transcript.strip()) < 2:
-                    await placeholder.edit_text("Не удалось распознать речь — попробуй ещё раз.")
-                    return
-
-                # Store inbox entry with transcript
-                async with session_scope() as session:
-                    entry = await store_inbox_voice(
-                        session,
-                        user_id=user_id,
-                        transcript=transcript,
-                        telegram_message_id=msg_id,
-                    )
-                    inbox_id = entry.id
-
-                    await log_ai_run(
-                        session,
-                        user_id=user_id,
-                        inbox_id=inbox_id,
-                        stage="whisper",
-                        model=get_models().whisper,
-                        key_index=groq_router.current_key_id,
-                    )
-
-                logger.info(
-                    "voice.transcribed",
-                    tg_user_id=from_user_id,
-                    transcript_len=len(transcript),
+                # Resolve effective payload: own voice, OR reply/forward target.
+                payload = await resolve_effective_payload(
+                    message,
+                    transcribe=transcribe_voice,  # type: ignore[arg-type]
+                    download_voice=_download_voice,
+                    groq_router=groq_router,
                 )
+
+                if payload is None:
+                    await placeholder.edit_text(
+                        "Не нашёл, на что ты отвечаешь — перешли голосовое ещё раз."
+                    )
+                    return
+
+                if isinstance(payload, VoicePayload):
+                    transcript = payload.transcript
+                    if not transcript or len(transcript.strip()) < 2:
+                        await placeholder.edit_text(
+                            "Не удалось распознать речь — попробуй ещё раз."
+                        )
+                        return
+
+                    # Store inbox entry with transcript
+                    async with session_scope() as session:
+                        entry = await store_inbox_voice(
+                            session,
+                            user_id=user_id,
+                            transcript=transcript,
+                            telegram_message_id=msg_id,
+                        )
+                        inbox_id = entry.id
+
+                        await log_ai_run(
+                            session,
+                            user_id=user_id,
+                            inbox_id=inbox_id,
+                            stage="whisper",
+                            model=get_models().whisper,
+                            key_index=groq_router.current_key_id,
+                        )
+
+                    logger.info(
+                        "voice.transcribed",
+                        tg_user_id=from_user_id,
+                        transcript_len=len(transcript),
+                    )
+                    pipeline_text = transcript
+
+                elif isinstance(payload, TextPayload):
+                    # TextPayload — from a text reply target.
+                    text_content = payload.text
+                    async with session_scope() as session:
+                        entry = await store_inbox_text(
+                            session,
+                            user_id=user_id,
+                            raw_text=text_content,
+                            telegram_message_id=msg_id,
+                        )
+                        inbox_id = entry.id
+
+                    logger.info(
+                        "voice.resolved_text",
+                        tg_user_id=from_user_id,
+                        text_len=len(text_content),
+                    )
+                    pipeline_text = text_content
 
                 reply, keyboard = await run_pipeline(
                     groq_router,
-                    transcript,
+                    pipeline_text,
                     from_user_id,
                     user_id,
                     user_tz,
