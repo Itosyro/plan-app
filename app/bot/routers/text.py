@@ -15,6 +15,7 @@ file is just the aiogram glue. See ``docs/REVIEW-2026-05-09.md::I-4``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from aiogram import F, Router
 from aiogram.types import Message
@@ -89,12 +90,34 @@ def create_router() -> Router:
         # store the actual content (not the instruction trigger) in inbox.
         # For reply-to-voice this calls Whisper — and the early placeholder
         # above is already on screen so the user sees progress.
-        payload = await resolve_effective_payload(
-            message,
-            transcribe=transcribe_voice,  # type: ignore[arg-type]
-            download_voice=_download_voice,
-            groq_router=groq_router,
-        )
+        # Resolver can raise: Whisper rate-limit cascade
+        # (GroqKeysExhaustedError), per-call timeout, download failure.
+        # Without a try/except here the placeholder would hang forever
+        # on "🎤 Расшифровываю…" and the user has no feedback — which is
+        # the exact UX bug they reported (\"переотвечаю на гс — не разбирает\").
+        try:
+            payload = await resolve_effective_payload(
+                message,
+                transcribe=transcribe_voice,  # type: ignore[arg-type]
+                download_voice=_download_voice,
+                groq_router=groq_router,
+            )
+        except Exception:
+            logger.exception(
+                "text.resolve_failed",
+                tg_user_id=message.from_user.id,
+                will_transcribe=will_transcribe,
+            )
+            if message.bot is not None:
+                await reactions.set_reaction(message.bot, chat_id, user_message_id, reactions.ERROR)
+            with contextlib.suppress(Exception):
+                await placeholder.edit_text(
+                    "Не получилось расшифровать реплай-голосовое — попробуй ещё раз "
+                    "через минуту или перешли его снова."
+                    if will_transcribe
+                    else "Ошибка при разборе — попробуй ещё раз."
+                )
+            return
 
         if payload is None:
             try:

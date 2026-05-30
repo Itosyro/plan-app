@@ -169,7 +169,13 @@ async def resolve_effective_payload(
 
     Decision tree
     -------------
-    1. If the message has its own voice → VoicePayload (download + transcribe).
+    1. If the message has its own voice:
+       a. transcribe it.
+       b. If the transcript is short/instruction-like AND there's a
+          reply target with voice/text → fall through to step 3 so a
+          spoken «разбери» on top of a prior voice expands into the
+          target (matches what a text reply does).
+       c. Otherwise → VoicePayload of the own transcript.
     2. If the message has substantial text (≥ ``_MIN_SUBSTANTIAL_TEXT`` chars
        and not an instruction) → TextPayload.
     3. Otherwise, if the message is a *reply*:
@@ -189,21 +195,41 @@ async def resolve_effective_payload(
     """
     own_voice = getattr(message, "voice", None) or getattr(message, "audio", None)
     own_text: str = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+    reply = getattr(message, "reply_to_message", None)
 
     # ── Step 1: own voice ──────────────────────────────────────────────────
     if own_voice is not None:
-        audio_bytes = await download_voice(message)
-        if audio_bytes is None:
-            return None
-        transcript = await transcribe(groq_router, audio_bytes)
-        return VoicePayload(transcript=transcript)
+        # Fast-path the common case: short own voices replying to a prior
+        # voice almost always carry the instruction («разбери», «разложи»).
+        # Skipping the first Whisper call when ``duration`` is suspiciously
+        # short avoids a wasted round-trip — we'll just transcribe the
+        # reply target below.
+        duration = getattr(own_voice, "duration", None)
+        looks_like_voice_instruction = (
+            reply is not None
+            and getattr(reply, "voice", None) is not None
+            and isinstance(duration, int)
+            and duration <= 3
+        )
+        if not looks_like_voice_instruction:
+            audio_bytes = await download_voice(message)
+            if audio_bytes is None:
+                return None
+            transcript = await transcribe(groq_router, audio_bytes)
+            # If what they actually said is an instruction-trigger AND
+            # they replied to another voice, route to the reply target
+            # so a spoken «разбери ещё раз» works the same as a typed
+            # one. Otherwise the own transcript IS the content.
+            reply_has_voice = reply is not None and getattr(reply, "voice", None) is not None
+            if not (reply_has_voice and is_short_instruction(transcript)):
+                return VoicePayload(transcript=transcript)
+        # Fall through to step 3 with the reply target.
 
     # ── Step 2: own substantial text ──────────────────────────────────────
-    if own_text and not is_short_instruction(own_text):
+    if own_voice is None and own_text and not is_short_instruction(own_text):
         return TextPayload(text=own_text)
 
     # ── Step 3: fall back to reply target ─────────────────────────────────
-    reply = getattr(message, "reply_to_message", None)
     if reply is None:
         return None
 

@@ -27,6 +27,7 @@ from app.bot.routers._message_payload import (
 class _Voice:
     file_id: str = "voice_file_id"
     file_size: int = 1024
+    duration: int = 10  # seconds — long enough that we'd transcribe it
 
 
 @dataclass
@@ -116,6 +117,20 @@ async def _stub_download_fail(message: _FakeMessage) -> bytes | None:  # type: i
 
 async def _stub_transcribe(groq_router: Any, audio_bytes: bytes) -> str:
     return _FAKE_TRANSCRIPT
+
+
+_TARGET_TRANSCRIPT = "купить хлеб и молоко завтра в супермаркете"
+
+
+class _ScriptedTranscriber:
+    """Returns different transcripts on successive calls — simulates
+    transcribing the own short instruction first, then the reply target."""
+
+    def __init__(self, *transcripts: str) -> None:
+        self._queue: list[str] = list(transcripts)
+
+    async def __call__(self, groq_router: Any, audio_bytes: bytes) -> str:
+        return self._queue.pop(0) if self._queue else _FAKE_TRANSCRIPT
 
 
 # ---------------------------------------------------------------------------
@@ -321,3 +336,74 @@ class TestLooksLikeReplyToVoice:
         replied = _FakeMessage(voice=_Voice())
         msg = _FakeMessage(voice=_Voice(), reply_to_message=replied)
         assert looks_like_reply_to_voice(msg) is False  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Voice-on-voice reply (own voice that's actually an instruction trigger)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestVoiceOnVoiceReply:
+    """When the user replies to a prior voice WITH a new voice (rather
+    than a typed «разбери»), we should still route to the reply target.
+
+    Two code paths cover this — a short ``duration`` skips the first
+    Whisper call entirely as an optimisation, while a longer-than-3s
+    own voice gets transcribed but routed by ``is_short_instruction``."""
+
+    async def test_short_duration_skips_own_transcription(self) -> None:
+        """duration ≤ 3s + reply-to-voice → take the reply target directly,
+        save one Whisper round-trip."""
+        replied = _FakeMessage(voice=_Voice(duration=12))
+        own_voice = _Voice(duration=2)
+        msg = _FakeMessage(voice=own_voice, reply_to_message=replied)
+
+        # Scripted transcriber asserts we only ever ask Whisper once
+        # (for the reply target, not the short own voice).
+        scripted = _ScriptedTranscriber(_TARGET_TRANSCRIPT)
+        result = await resolve_effective_payload(
+            msg,  # type: ignore[arg-type]
+            transcribe=scripted,
+            download_voice=_stub_download_ok,  # type: ignore[arg-type]
+        )
+        assert isinstance(result, VoicePayload)
+        assert result.transcript == _TARGET_TRANSCRIPT
+        # One call left unconsumed → exactly one transcribe call happened.
+        assert scripted._queue == []
+
+    async def test_long_own_voice_with_instruction_routes_to_reply(self) -> None:
+        """duration > 3s but transcript is an instruction → reply target wins."""
+        replied = _FakeMessage(voice=_Voice(duration=15))
+        own_voice = _Voice(duration=5)  # > 3s, so we don't skip
+        msg = _FakeMessage(voice=own_voice, reply_to_message=replied)
+
+        scripted = _ScriptedTranscriber("разбери", _TARGET_TRANSCRIPT)
+        result = await resolve_effective_payload(
+            msg,  # type: ignore[arg-type]
+            transcribe=scripted,
+            download_voice=_stub_download_ok,  # type: ignore[arg-type]
+        )
+        assert isinstance(result, VoicePayload)
+        assert result.transcript == _TARGET_TRANSCRIPT
+
+    async def test_long_own_voice_with_content_keeps_own_transcript(self) -> None:
+        """duration > 3s and own transcript is substantial → own wins,
+        reply target is ignored (matches the text-side semantic)."""
+        replied = _FakeMessage(voice=_Voice(duration=15))
+        own_voice = _Voice(duration=8)
+        msg = _FakeMessage(voice=own_voice, reply_to_message=replied)
+
+        scripted = _ScriptedTranscriber(
+            "ещё купить помидоры и оливковое масло на завтра",
+            _TARGET_TRANSCRIPT,
+        )
+        result = await resolve_effective_payload(
+            msg,  # type: ignore[arg-type]
+            transcribe=scripted,
+            download_voice=_stub_download_ok,  # type: ignore[arg-type]
+        )
+        assert isinstance(result, VoicePayload)
+        # Own substantial transcript wins; reply target was never fetched.
+        assert "помидоры" in result.transcript
+        assert _TARGET_TRANSCRIPT not in result.transcript
