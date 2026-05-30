@@ -16,6 +16,7 @@ import { CalendarView, CAL_CACHE_PREFIX, CALDAY_PREFIX } from "./components/Cale
 import { CategoryFilter } from "./components/CategoryFilter";
 import {
   KanbanView,
+  KANBAN_CACHE_KEY,
   KanbanCardView,
   KCAT_PREFIX,
   KCAT_NONE,
@@ -129,15 +130,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const route = useRoute();
-  const [boardRefresh, setBoardRefresh] = useState(0);
-  // Optimistic drag payloads: dispatched the instant a drop resolves so
-  // the board/calendar move the card in place (no full refetch flash).
-  // The bumped ``nonce`` is what the child effect keys on.
-  const [boardOptimistic, setBoardOptimistic] = useState<{
-    id: number;
-    categoryId: number | null;
-    nonce: number;
-  } | null>(null);
   // «Входящие» pending-review count for the nav badge.
   const [inboxCount, setInboxCount] = useState(0);
   const [tasksView, setTasksView] = useState<"list" | "board">("list");
@@ -412,7 +404,7 @@ export default function App() {
         void loadCounts();
         void refreshCategories();
         invalidate(CAL_CACHE_PREFIX, { prefix: true });
-        setBoardRefresh((n) => n + 1);
+        invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
         console.error("done failed", err);
@@ -433,7 +425,7 @@ export default function App() {
         void loadCounts();
         void refreshCategories();
         invalidate(CAL_CACHE_PREFIX, { prefix: true });
-        setBoardRefresh((n) => n + 1);
+        invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
         console.error("reopen failed", err);
@@ -453,10 +445,10 @@ export default function App() {
           setTasks((prev) => prev.filter((t) => t.id !== id));
         }
         void loadCounts();
-        setBoardRefresh((n) => n + 1);
+        invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
         loadTasks(activeHorizon, selectedCategory);
-        setBoardRefresh((n) => n + 1);
+        invalidate(KANBAN_CACHE_KEY);
         console.error("move failed", err);
       }
     },
@@ -465,16 +457,20 @@ export default function App() {
 
   // Kanban drop: re-assign the task's category (null = "Без категории"
   // column). Move the card in place optimistically, then patch. Only on
-  // failure do we bump ``boardRefresh`` to refetch and revert.
+  // failure we invalidate the kanban cache to refetch and revert.
   const handleSetCategory = useCallback(
     async (id: number, categoryId: number | null) => {
-      setBoardOptimistic({ id, categoryId, nonce: Date.now() });
+      mutateCache<Task[]>(KANBAN_CACHE_KEY, (prev) =>
+        (prev ?? []).map((t) =>
+          t.id === id ? { ...t, category_id: categoryId } : t,
+        ),
+      );
       try {
         await apiClient.patchTask(id, { category_id: categoryId });
         void loadCounts();
         void refreshCategories();
       } catch (err) {
-        setBoardRefresh((n) => n + 1);
+        invalidate(KANBAN_CACHE_KEY);
         console.error("set category failed", err);
       }
     },
@@ -838,8 +834,6 @@ export default function App() {
             {tasksView === "board" ? (
               <KanbanView
                 categories={categories}
-                refreshSignal={boardRefresh}
-                optimisticMove={boardOptimistic}
                 onOpen={handleOpenTask}
                 onDone={handleDone}
                 onCreateCategory={handleCreateCategoryColumn}
@@ -914,7 +908,7 @@ export default function App() {
               void loadCounts();
               void refreshCategories();
               invalidate(CAL_CACHE_PREFIX, { prefix: true });
-              setBoardRefresh((n) => n + 1);
+              invalidate(KANBAN_CACHE_KEY);
             }}
           />
         ) : me ? (

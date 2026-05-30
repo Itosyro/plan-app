@@ -15,11 +15,11 @@
 // The board fetches its own task set (all open tasks) and reloads on
 // ``refreshSignal`` so a drag / complete keeps every column in sync.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Check, Plus, X } from "lucide-react";
 import { apiClient } from "../api/client";
-import { getCache, setCache } from "../lib/cache";
+import { useCachedResource } from "../lib/useCachedResource";
 import { haptic } from "../lib/telegram";
 import type { Category, Task } from "../types";
 
@@ -30,13 +30,10 @@ export const KCAT_NONE = `${KCAT_PREFIX}none`;
 export const kcatId = (categoryId: number | null) =>
   categoryId === null ? KCAT_NONE : `${KCAT_PREFIX}${categoryId}`;
 
-const KANBAN_CACHE_KEY = "kanban-tasks";
+export const KANBAN_CACHE_KEY = "kanban-tasks";
 
 interface Props {
   categories: Category[];
-  refreshSignal: number;
-  /** Optimistic drop payload: move one card to a column in place. */
-  optimisticMove?: { id: number; categoryId: number | null; nonce: number } | null;
   onOpen: (id: number) => void;
   onDone: (id: number) => Promise<void> | void;
   onCreateCategory: (name: string) => Promise<void> | void;
@@ -44,45 +41,19 @@ interface Props {
 
 export function KanbanView({
   categories,
-  refreshSignal,
-  optimisticMove,
   onOpen,
   onDone,
   onCreateCategory,
 }: Props) {
-  const [tasks, setTasks] = useState<Task[]>(
-    () => getCache<Task[]>(KANBAN_CACHE_KEY) ?? [],
+  // Single shared cache for the board's task set. App.tsx owns the
+  // optimistic drop (writes via ``mutateCache``) and the failure-path
+  // invalidate; this component just reads what's there.
+  const { data } = useCachedResource<Task[]>(
+    KANBAN_CACHE_KEY,
+    () => apiClient.tasks({ limit: 500 }),
+    [],
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const resp = await apiClient.tasks({ limit: 500 });
-        setCache(KANBAN_CACHE_KEY, resp);
-        if (!cancelled) setTasks(resp);
-      } catch (err) {
-        if (!cancelled) console.error("kanban load failed", err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshSignal]);
-
-  // Apply an optimistic drop the instant App.tsx resolves it — the card
-  // re-buckets into the target column with no refetch. Keyed on ``nonce``
-  // so re-dropping the same card onto the same column re-fires. Cache is
-  // kept in sync so navigating away and back doesn't show the stale spot.
-  useEffect(() => {
-    if (!optimisticMove) return;
-    const { id, categoryId } = optimisticMove;
-    setTasks((prev) => {
-      const next = prev.map((t) => (t.id === id ? { ...t, category_id: categoryId } : t));
-      setCache(KANBAN_CACHE_KEY, next);
-      return next;
-    });
-  }, [optimisticMove?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tasks = data ?? [];
 
   // Group open tasks by category. Columns follow the categories prop
   // order; uncategorized tasks land in the trailing "Без категории".
