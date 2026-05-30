@@ -41,58 +41,63 @@ WS5 (плавность мини-аппы), WS6 (drill-in настройки), W
 
 ---
 
-## 2026-05-30 — Ночной спринт: WS1/2/3/5-B/6/4 (надёжность + плавность + drill-in)
+## 2026-05-30 — Ночной спринт: ВСЕ 6 потоков плана (WS1/2/3/4/5/6)
 
-Большой план `/root/.claude/plans/resilient-baking-snowflake.md`. Пять
-рабочих потоков из шести запланированных доставлено; WS5-A (keep-mounted
-табы) отложен в отдельный PR — требует ручного теста на Telegram-клиенте.
+Большой план `/root/.claude/plans/resilient-baking-snowflake.md`.
+**Доставлены все шесть рабочих потоков** — надёжность бота, единый
+data-layer фронта, iOS-стиль настроек, keep-mounted табы и
+напоминания (голос + UI).
 
-**WS1 — реестр моделей + апгрейд** (`app/ai/models.py`, был сделан ранее
-в этой сессии). `whisper-large-v3` + `openai/gpt-oss-20b` (light) +
-`openai/gpt-oss-120b` (heavy). Снят `qwen-qwq-32b` — Groq удалил его.
+**WS1 — реестр моделей + апгрейд** (`app/ai/models.py`). Один источник
+правды; `whisper-large-v3` + `gpt-oss-20b` (light) + `gpt-oss-120b`
+(heavy). Снят `qwen-qwq-32b` — Groq удалил его, критик тихо ломался.
+Env-override (`GROQ_MODEL_*`) под будущий OpenRouter.
 
-**WS2 — надёжность длинных ГС.** Per-pipeline `asyncio.Semaphore`
-(default 3) поверх classifier/critic и `asyncio.wait_for` (default 30s)
-на каждый Groq-вызов — 8-юнитное ГС больше не выбивает 429-каскад на
-free-tier. UX частичного фейла: «⚠️ N пунктов не разобрал — отложил
-во Входящие» вместо тихой потери. Оба параметра env-tunable.
+**WS2 — надёжность длинных ГС.** Per-pipeline `asyncio.Semaphore` (3)
+поверх classifier+critic, `asyncio.wait_for` (30s) на каждый Groq-
+вызов. UX честный: «⚠️ N пунктов не разобрал — отложил во Входящие»
+вместо «Ошибка при разборе». Env-tunable.
 
-**WS3 — reply/forward как вход пайплайна.** Новый
-`app/bot/routers/_message_payload.py::resolve_effective_payload` берёт
-содержимое из `reply_to_message`, если своё короткое или
+**WS3 — reply/forward как вход пайплайна.** `resolve_effective_payload`
+читает контент из `reply_to_message` если своё короткое или
 инструкция-триггер («разбери», «разложи», …). Для reply-на-voice
-скачивает + транскрибирует целевое ГС. Forward'ы прозрачны через 1-2
-шаги резолвера. +26 unit-тестов (агент Sonnet).
+скачивает + транскрибирует. Forward'ы прозрачны. +26 unit-тестов
+(агент Sonnet).
 
-**WS5-B — единый data layer фронта.** `webapp/src/lib/useCachedResource.ts`
-поверх module-scoped Map + шина инвалидации (`invalidate`,
-`mutateCache`, `subscribeInvalidate`). Заменяет nonce-prop цепочки
-`refreshSignal`/`optimisticMove`/`optimisticDelete` которые тянулись
-через App.tsx. Конвертированы: NotesList, CalendarView (per-window key
-+ prefix-subscribe), KanbanView, Tasks list в App.tsx. Skeleton
-показывается только если cold fetch >300мс — нет мерцания на warm
-re-entry. **Оптимистичные счётчики**: `adjustCount(slug, ±1)` после
-done/reopen/move/delete — убирает RTT после каждой мутации.
+**WS4 — напоминания (полностью).** Голосовой интент `set_reminder`:
+«напомни в 15:00 о звонке», «перенеси напоминание на 20:00» — ставит
+или перезаписывает напоминание для существующей задачи. UI-редактор
+дефолтных офсетов в новом sub-экране настроек: чипы для same_day и
+multi_day пресетов. Бэк: `ReminderOffsets` Pydantic-модель + ветка в
+`PATCH /api/me`, валидация 0..10080 минут, сервер сортирует desc +
+dedup. +4 теста executor'а.
 
-**WS6 — настройки iOS-style (drill-in).** Локальный стек состояний в
-SettingsPage + 4 под-экрана (Профиль · Уведомления и дайджесты ·
-Ответы бота · Поведение разбора). Slide-in/back анимации через
-CSS-keyframes (ease-apple, prefers-reduced-motion: none). Telegram
-BackButton привязывается на `stack.length > 1`, разбинд через
-`offClick` с try/catch для старых клиентов. Existing row-компоненты
-(`SettingsToggleRow`/`SettingsSelectRow`/`SettingsTextRow`/
-`SettingsTimezoneRow`) переиспользованы дословно. Чанк +0.71KB gzip.
-(Агент Sonnet.)
+**WS5-A — keep-mounted табы.** `TabPanel` поверх visited-tabs map: при
+первом тапе таб монтируется, дальше остаётся в DOM, видимость —
+через CSS opacity + delayed visibility (cross-fade). Per-panel scroll
+container (`position:absolute; inset:0; overflow-y:auto`) сохраняет
+позицию скролла нативно. Per-panel Suspense — первый mount lazy-чанка
+не гасит соседние табы. Никогда-не-посещённый таб в DOM не вставляется
+(lazy-chunk benefit сохранён). DndContext остаётся outer wrapper.
++0.19KB main chunk. Требует ручной QA на Telegram-клиенте перед
+мержем — известные риски: keyboard над fixed-viewport и cross-tab DnD
+collision на скрытых droppables. (Агент Sonnet.)
 
-**WS4 — редактируемые офсеты напоминаний (бэк).** Новый
-`ReminderOffsets` Pydantic model + ветка в `PATCH /api/me` под
-структурированный JSON-патч (минуя allow-list enum'ов). Валидация
-0..10080 минут, max 5 элементов, сервер сортирует desc + dedup перед
-персистом. Голосовой `set_reminder` интент — следующая итерация.
+**WS5-B — единый data layer фронта.** `useCachedResource<T>` поверх
+module-scoped Map + шина инвалидации (`invalidate`, `mutateCache`,
+`subscribeInvalidate`). Заменяет nonce-prop цепочки. Конвертированы
+все 4 экрана: NotesList, CalendarView (prefix-subscribe),
+KanbanView, Tasks list в App.tsx. Smart skeleton (300мс гейт).
+Оптимистичные счётчики — RTT после каждой мутации больше не делается.
 
-**Гейты.** Бэкенд: 568 pytest passed (+30 за сессию), ruff/mypy чисто.
-Webapp: tsc + build зелёные, main chunk нетто почти не изменился
-(плюс хук+шина, минус props и cleanup'ы).
+**WS6 — настройки iOS-style (drill-in).** Локальный стек в SettingsPage
++ 4 под-экрана (Профиль · Уведомления · Ответы бота · Поведение
+разбора). Slide-in/back анимации, Telegram BackButton привязан.
+Все row-компоненты переиспользованы. Чанк +0.71KB gzip. (Агент Sonnet.)
+
+**Гейты.** Бэкенд: 572 pytest passed (+34 за сессию), ruff/mypy чисто.
+Webapp: tsc + build зелёные, main chunk нетто +0.4KB
+(хук+шина+TabPanel минус выпиленные nonce-props и старая логика).
 
 ---
 
