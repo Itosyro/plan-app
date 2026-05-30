@@ -23,10 +23,11 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { buildHeaderTitle, Header } from "./components/Header";
 import { HorizonTabs } from "./components/HorizonTabs";
-import { NotesList } from "./components/NotesList";
+import { NotesList, NOTES_CACHE_KEY } from "./components/NotesList";
 import { LayoutSheet } from "./components/LayoutSheet";
 import { SkeletonAppShell } from "./components/Skeleton";
 import { TaskCard } from "./components/TaskCard";
+import { invalidate, mutateCache } from "./lib/cache";
 import { localDateKey } from "./lib/format";
 
 // Screens that aren't part of the first paint (the Tasks tab) are
@@ -86,6 +87,7 @@ import type {
   Horizon,
   HorizonSlug,
   Me,
+  Note,
   Task,
   TaskCounts,
 } from "./types";
@@ -127,7 +129,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("tasks");
 
   const route = useRoute();
-  const [notesRefresh, setNotesRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [boardRefresh, setBoardRefresh] = useState(0);
   // Optimistic drag payloads: dispatched the instant a drop resolves so
@@ -141,10 +142,6 @@ export default function App() {
   const [calendarOptimistic, setCalendarOptimistic] = useState<{
     id: number;
     dueAt: string;
-    nonce: number;
-  } | null>(null);
-  const [noteOptimisticDelete, setNoteOptimisticDelete] = useState<{
-    id: number;
     nonce: number;
   } | null>(null);
   // «Входящие» pending-review count for the nav badge.
@@ -533,11 +530,19 @@ export default function App() {
   }, []);
 
   const handleNoteMutated = useCallback(() => {
-    setNotesRefresh((n) => n + 1);
+    // Background server truth: invalidate the cached list so any
+    // mounted NotesList refetches. Optimistic write was already
+    // applied via ``handleNoteOptimisticDelete`` (no flicker).
+    invalidate(NOTES_CACHE_KEY);
   }, []);
 
   const handleNoteOptimisticDelete = useCallback((id: number) => {
-    setNoteOptimisticDelete({ id, nonce: Date.now() });
+    // Drop the note from the cached list the instant the detail
+    // confirms — NotesList repaints from the new cache without
+    // needing a prop or its own optimistic-delete state.
+    mutateCache<Note[]>(NOTES_CACHE_KEY, (prev) =>
+      prev ? prev.filter((n) => n.id !== id) : [],
+    );
   }, []);
 
   // Phase 5.4b: drag-n-drop. PointerSensor with delay activation so
@@ -895,11 +900,7 @@ export default function App() {
             )}
           </>
         ) : activeTab === "notes" ? (
-          <NotesList
-            refreshSignal={notesRefresh}
-            optimisticDelete={noteOptimisticDelete}
-            onOpen={handleOpenNote}
-          />
+          <NotesList onOpen={handleOpenNote} />
         ) : activeTab === "calendar" ? (
           <CalendarView
             tz={tz}
