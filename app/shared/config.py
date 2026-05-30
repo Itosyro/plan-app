@@ -86,6 +86,27 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 20
     rate_limit_burst: int = 10
 
+    # WS2 — pipeline resilience for long, multi-unit messages.
+    #
+    # ``pipeline_llm_fanout``: max simultaneous heavy Groq calls
+    # (classifier / critic) within a single pipeline run. A long
+    # voice that splits into 8 units used to fan out 8 parallel
+    # ``gpt-oss-120b`` requests on the same key pool, which Groq
+    # free-tier answers with 429-after-429 until every key is
+    # exhausted — the whole message then collapses into a generic
+    # "Ошибка при разборе". A small fan-out cap keeps the same
+    # parallelism for moderate messages but stops giant messages
+    # from punching through the rate limit. ``return_exceptions``
+    # in the gather already isolates per-unit failures; this is
+    # the missing throttle in front of them.
+    #
+    # ``pipeline_call_timeout_seconds``: hard upper bound on any
+    # single Groq call inside the pipeline. Without it a single
+    # stuck request would hold the per-user semaphore indefinitely
+    # and block all subsequent messages from the same user.
+    pipeline_llm_fanout: int = 3
+    pipeline_call_timeout_seconds: float = 30.0
+
     @property
     def groq_keys_list(self) -> list[str]:
         """Parse `GROQ_API_KEYS` into a clean list of keys."""

@@ -188,6 +188,56 @@ async def test_global_caps_total_concurrency_across_users(
 
 
 @pytest.mark.asyncio
+async def test_throttled_call_caps_in_flight_calls() -> None:
+    """``_throttled_call`` must never let more than ``sem._value``
+    awaitables run concurrently. WS2 fan-out cap: an 8-unit voice
+    used to fire 8 simultaneous heavy Groq calls; the per-pipeline
+    semaphore is the only thing keeping that floor.
+    """
+    sem = asyncio.Semaphore(3)
+    in_flight = 0
+    max_in_flight = 0
+
+    async def fake_call() -> str:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        # Hold the slot long enough that any racing call would
+        # observe the spike before we release.
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return "ok"
+
+    results = await asyncio.gather(
+        *[pipeline_module._throttled_call(sem, 1.0, fake_call()) for _ in range(8)]
+    )
+    assert results == ["ok"] * 8
+    assert max_in_flight == 3, f"fan-out cap breached: {max_in_flight} in flight"
+
+
+@pytest.mark.asyncio
+async def test_throttled_call_times_out_slow_awaitable() -> None:
+    """A single stuck Groq call must surface as ``TimeoutError`` so
+    the outer ``gather(..., return_exceptions=True)`` can drop the
+    unit instead of holding the per-user pipeline slot forever.
+    """
+    sem = asyncio.Semaphore(2)
+
+    async def slow_call() -> str:
+        await asyncio.sleep(1.0)
+        return "never"
+
+    with pytest.raises(asyncio.TimeoutError):
+        await pipeline_module._throttled_call(sem, 0.05, slow_call())
+
+    # And the semaphore is released — a follow-up call goes through.
+    async def quick_call() -> str:
+        return "ok"
+
+    assert await pipeline_module._throttled_call(sem, 1.0, quick_call()) == "ok"
+
+
+@pytest.mark.asyncio
 async def test_different_users_run_in_parallel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
