@@ -208,11 +208,30 @@ body::before {
 
 /* Excalidraw board: Miro-style polka dots painted under a transparent
    Excalidraw canvas. The dot colour follows the tg-hint variable so it
-   stays subtle on both light + dark themes. Pattern size 22px gives a
-   comfortable visual rhythm at phone DPI without crowding the canvas. */
+   stays subtle on both light + dark themes.
+
+   Bug fix: pattern position + size now tracked via CSS vars set from
+   BoardCanvas.tsx via a RAF-throttled callback reading Excalidraw's
+   scrollX/Y + zoom. Defaults to 0/22px (unscrolled, zoom=1). */
 .board-bg-dots {
   background-color: var(--tg-theme-bg-color, #f8f8fa);
   background-image: radial-gradient(circle, color-mix(in srgb, var(--tg-theme-hint-color, #888) 35%, transparent) 1px, transparent 1.5px);
-  background-size: 22px 22px;
-  background-position: 0 0;
+  background-size: var(--bg-size, 22px) var(--bg-size, 22px);
+  background-position: var(--bg-pan-x, 0px) var(--bg-pan-y, 0px);
+}
+
+/* Hide Excalidraw's default side toolbar + bottom bar — our custom
+   Miro-style overlay toolbar takes their place. CSS suppression is used
+   because UIOptions doesn't expose full-toolbar visibility in 0.18. */
+.excalidraw .App-toolbar-container,
+.excalidraw .layer-ui__wrapper__footer {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Hide the main-menu (hamburger) — back navigation + bg-toggle
+   handle those actions from our header. */
+.excalidraw .App-menu_top .App-menu__left {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
