@@ -1,4 +1,4 @@
-import { ListFilter, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ListFilter, PenLine, Plus, Search, SlidersHorizontal } from "lucide-react";
 import type { Horizon, TaskCounts } from "../types";
 
 interface Props {
@@ -31,6 +31,8 @@ interface Props {
   onOpenLayout?: () => void;
   /** Open the task search overlay. */
   onOpenSearch?: () => void;
+  /** Navigate to the Boards (Excalidraw) section — shown in the Notes tab header. */
+  onOpenBoards?: () => void;
 }
 
 // Bento-page header. One display title, optional subtitle, and a
@@ -49,6 +51,7 @@ export function Header({
   createLabel,
   onOpenLayout,
   onOpenSearch,
+  onOpenBoards,
 }: Props) {
   const hasActiveFilter = selectedCategoryId !== null;
   return (
@@ -100,6 +103,16 @@ export function Header({
             className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
           >
             <SlidersHorizontal size={16} strokeWidth={2.25} aria-hidden />
+          </button>
+        )}
+        {onOpenBoards && (
+          <button
+            type="button"
+            onClick={onOpenBoards}
+            aria-label="Доски"
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+          >
+            <PenLine size={16} strokeWidth={2.25} aria-hidden />
           </button>
         )}
         {onCreate && (

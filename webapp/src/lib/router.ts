@@ -28,6 +28,9 @@ const ROUTES: { pattern: RegExp; path: string; keys: string[] }[] = [
   { pattern: /^\/note\/(\d+)$/, path: "/note/:id", keys: ["id"] },
   { pattern: /^\/trash$/, path: "/trash", keys: [] },
   { pattern: /^\/completed$/, path: "/completed", keys: [] },
+  // Boards: list + canvas. /board/:id must come before /boards.
+  { pattern: /^\/board\/(\d+)$/, path: "/board/:id", keys: ["id"] },
+  { pattern: /^\/boards$/, path: "/boards", keys: [] },
   { pattern: /^\/$/, path: "/", keys: [] },
 ];
 

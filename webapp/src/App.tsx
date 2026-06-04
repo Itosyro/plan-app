@@ -44,6 +44,10 @@ const importInboxReview = () => import("./components/InboxReview");
 const importTrashPage = () => import("./components/TrashPage");
 const importCompletedPage = () => import("./components/CompletedPage");
 const importSearchOverlay = () => import("./components/SearchOverlay");
+// Boards screens — lazy-loaded so neither the list UI nor the heavy
+// Excalidraw chunk enter the main bundle on cold load.
+const importBoardsList = () => import("./components/boards/BoardsList");
+const importBoardCanvas = () => import("./components/boards/BoardCanvas");
 
 const TaskDetail = lazy(() =>
   importTaskDetail().then((m) => ({ default: m.TaskDetail })),
@@ -65,6 +69,12 @@ const CompletedPage = lazy(() =>
 );
 const SearchOverlay = lazy(() =>
   importSearchOverlay().then((m) => ({ default: m.SearchOverlay })),
+);
+const BoardsList = lazy(() =>
+  importBoardsList().then((m) => ({ default: m.BoardsList })),
+);
+const BoardCanvas = lazy(() =>
+  importBoardCanvas().then((m) => ({ default: m.BoardCanvas })),
 );
 
 function ScreenFallback() {
@@ -163,6 +173,21 @@ export default function App() {
       const parsed = Number.parseInt(raw, 10);
       if (!Number.isFinite(parsed) || parsed <= 0) return null;
       return { kind: "view", noteId: parsed };
+    }
+    return null;
+  }, [route]);
+
+  // Boards routing: /boards → list, /board/:id → canvas.
+  const boardRoute = useMemo<
+    null | { kind: "list" } | { kind: "canvas"; boardId: number }
+  >(() => {
+    if (route.path === "/boards") return { kind: "list" };
+    if (route.path === "/board/:id") {
+      const raw = route.params.id;
+      if (raw === undefined) return null;
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return null;
+      return { kind: "canvas", boardId: parsed };
     }
     return null;
   }, [route]);
@@ -754,6 +779,20 @@ export default function App() {
     );
   }
 
+  // Boards: fullscreen overlays above the tab stack. The BottomNav is
+  // intentionally hidden while in the boards section (fullscreen canvas UX).
+  if (boardRoute !== null) {
+    return (
+      <Suspense fallback={<ScreenFallback />}>
+        {boardRoute.kind === "list" ? (
+          <BoardsList />
+        ) : (
+          <BoardCanvas boardId={boardRoute.boardId} />
+        )}
+      </Suspense>
+    );
+  }
+
   if (route.path === "/trash" || route.path === "/completed") {
     return (
       <DndContext sensors={sensors}>
@@ -879,6 +918,14 @@ export default function App() {
           }
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
+          onOpenBoards={
+            activeTab === "notes"
+              ? () => {
+                  haptic("select");
+                  navigate("/boards");
+                }
+              : undefined
+          }
         />
         <div
           key={activeTab === "tasks" ? `tasks:${tasksView}` : activeTab}

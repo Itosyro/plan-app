@@ -189,3 +189,17 @@ export interface InboxReview {
   tasks: Task[];
   notes: Note[];
 }
+
+// ── Доски (Excalidraw canvases) ─────────────────────────────────────
+// Mirrors app/api/schemas.py::BoardOut (light list item — no scene_json).
+export interface Board {
+  id: number;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors app/api/schemas.py::BoardDetailOut — full record with scene.
+export interface BoardDetail extends Board {
+  scene_json: Record<string, unknown> | null;
+}
