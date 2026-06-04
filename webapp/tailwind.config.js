@@ -34,10 +34,12 @@ export default {
         "tg-section-header": "var(--tg-theme-section-header-text-color, #6b7280)",
         "tg-divider": "var(--tg-theme-section-separator-color, #e5e7eb)",
 
-        // Bento page background + card surface. Resolved at runtime
-        // from Telegram theme params (see index.css).
-        bento: "var(--bento-bg, #f2f2f7)",
+        // Bento surface hierarchy (see index.css for the three-level spec).
+        // S0 = page bg (tg-bg), S1 = raised card (bento-card),
+        // S2 = nested chip/trough (bento). Never nest S1 inside S1.
+        bento: "var(--bento-bg, #eef1f7)",
         "bento-card": "var(--bento-card, #ffffff)",
+        "bento-card-raised": "var(--bento-card-raised, #f8f9fc)",
       },
       borderRadius: {
         // iOS-style "continuous" rounding. We use 18-28px on cards

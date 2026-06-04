@@ -84,7 +84,7 @@ function OptionGroup<T extends string>({
               "ease-apple rounded-2xl px-3.5 py-2 text-[14px] font-medium tracking-tight ring-1 transition-all duration-200 active:scale-[0.97] " +
               (active
                 ? "bg-tg-button/10 font-semibold text-tg-button ring-tg-button/30"
-                : "bg-bento text-tg-text ring-black/[0.04] hover:bg-tg-button/[0.06] hover:ring-black/[0.08]")
+                : "bg-bento text-tg-text ring-tg-divider/30 hover:bg-tg-button/[0.06] hover:ring-tg-divider/50")
             }
           >
             {opt.label}
@@ -156,7 +156,7 @@ export function LayoutSheet({
             type="button"
             onClick={() => onShowCompletedChange(!showCompleted)}
             aria-pressed={showCompleted}
-            className="ease-apple flex min-h-[52px] w-full items-center justify-between gap-3 rounded-2xl bg-bento px-4 py-3 text-left ring-1 ring-black/[0.04] transition-colors duration-150 active:bg-bento/70"
+            className="ease-apple flex min-h-[52px] w-full items-center justify-between gap-3 rounded-2xl bg-bento px-4 py-3 text-left ring-1 ring-tg-divider/30 transition-colors duration-150 active:bg-bento/70"
           >
             <span className="min-w-0">
               <span className="block text-[15px] font-medium text-tg-text">

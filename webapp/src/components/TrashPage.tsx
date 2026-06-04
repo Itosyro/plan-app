@@ -128,7 +128,7 @@ function TrashSection({ title, items, pending, onRestore, onDelete }: SectionPro
           return (
             <div
               key={key}
-              className="ease-apple flex items-center justify-between rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-black/[0.04] transition-all duration-200"
+              className="ease-apple flex items-center justify-between rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-divider/30 transition-all duration-200"
             >
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate text-[15px] font-medium text-tg-text">

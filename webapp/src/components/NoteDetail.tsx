@@ -203,7 +203,7 @@ export function NoteDetail({
 
       {(note !== null || isCreate) && (
         <>
-          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
+          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40">
             <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
               Название
             </label>
@@ -231,7 +231,7 @@ export function NoteDetail({
             />
           </section>
 
-          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
+          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40">
             <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
               Текст
             </label>
@@ -348,7 +348,7 @@ function DetailRow({ icon, tone, label, value, onClick, disabled }: RowProps) {
       onClick={onClick}
       disabled={disabled}
       className={
-        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-black/5 transition-all duration-200 " +
+        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-tg-divider/40 transition-all duration-200 " +
         (disabled ? "opacity-60 " : "active:scale-[0.99] hover:bg-bento-card/90")
       }
     >
@@ -393,7 +393,7 @@ function ConfirmDeleteSheet({ open, onCancel, onConfirm, pending, title }: Confi
         role="alertdialog"
         aria-modal="true"
         aria-label="Удалить заметку"
-        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card p-5 shadow-bento-lg ring-1 ring-black/5"
+        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card p-5 shadow-bento-lg ring-1 ring-tg-divider/40"
         style={{
           animation: "slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1)",
           paddingBottom: "calc(var(--safe-bottom) + 1rem)",
