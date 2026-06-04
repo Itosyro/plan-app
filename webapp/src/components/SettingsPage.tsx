@@ -27,6 +27,7 @@ import {
   MessageSquare,
   Moon,
   Pencil,
+  Settings2,
   ShieldCheck,
   Sun,
   Sunset,
@@ -248,25 +249,29 @@ export function SettingsPage({ me, onUpdated }: Props) {
             <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
               <div className="divide-y divide-tg-divider/40">
                 <MainCategoryRow
-                  emoji="👤"
+                  icon={User}
+                  tone="indigo"
                   label="Профиль"
                   summary={profileSummary}
                   onClick={() => push("profile")}
                 />
                 <MainCategoryRow
-                  emoji="🔔"
+                  icon={Bell}
+                  tone="rose"
                   label="Уведомления и дайджесты"
                   summary={notifSummary}
                   onClick={() => push("notifications")}
                 />
                 <MainCategoryRow
-                  emoji="💬"
+                  icon={MessageSquare}
+                  tone="emerald"
                   label="Ответы бота"
                   summary={`Тон: ${responseSummary}`}
                   onClick={() => push("responses")}
                 />
                 <MainCategoryRow
-                  emoji="🧠"
+                  icon={Settings2}
+                  tone="violet"
                   label="Поведение разбора"
                   summary={`Критик: ${behaviorSummary}`}
                   onClick={() => push("behavior")}
@@ -511,12 +516,14 @@ export function SettingsPage({ me, onUpdated }: Props) {
 // ── Main-list category row ──────────────────────────────────────────────
 
 function MainCategoryRow({
-  emoji,
+  icon,
+  tone,
   label,
   summary,
   onClick,
 }: {
-  emoji: string;
+  icon: LucideIcon;
+  tone: TileTone;
   label: string;
   summary?: string;
   onClick: () => void;
@@ -528,9 +535,7 @@ function MainCategoryRow({
       className="ease-apple flex min-h-[56px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-bento/60 active:bg-bento"
     >
       <span className="flex min-w-0 items-center gap-3 text-[15px] text-tg-text">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[18px]" aria-hidden>
-          {emoji}
-        </span>
+        <IconTile icon={icon} tone={tone} size="md" />
         <span className="truncate font-medium">{label}</span>
       </span>
       <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-tg-hint">

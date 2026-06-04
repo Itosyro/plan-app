@@ -28,7 +28,7 @@ import {
   useState,
   type ComponentType,
 } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Grid2x2, Grid3x3, Square } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { haptic, getWebApp } from "../../lib/telegram";
 import { navigate } from "../../lib/router";
@@ -67,11 +67,41 @@ interface Props {
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
+// Background pattern for the canvas. Backed by a Miro-style CSS overlay
+// (dots / grid lines) painted on the container div; Excalidraw itself
+// renders on a transparent layer when a pattern is active. "blank" =
+// stock Excalidraw background, "dots" = polka pattern, "grid" =
+// Excalidraw's native gridModeEnabled (lighter, integrates with
+// snap-to-grid).
+type BgPattern = "blank" | "dots" | "grid";
+const BG_STORAGE_KEY = "boards:bg-pattern";
+
+const BG_LABEL: Record<BgPattern, string> = {
+  blank: "Без фона",
+  dots: "Точки",
+  grid: "Клетка",
+};
+const BG_NEXT: Record<BgPattern, BgPattern> = {
+  blank: "dots",
+  dots: "grid",
+  grid: "blank",
+};
+
 export function BoardCanvas({ boardId }: Props) {
   const [board, setBoard] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+
+  // Background pattern (cycled by a single button in the header).
+  // Persisted globally (not per-board) for v1 — matches how Miro/Figma
+  // remember the preference across files. Cycle: blank → dots → grid.
+  const [bgPattern, setBgPattern] = useState<BgPattern>(() => {
+    if (typeof window === "undefined") return "dots";
+    const stored = window.localStorage.getItem(BG_STORAGE_KEY);
+    if (stored === "blank" || stored === "dots" || stored === "grid") return stored;
+    return "dots";
+  });
 
   // Pending debounced scene save — cleared on flush or unmount.
   const debounceTimerRef = useRef<number | undefined>(undefined);
@@ -143,6 +173,43 @@ export function BoardCanvas({ boardId }: Props) {
       flushSave();
     };
   }, [flushSave]);
+
+  // Push the chosen bgPattern into Excalidraw's app state whenever it
+  // changes — gridModeEnabled is a native Excalidraw flag, and
+  // viewBackgroundColor goes transparent for our CSS-painted patterns
+  // so the polka/grid overlay shows through. Updating via the imperative
+  // API is the only way: Excalidraw is uncontrolled after initialData.
+  useEffect(() => {
+    const api = excalidrawApiRef.current;
+    if (!api) return;
+    const isGrid = bgPattern === "grid";
+    const bg = bgPattern === "blank" ? "#ffffff" : "transparent";
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (api as any).updateScene({
+        appState: {
+          gridModeEnabled: isGrid,
+          viewBackgroundColor: bg,
+        },
+        captureUpdate: "NEVER",
+      });
+    } catch {
+      // Older Excalidraw API surface — best-effort, no-op on failure.
+    }
+  }, [bgPattern]);
+
+  const handleCycleBg = useCallback(() => {
+    haptic("select");
+    setBgPattern((prev) => {
+      const next = BG_NEXT[prev];
+      try {
+        window.localStorage.setItem(BG_STORAGE_KEY, next);
+      } catch {
+        // localStorage may throw in private browsing — non-fatal.
+      }
+      return next;
+    });
+  }, []);
 
   const handleBack = useCallback(() => {
     haptic("select");
@@ -227,8 +294,21 @@ export function BoardCanvas({ boardId }: Props) {
     if (initialDataReady) return;
 
     void (async () => {
+      // Seed Excalidraw's initial appState with the chosen pattern so
+      // the first render already reflects it (avoids a flash of the
+      // stock white background before the post-mount updateScene fires).
+      const isGrid = bgPattern === "grid";
+      const seedAppState = {
+        gridModeEnabled: isGrid,
+        viewBackgroundColor: bgPattern === "blank" ? "#ffffff" : "transparent",
+      };
       if (!board.scene_json) {
-        setInitialData(undefined);
+        setInitialData({
+          elements: [],
+          appState: seedAppState as Partial<AppState>,
+          files: {} as BinaryFiles,
+          scrollToContent: false,
+        });
         setInitialDataReady(true);
         return;
       }
@@ -237,7 +317,7 @@ export function BoardCanvas({ boardId }: Props) {
         const scene = api.restore(board.scene_json, null, null);
         setInitialData({
           elements: scene.elements,
-          appState: scene.appState,
+          appState: { ...scene.appState, ...seedAppState } as Partial<AppState>,
           files: scene.files,
           scrollToContent: true,
         });
@@ -311,11 +391,32 @@ export function BoardCanvas({ boardId }: Props) {
             {saveHint}
           </span>
         )}
+        <button
+          type="button"
+          onClick={handleCycleBg}
+          aria-label={`Фон: ${BG_LABEL[bgPattern]} (нажми для смены)`}
+          title={BG_LABEL[bgPattern]}
+          className="ease-apple inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
+        >
+          {bgPattern === "blank" ? (
+            <Square size={18} strokeWidth={2} aria-hidden />
+          ) : bgPattern === "dots" ? (
+            <Grid2x2 size={18} strokeWidth={2} aria-hidden />
+          ) : (
+            <Grid3x3 size={18} strokeWidth={2} aria-hidden />
+          )}
+        </button>
       </header>
 
-      {/* Canvas area */}
+      {/* Canvas area. The dot pattern is a CSS overlay painted on this
+          container; Excalidraw is set to a transparent viewBackgroundColor
+          for "dots" so the pattern shows through. For "grid" we rely on
+          Excalidraw's native gridModeEnabled (light, snap-aware). */}
       <div
-        className="relative min-h-0 flex-1"
+        className={
+          "relative min-h-0 flex-1 " +
+          (bgPattern === "dots" ? "board-bg-dots" : "")
+        }
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {board && initialDataReady ? (
