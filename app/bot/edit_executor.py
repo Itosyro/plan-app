@@ -49,6 +49,24 @@ from app.shared.time import format_reminder_local, plural_ru
 
 logger = get_logger(__name__)
 
+
+class EditTargetNotFound(Exception):
+    """Raised when an edit intent couldn't resolve to an existing task.
+
+    The intent detector LLM has a non-zero false-positive rate: it
+    classifies brand-new task creations as edit-commands more often than
+    we'd like. When that happens the executor used to dead-end with
+    «Не нашёл задачу X» and the user's real intent (CREATE a task) got
+    silently dropped. Now those code paths raise this exception instead;
+    the pipeline catches it and falls back to the create-flow.
+    """
+
+    def __init__(self, query: str, original_intent: str) -> None:
+        super().__init__(f"no task matched query={query!r} for intent={original_intent}")
+        self.query = query
+        self.original_intent = original_intent
+
+
 # ── PR-I3: In-memory context stores ─────────────────────────────────
 
 _LAST_TASK_TTL = 60  # seconds
@@ -849,10 +867,9 @@ async def execute_edit(
             reply, snap_id = await _dispatch_single(last_id, user_id, intent)
             kb = _undo_keyboard(snap_id) if snap_id else None
             return reply, kb
-        return (
-            "Не понял, какую задачу ты имеешь в виду. Уточни название.",
-            None,
-        )
+        # Empty query + no last-task → near-certain intent false positive.
+        # Let the pipeline retry as create.
+        raise EditTargetNotFound(query="", original_intent=intent.intent)
 
     async with session_scope() as session:
         matches = await find_tasks_by_query(
@@ -863,10 +880,10 @@ async def execute_edit(
         )
 
     if not matches:
-        return (
-            f"Не нашёл задачу «{query}». Может, она уже удалена или ты её по-другому называл?",
-            None,
-        )
+        # The detector said "edit X" but X doesn't exist. Treat as a
+        # mis-classification: bubble up so the pipeline falls through
+        # to create-flow with the user's original text.
+        raise EditTargetNotFound(query=query, original_intent=intent.intent)
 
     if len(matches) > 1:
         # PR-I3: store intent for disambiguation callback (I2 intents need extra fields).

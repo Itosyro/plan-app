@@ -14,6 +14,7 @@ from app.ai.schemas import ClassifierResult, EditIntent
 from app.bot.edit_executor import (
     EDIT_INTENTS_I1,
     LAST_TASK,
+    EditTargetNotFound,
     _execute_complete,
     _execute_delete,
     _execute_reopen,
@@ -310,20 +311,24 @@ async def test_execute_reopen_already_active(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_edit_no_query() -> None:
+async def test_execute_edit_no_query_raises() -> None:
+    """No task_query AND no last-task anaphora → intent FP, raise so the
+    pipeline can fall back to create."""
     LAST_TASK.pop(1, None)
     intent = EditIntent(intent="complete", task_query="", confidence=0.9)
-    reply, kb = await execute_edit(intent, user_id=1)
-    assert "Не понял" in reply
-    assert kb is None
+    with pytest.raises(EditTargetNotFound):
+        await execute_edit(intent, user_id=1)
 
 
 @pytest.mark.asyncio
-async def test_execute_edit_not_found(session: AsyncSession) -> None:
+async def test_execute_edit_not_found_raises(session: AsyncSession) -> None:
+    """Edit-intent on a non-existent task → raise so the pipeline can
+    fall back to create rather than dead-end the user with «Не нашёл»."""
     user, _ = await get_or_create_user(session, telegram_id=307)
     await session.commit()
     assert user.id is not None
 
     intent = EditIntent(intent="complete", task_query="несуществующая", confidence=0.9)
-    reply, _kb = await execute_edit(intent, user.id)
-    assert "Не нашёл" in reply
+    with pytest.raises(EditTargetNotFound) as exc_info:
+        await execute_edit(intent, user.id)
+    assert exc_info.value.query == "несуществующая"

@@ -12,6 +12,7 @@ from app.bot.edit_executor import (
     EDIT_INTENTS_ALL,
     LAST_TASK,
     PENDING_EDITS,
+    EditTargetNotFound,
     _execute_list_completed_today,
     execute_edit,
     pop_last_task,
@@ -117,15 +118,16 @@ async def test_execute_edit_anaphora(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_edit_anaphora_no_last_task(session: AsyncSession) -> None:
-    """Empty task_query without LAST_TASK returns a helpful error."""
+    """Empty task_query without LAST_TASK → intent FP, raise so the
+    pipeline can fall back to create-flow with the original text."""
     LAST_TASK.clear()
     user, _ = await get_or_create_user(session, telegram_id=601)
     await session.commit()
     assert user.id is not None
 
     intent = EditIntent(intent="complete", task_query="", confidence=0.85)
-    reply, _kb = await execute_edit(intent, user.id)
-    assert "Уточни" in reply
+    with pytest.raises(EditTargetNotFound):
+        await execute_edit(intent, user.id)
 
 
 # ── Multi-match stores PENDING_EDITS ─────────────────────────────────
