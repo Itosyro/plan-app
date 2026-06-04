@@ -82,8 +82,8 @@ function HorizonPill({
       className={
         "ease-apple inline-flex shrink-0 snap-center items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-all duration-200 active:scale-[0.96] " +
         (isActive
-          ? toneClass + " shadow-bento ring-1 ring-black/5"
-          : "bg-bento-card text-tg-text/70 ring-1 ring-black/5 hover:text-tg-text") +
+          ? toneClass + " shadow-bento ring-1 ring-tg-divider/40"
+          : "bg-bento-card text-tg-text/70 ring-1 ring-tg-divider/40 hover:text-tg-text") +
         (isOver ? " ring-2 ring-tg-button ring-offset-2 ring-offset-bento" : "")
       }
     >

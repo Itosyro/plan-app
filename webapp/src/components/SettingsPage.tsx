@@ -246,7 +246,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
       {currentScreen === "main" && (
         <div key="main" className={animClass}>
           <div className="flex flex-col gap-6">
-            <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+            <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-tg-divider/40">
               <div className="divide-y divide-tg-divider/40">
                 <MainCategoryRow
                   icon={User}
@@ -571,7 +571,7 @@ function SettingsSection({ title, index, children }: SectionProps) {
       <header className="mb-2 px-4 text-[13px] font-semibold tracking-tight text-tg-link">
         {title}
       </header>
-      <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+      <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-tg-divider/40">
         <div className="divide-y divide-tg-divider/40">{children}</div>
       </div>
     </section>
@@ -730,7 +730,7 @@ function OffsetChipRow({ offsets, presets, disabled, onChange }: OffsetEditorPro
               "ease-apple rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-150 active:scale-95 " +
               (isOn
                 ? "bg-tg-button text-tg-button-text shadow-bento"
-                : "bg-bento text-tg-hint ring-1 ring-black/[0.04] hover:text-tg-text") +
+                : "bg-bento text-tg-hint ring-1 ring-tg-divider/30 hover:text-tg-text") +
               (disabled ? " opacity-50" : "")
             }
           >

@@ -123,7 +123,7 @@ export function SearchOverlay({ tz, onClose, onOpen }: Props) {
         >
           <ArrowLeft size={22} strokeWidth={2.25} aria-hidden />
         </button>
-        <label className="flex flex-1 items-center gap-2 rounded-2xl bg-bento px-3 py-2 ring-1 ring-black/5 focus-within:ring-tg-button/30">
+        <label className="flex flex-1 items-center gap-2 rounded-2xl bg-bento px-3 py-2 ring-1 ring-tg-divider/40 focus-within:ring-tg-button/30">
           <Search size={16} strokeWidth={2.25} className="text-tg-hint" aria-hidden />
           <input
             ref={inputRef}
@@ -205,7 +205,7 @@ function SearchResultCard({ task, tz, query, onOpen }: ResultProps) {
     <button
       type="button"
       onClick={() => onOpen(task.id)}
-      className="ease-apple flex w-full items-start gap-3 rounded-2xl bg-bento-card p-3 text-left shadow-bento ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99]"
+      className="ease-apple flex w-full items-start gap-3 rounded-2xl bg-bento-card p-3 text-left shadow-bento ring-1 ring-tg-divider/40 transition-all duration-150 active:scale-[0.99]"
     >
       <span aria-hidden className={"mt-1 h-8 w-1 shrink-0 rounded-full " + c.dot} />
       <div className="min-w-0 flex-1">

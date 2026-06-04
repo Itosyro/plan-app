@@ -94,7 +94,7 @@ export function BottomSheet({ open, onClose, title, hint, children, footer }: Pr
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card text-tg-text shadow-bento-lg ring-1 ring-black/5"
+        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card text-tg-text shadow-bento-lg ring-1 ring-tg-divider/40"
         style={{
           animation: "slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1)",
         }}
