@@ -79,6 +79,35 @@ class TestIsShortInstruction:
     def test_keyword_что_это(self) -> None:
         assert is_short_instruction("что это") is True
 
+    def test_punctuation_only_dot(self) -> None:
+        """Lone «.» (Telegram auto-inserts it for voice-reply attempts)
+        has no real content → treat as instruction so reply target wins.
+        Regression for the screenshot bug 2026-06-04."""
+        assert is_short_instruction(".") is True
+
+    def test_punctuation_only_multi(self) -> None:
+        assert is_short_instruction("??") is True
+        assert is_short_instruction("!!!") is True
+        assert is_short_instruction("...") is True
+
+    def test_emoji_only(self) -> None:
+        """An emoji-only reply also has no content of its own."""
+        assert is_short_instruction("🙂") is True
+        assert is_short_instruction("👍👍") is True
+
+    def test_one_or_two_letters(self) -> None:
+        """Very short replies («ok», «да», «а») have no content."""
+        assert is_short_instruction("ok") is True
+        assert is_short_instruction("да") is True
+        assert is_short_instruction("a") is True
+
+    def test_three_letters_is_content(self) -> None:
+        """Three alnum chars is the boundary — anything that short and
+        not a keyword is still suspicious, but we won't swallow it."""
+        # «yes» / «нет» — three letters, doesn't match keywords → False
+        assert is_short_instruction("yes") is False
+        assert is_short_instruction("нет") is False
+
     def test_negative_купи_хлеб(self) -> None:
         assert is_short_instruction("Купи хлеб") is False
 

@@ -85,6 +85,12 @@ def is_short_instruction(text: str) -> bool:
     - Empty / whitespace-only string.
     - Text that is ≤ ``_MAX_INSTRUCTION_LEN`` chars AND whose normalised form
       *starts with* or *is contained in* one of ``INSTRUCTION_KEYWORDS``.
+    - Text with fewer than 3 alphanumeric (letter or digit) characters —
+      a lone «.», «!», «??», emoji-only reply, etc. has no real content
+      of its own, so the reply target is what the user meant. The user
+      reported a real case: a typed «.» reply to a long voice fell into
+      the splitter, found no tasks, and 错-replied. See the screenshot in
+      session 017aPNUwFotQiyhgnbfeYFgK.
 
     Negative cases:
     - Anything with ≥ ``_MIN_SUBSTANTIAL_TEXT`` non-whitespace chars that
@@ -92,6 +98,13 @@ def is_short_instruction(text: str) -> bool:
     """
     stripped = text.strip()
     if not stripped:
+        return True
+    # Almost-empty content (punctuation, emoji, one or two letters) is
+    # never a real task in its own right. Count letters + digits across
+    # the normalised string — Python's ``str.isalnum`` covers Cyrillic
+    # and other scripts, not just ASCII.
+    alnum_count = sum(1 for ch in stripped if ch.isalnum())
+    if alnum_count < 3:
         return True
     if len(stripped) > _MAX_INSTRUCTION_LEN:
         return False
