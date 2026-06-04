@@ -74,6 +74,8 @@ export interface TelegramWebApp {
   themeParams: TelegramThemeParams;
   isExpanded: boolean;
   version?: string;
+  /** The stable viewport height — doesn't change when the on-screen keyboard appears. */
+  viewportStableHeight?: number;
   expand: () => void;
   ready: () => void;
   close: () => void;

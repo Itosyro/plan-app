@@ -80,6 +80,8 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 // ── Typed convenience wrappers ──────────────────────────────────────
 
 import type {
+  Board,
+  BoardDetail,
   Category,
   Horizon,
   InboxReview,
@@ -142,4 +144,12 @@ export const apiClient = {
     api<{ status: string }>(`/trash/${kind}/${id}/restore`, { method: "POST" }),
   hardDeleteTrashItem: (kind: TrashKind, id: number) =>
     api<void>(`/trash/${kind}/${id}`, { method: "DELETE" }),
+  // ── Boards ──────────────────────────────────────────────────────────
+  boards: () => api<Board[]>("/boards"),
+  board: (id: number) => api<BoardDetail>(`/boards/${id}`),
+  createBoard: (name?: string) =>
+    api<BoardDetail>("/boards", { method: "POST", body: name ? { name } : {} }),
+  patchBoard: (id: number, body: { name?: string; scene_json?: Record<string, unknown> }) =>
+    api<BoardDetail>(`/boards/${id}`, { method: "PATCH", body }),
+  deleteBoard: (id: number) => api<void>(`/boards/${id}`, { method: "DELETE" }),
 };
