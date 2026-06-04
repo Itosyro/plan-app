@@ -68,5 +68,9 @@ temp/
 docker-compose.override.yml
 
 # --- Claude Code agent worktrees (transient, per-session) ---
-.claude/
+# Ignore .claude contents (worktrees, local settings) EXCEPT committed
+# project skills, which are versioned with the repo. Use ``.claude/*``
+# (not ``.claude/``) so git descends into the dir to honour the negation.
+.claude/*
+!.claude/skills/
 .gstack/
