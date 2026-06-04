@@ -919,10 +919,11 @@ export default function App() {
           onCreate={activeTab === "notes" ? handleCreateNote : undefined}
           createLabel={activeTab === "notes" ? "Новая заметка" : undefined}
           onOpenBoards={
-            // Primary entry from the Tasks tab (one tap from the home
-            // screen — was buried 2-3 taps deep in Notes). Kept in Notes
-            // as a secondary entry so both surfaces have it.
-            activeTab === "tasks" || activeTab === "notes"
+            // Kept in Notes only — adding it to Tasks made the header
+            // cluttered for the home screen (4 icons + the create FAB).
+            // Discovery via Notes is fine; if it ever becomes a primary
+            // surface we can promote it back.
+            activeTab === "notes"
               ? () => {
                   haptic("select");
                   navigate("/boards");

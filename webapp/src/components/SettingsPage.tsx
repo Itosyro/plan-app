@@ -207,16 +207,18 @@ export function SettingsPage({ me, onUpdated }: Props) {
   const currentScreen = stack[stack.length - 1];
   const animClass = navDirection === "forward" ? "animate-screen-in-right" : "animate-screen-in-left";
 
-  // Sub-screen back header
+  // Sub-screen back chevron only (iOS-style). The big "Настройки"
+  // page title is already shown by the top App Header — repeating it
+  // here under a «← Настройки» pill was a stutter the user called out.
   function SubHeader() {
     return (
-      <header className="flex items-center gap-1 px-1 pb-2">
+      <header className="flex items-center pb-2">
         <button
           onClick={back}
-          className="ease-apple flex items-center gap-0.5 text-tg-link active:scale-90 transition-transform"
+          aria-label="Назад"
+          className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
         >
-          <ChevronLeft size={20} />
-          <span>Настройки</span>
+          <ChevronLeft size={22} strokeWidth={2.25} />
         </button>
       </header>
     );
