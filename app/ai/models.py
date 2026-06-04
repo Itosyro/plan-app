@@ -50,15 +50,28 @@ class ModelRegistry:
     critic: str
 
 
-# Defaults — keep in sync with the table in
-# ``docs/PROGRESS.md`` (the "Workstream 1" entry that introduced this
-# module). Whisper Large v3 (not Turbo) because the user records long,
-# multi-intent Russian thoughts where transcription accuracy compounds
-# downstream — the extra latency is paid once per voice, the accuracy
-# is paid by every later stage.
+# Defaults — battle-tested Groq production models that play cleanly
+# with ``instructor`` JSON/structured-output mode.
+#
+# History: WS1 briefly switched the heavy stages to ``openai/gpt-oss-*``
+# (reasoning models). In production those broke EVERY classify call —
+# gpt-oss models emit ``<reasoning>`` tokens around their output and
+# don't honour instructor's JSON mode cleanly, so the Pydantic parse
+# failed on every voice/text message and the bot replied with a
+# generic error. Reverted to the proven Llama line:
+#   • ``llama-3.3-70b-versatile`` — 128K ctx, native JSON mode + tool
+#     use, current Groq production (NOT deprecated as of 2026-06).
+#   • ``llama-3.1-8b-instant`` — fast light-stage model, current
+#     production (the sanctioned replacement for llama3-8b-8192).
+# ``qwen-qwq-32b`` (the old critic) stays gone — Groq withdrew it.
+# The critic now shares the 70B model.
+#
+# Every default is still env-overridable (``GROQ_MODEL_<STAGE>``), so
+# gpt-oss / kimi / a future OpenRouter id can be A/B'd in one place
+# WITHOUT a redeploy once verified to work with structured output.
 _WHISPER_DEFAULT = "whisper-large-v3"
-_LIGHT_DEFAULT = "openai/gpt-oss-20b"
-_HEAVY_DEFAULT = "openai/gpt-oss-120b"
+_LIGHT_DEFAULT = "llama-3.1-8b-instant"
+_HEAVY_DEFAULT = "llama-3.3-70b-versatile"
 
 
 @lru_cache(maxsize=1)
