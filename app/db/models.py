@@ -246,6 +246,36 @@ class Note(SQLModel, table=True):
     deleted_at: datetime | None = Field(default=None)
 
 
+class Board(SQLModel, table=True):
+    """An Excalidraw canvas / mind-map board owned by a user.
+
+    Boards are free-form visual canvases (blocks, arrows, freehand) that
+    live outside the task/note pipeline — the user draws on them directly
+    in the Mini-App. The whole Excalidraw scene (elements + appState,
+    minus inlined binary files) is serialised to ``scene_json`` via the
+    library's ``serializeAsJSON(..., "database")`` and restored with
+    ``restore()`` on load.
+
+    Soft-deleted (``deleted_at``) like Task/Note so a stray tap doesn't
+    nuke a board irrecoverably. ``scene_json`` is JSON (JSONB on
+    Postgres) so we can validate on write and, later, index into the
+    scene if needed. Empty/new boards carry ``None`` until first save.
+    """
+
+    __tablename__ = "boards"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    name: str = Field(default="Без названия", max_length=128)
+    scene_json: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    created_at: datetime = Field(default_factory=_utcnow, nullable=False)
+    updated_at: datetime = Field(default_factory=_utcnow, nullable=False)
+    deleted_at: datetime | None = Field(default=None)
+
+
 class AiRun(SQLModel, table=True):
     """Log entry for every LLM call."""
 

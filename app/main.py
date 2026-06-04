@@ -28,6 +28,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import select
 
+from app.api.routers import boards as api_boards
 from app.api.routers import categories as api_categories
 from app.api.routers import horizons as api_horizons
 from app.api.routers import inbox as api_inbox
@@ -242,6 +243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_me.router, prefix="/api/me", tags=["me"])
     app.include_router(api_tasks.router, prefix="/api/tasks", tags=["tasks"])
     app.include_router(api_notes.router, prefix="/api/notes", tags=["notes"])
+    app.include_router(api_boards.router, prefix="/api/boards", tags=["boards"])
     app.include_router(api_trash.router, prefix="/api/trash", tags=["trash"])
     app.include_router(api_categories.router, prefix="/api/categories", tags=["categories"])
     app.include_router(api_horizons.router, prefix="/api/horizons", tags=["horizons"])
