@@ -205,3 +205,14 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .animate-screen-in-right, .animate-screen-in-left { animation: none; }
 }
+
+/* Excalidraw board: Miro-style polka dots painted under a transparent
+   Excalidraw canvas. The dot colour follows the tg-hint variable so it
+   stays subtle on both light + dark themes. Pattern size 22px gives a
+   comfortable visual rhythm at phone DPI without crowding the canvas. */
+.board-bg-dots {
+  background-color: var(--tg-theme-bg-color, #f8f8fa);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--tg-theme-hint-color, #888) 35%, transparent) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  background-position: 0 0;
+}
