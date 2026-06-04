@@ -348,7 +348,65 @@ class TrashCountsOut(_ConfiguredModel):
     notes: int = 0
 
 
+# ── /api/boards ──────────────────────────────────────────────────────
+
+# Upper bound on a serialised Excalidraw scene we'll accept. The
+# library's ``serializeAsJSON(..., "database")`` strips inlined binary
+# files, so a normal mind-map is a few KB and a heavy one is low
+# hundreds of KB. 5 MB is a generous ceiling that still rejects abuse
+# / runaway payloads before they hit the DB.
+BOARD_SCENE_MAX_BYTES = 5 * 1024 * 1024
+
+
+class BoardOut(_ConfiguredModel):
+    """Lightweight board row for the list view — no scene payload.
+
+    The list endpoint must stay cheap even when a user has dozens of
+    boards, so ``scene_json`` (potentially hundreds of KB each) is
+    omitted here and only returned by ``GET /boards/{id}``.
+    """
+
+    id: int
+    name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class BoardDetailOut(BoardOut):
+    """Full board including the Excalidraw scene for the canvas view."""
+
+    scene_json: dict[str, object] | None = None
+
+
+class BoardCreateIn(BaseModel):
+    """Body for ``POST /api/boards`` — create an (optionally named) board."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class BoardUpdateIn(BaseModel):
+    """Body for ``PATCH /api/boards/{id}``.
+
+    Both fields optional; only supplied keys mutate. ``scene_json`` is
+    the debounced auto-save payload from Excalidraw's ``onChange``.
+    Size is enforced in the handler (``BOARD_SCENE_MAX_BYTES``) because
+    Pydantic can't bound a nested dict's serialised size declaratively.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    scene_json: dict[str, object] | None = None
+
+
 __all__ = [
+    "BOARD_SCENE_MAX_BYTES",
+    "BoardCreateIn",
+    "BoardDetailOut",
+    "BoardOut",
+    "BoardUpdateIn",
     "CategoryCreateIn",
     "CategoryOut",
     "HorizonOut",
