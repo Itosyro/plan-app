@@ -80,7 +80,7 @@ export function NotesList({ onOpen }: Props) {
     <div className="flex flex-col gap-3">
       <SearchBar value={query} onChange={setQuery} />
       {filtered !== null && filtered.length === 0 ? (
-        <div className="rounded-3xl bg-bento-card p-4 text-center text-sm text-tg-hint shadow-bento ring-1 ring-tg-divider/40">
+        <div className="rounded-3xl bg-bento-card p-4 text-center text-sm text-tg-hint shadow-bento ring-1 ring-black/5">
           По запросу ничего не нашлось.
         </div>
       ) : (
@@ -103,7 +103,7 @@ interface SearchBarProps {
 
 function SearchBar({ value, onChange }: SearchBarProps) {
   return (
-    <label className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-3 py-2 shadow-bento ring-1 ring-tg-divider/40 transition-colors focus-within:ring-tg-button/30">
+    <label className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-3 py-2 shadow-bento ring-1 ring-black/5 transition-colors focus-within:ring-tg-button/30">
       <Search size={16} strokeWidth={2.25} className="text-tg-hint" aria-hidden />
       <input
         type="search"

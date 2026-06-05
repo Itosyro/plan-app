@@ -340,10 +340,10 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
         return (
           <li
             key={review.id}
-            className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40"
+            className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5"
           >
             {review.text && (
-              <p className="mb-3 rounded-lg bg-tg-button/[0.06] px-3 py-1.5 text-[13px] italic leading-snug text-tg-hint">
+              <p className="mb-3 border-l-2 border-tg-button/30 pl-3 text-[13px] italic leading-snug text-tg-hint">
                 «{review.text}»
               </p>
             )}
@@ -386,7 +386,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                             disabled={isSaving}
                             onChange={(e) => setTitleDraft(e.target.value)}
                             onBlur={() => void saveTitle(task)}
-                            className="w-full resize-none rounded-xl bg-bento px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button animate-fade-in"
+                            className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button animate-fade-in"
                             placeholder="Что нужно сделать?"
                           />
                         ) : (
@@ -562,7 +562,7 @@ export function InboxReview({ tz, categories, onResolved }: Props) {
                                 disabled={isSaving}
                                 onChange={(e) => setNoteTitleDraft(e.target.value)}
                                 onBlur={() => void saveNoteTitle(note)}
-                                className="w-full resize-none rounded-xl bg-bento px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button"
+                                className="w-full resize-none rounded-xl bg-bento-card px-2 py-1 text-[14px] leading-snug text-tg-text ring-1 ring-tg-button/40 focus:outline-none focus:ring-tg-button"
                                 placeholder="Название заметки"
                               />
                             ) : (

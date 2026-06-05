@@ -62,7 +62,7 @@ export function BottomSheetSelect({
                   "ease-apple flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left ring-1 transition-all duration-200 active:scale-[0.98] " +
                   (active
                     ? "bg-tg-button/10 ring-tg-button/30"
-                    : "bg-bento ring-tg-divider/30 hover:bg-tg-button/[0.06] hover:ring-tg-divider/50")
+                    : "bg-bento ring-black/[0.04] hover:bg-tg-button/[0.06] hover:ring-black/[0.08]")
                 }
               >
                 <span className="min-w-0">

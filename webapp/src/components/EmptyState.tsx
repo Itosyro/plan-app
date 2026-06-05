@@ -24,7 +24,7 @@ export function EmptyState({
 }: Props) {
   const Icon: LucideIcon = icon ?? Sparkles;
   return (
-    <div className="mt-8 flex flex-col items-center rounded-3xl bg-bento-card px-6 py-10 text-center shadow-bento ring-1 ring-tg-divider/40">
+    <div className="mt-8 flex flex-col items-center rounded-3xl bg-bento-card px-6 py-10 text-center shadow-bento ring-1 ring-black/5">
       {emoji && !icon ? (
         <div aria-hidden className="mb-3 text-5xl">
           {emoji}

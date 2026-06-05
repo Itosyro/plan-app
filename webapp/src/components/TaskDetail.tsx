@@ -234,7 +234,7 @@ export function TaskDetail({
 
       {task !== null && (
         <>
-          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40">
+          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
             <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
               {task.title_original && (
                 <span aria-hidden className="text-[12px] leading-none">🎯</span>
@@ -271,7 +271,7 @@ export function TaskDetail({
             )}
           </section>
 
-          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40">
+          <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
             <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
               Описание
             </label>
@@ -296,7 +296,7 @@ export function TaskDetail({
           </section>
 
           {task.subtasks.length > 0 && (
-            <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40 animate-fade-in">
+            <section className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5 animate-fade-in">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
                   Подзадачи
@@ -521,7 +521,7 @@ function DetailRow({ icon, tone, label, value, onClick, disabled }: RowProps) {
       onClick={onClick}
       disabled={disabled}
       className={
-        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-tg-divider/40 transition-all duration-200 " +
+        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-black/5 transition-all duration-200 " +
         (disabled ? "opacity-60 " : "active:scale-[0.99] hover:bg-bento-card/90")
       }
     >
@@ -566,7 +566,7 @@ function ConfirmDeleteSheet({ open, onCancel, onConfirm, pending, title }: Confi
         role="alertdialog"
         aria-modal="true"
         aria-label="Удалить задачу"
-        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card p-5 shadow-bento-lg ring-1 ring-tg-divider/40"
+        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card p-5 shadow-bento-lg ring-1 ring-black/5"
         style={{
           animation: "slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1)",
           paddingBottom: "calc(var(--safe-bottom) + 1rem)",

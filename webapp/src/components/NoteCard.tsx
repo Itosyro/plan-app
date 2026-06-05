@@ -22,7 +22,7 @@ export function NoteCard({ note, onOpen }: Props) {
         haptic("select");
         onOpen(note.id);
       }}
-      className="ease-apple w-full rounded-3xl bg-bento-card p-4 text-left shadow-bento ring-1 ring-tg-divider/40 transition-all duration-200 active:scale-[0.99]"
+      className="ease-apple w-full rounded-3xl bg-bento-card p-4 text-left shadow-bento ring-1 ring-black/5 transition-all duration-200 active:scale-[0.99]"
     >
       <div className="font-display break-words text-[16px] font-medium leading-snug tracking-tight text-tg-text">
         {note.title}

@@ -19,7 +19,7 @@ export function SkeletonLine({ width = "w-full", height = "h-3" }: SkeletonLineP
 
 export function SkeletonTaskCard() {
   return (
-    <div className="rounded-2xl bg-bento-card p-3 shadow-bento ring-1 ring-tg-divider/40">
+    <div className="rounded-2xl bg-bento-card p-3 shadow-bento ring-1 ring-black/5">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full bg-bento" />
         <div className="flex min-w-0 flex-1 flex-col gap-2 py-0.5">
@@ -33,7 +33,7 @@ export function SkeletonTaskCard() {
 
 export function SkeletonNoteCard() {
   return (
-    <div className="rounded-2xl bg-bento-card p-3 shadow-bento ring-1 ring-tg-divider/40">
+    <div className="rounded-2xl bg-bento-card p-3 shadow-bento ring-1 ring-black/5">
       <div className="flex flex-col gap-2">
         <SkeletonLine width="w-2/3" height="h-3.5" />
         <SkeletonLine width="w-full" height="h-2.5" />
@@ -71,7 +71,7 @@ export function SkeletonInboxList({ rows = 3 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, i) => (
         <li
           key={i}
-          className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40"
+          className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5"
         >
           <div className="flex flex-col gap-3">
             <SkeletonLine width="w-1/3" height="h-3" />

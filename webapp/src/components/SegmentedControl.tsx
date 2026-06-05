@@ -51,14 +51,14 @@ export function SegmentedControl<T extends string>({
       role="tablist"
       aria-label={ariaLabel}
       className={
-        "relative flex rounded-2xl bg-bento p-1 ring-1 ring-tg-divider/30 " + className
+        "relative flex rounded-2xl bg-bento p-1 ring-1 ring-black/[0.04] " + className
       }
     >
       {/* Sliding active capsule. Width matches one segment; translateX
           moves it by whole-segment steps. cubic-bezier = soft iOS spring. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-y-1 left-1 rounded-xl bg-bento-card shadow-bento ring-1 ring-tg-divider/30"
+        className="pointer-events-none absolute inset-y-1 left-1 rounded-xl bg-bento-card shadow-bento ring-1 ring-black/[0.04]"
         style={{
           width: `calc((100% - 0.5rem) / ${n})`,
           transform: `translateX(${activeIndex * 100}%)`,

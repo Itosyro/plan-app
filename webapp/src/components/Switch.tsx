@@ -24,7 +24,7 @@ function Track({ checked }: { checked: boolean }) {
       }
     >
       <span
-        className="inline-block h-[27px] w-[27px] rounded-full bg-tg-button-text shadow-bento transition-transform duration-300 ease-spring"
+        className="inline-block h-[27px] w-[27px] rounded-full bg-white shadow-bento transition-transform duration-300 ease-spring"
         style={{ transform: checked ? "translateX(22px)" : "translateX(2px)" }}
       />
     </span>

@@ -252,7 +252,7 @@ function MonthView({
 
   return (
     <>
-      <div className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-tg-divider/40">
+      <div className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
         <div className="mb-3 flex items-center justify-between">
           <NavButton dir="prev" onClick={onPrev} label="Предыдущий месяц" />
           <span className="font-display text-[16px] font-semibold tracking-tight text-tg-text">
@@ -378,7 +378,7 @@ function WeekView({ tz, byDay, weekStart, onPrev, onNext, onToday, onOpen }: Wee
       : `${weekStart.getDate()} ${MONTHS[weekStart.getMonth()].slice(0, 3).toLowerCase()} – ${last.getDate()} ${MONTHS[last.getMonth()].slice(0, 3).toLowerCase()}`;
 
   return (
-    <div className="rounded-3xl bg-bento-card p-3 shadow-bento ring-1 ring-tg-divider/40">
+    <div className="rounded-3xl bg-bento-card p-3 shadow-bento ring-1 ring-black/5">
       <div className="mb-2 flex items-center justify-between">
         <NavButton dir="prev" onClick={onPrev} label="Предыдущая неделя" />
         <button
@@ -472,7 +472,7 @@ function WeekEvent({ task, time, onOpen }: { task: Task; time: string | null; on
       type="button"
       onClick={() => onOpen(task.id)}
       className={
-        "ease-apple flex items-center gap-2 rounded-lg px-2 py-1.5 text-left ring-1 ring-tg-divider/30 transition-shadow " +
+        "ease-apple flex items-center gap-2 rounded-lg px-2 py-1.5 text-left ring-1 ring-black/[0.04] transition-shadow " +
         c.pill +
         " " +
         (isDragging ? "shadow-bento-lg" : "")
@@ -526,7 +526,7 @@ function AgendaView({ tz, tasks, onOpen }: { tz: string; tasks: Task[]; onOpen: 
           <header className="mb-2 px-1 text-[13px] font-semibold tracking-tight text-tg-link">
             {agendaHeading(key, tz, tKey)}
           </header>
-          <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-tg-divider/40">
+          <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
             <div className="divide-y divide-tg-divider/40">
               {items.map((t) => {
                 const c = categoryColor(t.category_id);
@@ -639,7 +639,7 @@ function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
       type="button"
       onClick={() => onOpen(task.id)}
       className={
-        "ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-tg-divider/40 transition-all duration-150 active:scale-[0.99] " +
+        "ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99] " +
         (isDragging ? "shadow-bento-lg" : "shadow-bento")
       }
     >
