@@ -1,17 +1,20 @@
-// Full-screen Excalidraw canvas for a single named board — Miro-style UX.
+// Full-screen Excalidraw canvas for a single named board — bottom-toolbar UX.
 //
 // Layout:
 //   • Fixed-position fullscreen overlay (above tab stack).
 //   • Sticky header: back arrow ← + editable board name (PATCH on blur)
 //     + save-status hint + bg-pattern toggle.
 //   • Lazy-loaded <Excalidraw> filling the remaining height.
-//   • LEFT TOOLBAR: vertical pill — Select/Pen/Rect/Ellipse/Arrow/Text/Eraser/Hand.
-//   • BOTTOM BAR: color pills + stroke-width selector (visible when draw tool active).
-//   • BOTTOM-RIGHT: zoom in/out/reset + undo.
+//   • BOTTOM TOOLBAR (v2): horizontal pill at the bottom — all 8 tools.
+//   • CONTEXTUAL SETTINGS PANEL: slides up above tool row when draw tool active.
+//     Per-tool: colour swatch row + thickness slider + opacity slider +
+//     fill toggle (shapes) / font size (text).
+//   • TOP-RIGHT: undo/redo + zoom in/out/reset (glass pills, no collision).
 //
-// Bugs fixed vs v1:
-//   1. Dot pattern now follows pan/zoom via CSS vars updated via RAF.
+// Bugs fixed:
+//   1. Dot pattern follows pan/zoom via CSS vars updated via RAF.
 //   2. Two-finger touch switches to "hand" tool to enable native pinch/pan.
+//   3. ALL stock Excalidraw chrome hidden — our controls are sole source of truth.
 //
 // Persistence:
 //   • On mount: GET /api/boards/:id → restore(scene_json) → initialData.
@@ -27,6 +30,7 @@
 
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -51,6 +55,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { apiClient } from "../../api/client";
@@ -68,8 +73,6 @@ type BinaryFiles = any;
 type ExcalidrawImperativeAPI = any;
 
 // Lazy-load the entire Excalidraw bundle (own chunk: ~900KB gzipped).
-// Cast to a loosely-typed component: Excalidraw's prop types are strict
-// and don't unify with the local `any` scene-shape aliases above.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ExcalidrawComponent = lazy(() => import("./ExcalidrawLazy")) as unknown as ComponentType<any>;
 
@@ -87,10 +90,6 @@ interface Props {
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-// Background pattern for the canvas.
-// "blank" = stock Excalidraw background
-// "dots" = CSS polka pattern (follows pan/zoom via CSS vars)
-// "grid" = Excalidraw native gridModeEnabled
 type BgPattern = "blank" | "dots" | "grid";
 const BG_STORAGE_KEY = "boards:bg-pattern";
 
@@ -105,7 +104,6 @@ const BG_NEXT: Record<BgPattern, BgPattern> = {
   grid: "blank",
 };
 
-// Tools exposed in our custom Miro-style toolbar
 type ToolType =
   | "selection"
   | "freedraw"
@@ -133,7 +131,7 @@ const TOOLS: ToolDef[] = [
   { type: "hand", label: "Рука", Icon: Hand },
 ];
 
-// Draw tools: those that benefit from the bottom colour+stroke-width bar
+// Tools that show the contextual settings panel
 const DRAW_TOOLS = new Set<ToolType>([
   "freedraw",
   "rectangle",
@@ -142,7 +140,19 @@ const DRAW_TOOLS = new Set<ToolType>([
   "text",
 ]);
 
-// Miro-style colour palette (12 colours)
+// Tools that show stroke colour + thickness
+const STROKE_TOOLS = new Set<ToolType>([
+  "freedraw",
+  "rectangle",
+  "ellipse",
+  "arrow",
+  "text",
+]);
+
+// Tools that show fill controls (shapes only)
+const FILL_TOOLS = new Set<ToolType>(["rectangle", "ellipse"]);
+
+// 12-colour Miro-style palette
 const PALETTE = [
   "#1f2937",
   "#ffffff",
@@ -156,20 +166,256 @@ const PALETTE = [
   "#06b6d4",
   "#6b7280",
   "#92400e",
-];
+] as const;
 
-interface StrokeWidthDef {
-  value: number;
-  label: string;
-  thick: number; // visual bar height
+// Font size options for the text tool
+const FONT_SIZES = [
+  { label: "S", value: 16 },
+  { label: "M", value: 20 },
+  { label: "L", value: 28 },
+  { label: "XL", value: 36 },
+] as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components (memoised so canvas onChange doesn't re-render them)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ToolRowProps {
+  tools: ToolDef[];
+  activeTool: ToolType;
+  onSelect: (type: ToolType) => void;
 }
 
-const STROKE_WIDTHS: StrokeWidthDef[] = [
-  { value: 1, label: "Тонкая", thick: 1 },
-  { value: 2, label: "Обычная", thick: 2 },
-  { value: 4, label: "Жирная", thick: 4 },
-  { value: 6, label: "Очень жирная", thick: 6 },
-];
+const ToolRow = memo(function ToolRow({ tools, activeTool, onSelect }: ToolRowProps) {
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-2xl bg-tg-bg/95 px-1.5 py-1.5 shadow-island backdrop-blur-xl ring-1 ring-black/[0.06] dark:ring-white/[0.06]"
+      role="toolbar"
+      aria-label="Инструменты рисования"
+    >
+      {tools.map(({ type, label, Icon }) => {
+        const isActive = activeTool === type;
+        return (
+          <button
+            key={type}
+            type="button"
+            aria-label={label}
+            title={label}
+            aria-pressed={isActive}
+            onClick={() => onSelect(type)}
+            className={
+              "ease-apple inline-flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-150 active:scale-90 " +
+              (isActive
+                ? "bg-tg-button text-tg-button-text shadow-sm"
+                : "text-tg-text/70 hover:bg-bento")
+            }
+          >
+            <Icon size={18} strokeWidth={2} aria-hidden />
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
+interface SettingsPanelProps {
+  activeTool: ToolType;
+  activeColor: string;
+  activeStrokeWidth: number;
+  activeOpacity: number;
+  activeFillColor: string;
+  activeFontSize: number;
+  onColorChange: (hex: string) => void;
+  onStrokeWidthChange: (w: number) => void;
+  onOpacityChange: (v: number) => void;
+  onFillColorChange: (hex: string | "transparent") => void;
+  onFontSizeChange: (size: number) => void;
+}
+
+const SettingsPanel = memo(function SettingsPanel({
+  activeTool,
+  activeColor,
+  activeStrokeWidth,
+  activeOpacity,
+  activeFillColor,
+  activeFontSize,
+  onColorChange,
+  onStrokeWidthChange,
+  onOpacityChange,
+  onFillColorChange,
+  onFontSizeChange,
+}: SettingsPanelProps) {
+  const showStroke = STROKE_TOOLS.has(activeTool);
+  const showFill = FILL_TOOLS.has(activeTool);
+  const showFontSize = activeTool === "text";
+
+  return (
+    <div className="w-full rounded-2xl bg-tg-bg/95 px-3 py-3 shadow-island backdrop-blur-xl ring-1 ring-black/[0.06] dark:ring-white/[0.06]">
+      {/* Colour row */}
+      {showStroke && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-tg-hint">
+            Цвет
+          </p>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            {PALETTE.map((hex) => {
+              const isActive =
+                activeColor === hex ||
+                activeColor.toLowerCase() === hex.toLowerCase();
+              return (
+                <button
+                  key={hex}
+                  type="button"
+                  aria-label={hex}
+                  aria-pressed={isActive}
+                  onClick={() => onColorChange(hex)}
+                  className={
+                    "ease-apple inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all duration-150 active:scale-90 " +
+                    (isActive
+                      ? "ring-2 ring-tg-button ring-offset-2 ring-offset-tg-bg scale-110"
+                      : "hover:scale-110")
+                  }
+                  style={{
+                    backgroundColor: hex,
+                    border:
+                      hex === "#ffffff"
+                        ? "1px solid rgba(0,0,0,0.12)"
+                        : undefined,
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Fill toggle (shapes only) */}
+      {showFill && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-tg-hint">
+            Заливка
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Без заливки"
+              aria-pressed={activeFillColor === "transparent"}
+              onClick={() => onFillColorChange("transparent")}
+              className={
+                "ease-apple inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-all duration-150 active:scale-90 " +
+                (activeFillColor === "transparent"
+                  ? "border-tg-button ring-2 ring-tg-button ring-offset-2 ring-offset-tg-bg scale-110"
+                  : "border-black/20 hover:scale-110 dark:border-white/20")
+              }
+              style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(0,0,0,0.1) 3px, rgba(0,0,0,0.1) 4px)" }}
+            />
+            {PALETTE.filter((c) => c !== "#ffffff").slice(0, 8).map((hex) => {
+              const fillHex = hex + "33";
+              const isActive = activeFillColor === fillHex;
+              return (
+                <button
+                  key={hex}
+                  type="button"
+                  aria-label={`Заливка ${hex}`}
+                  aria-pressed={isActive}
+                  onClick={() => onFillColorChange(fillHex)}
+                  className={
+                    "ease-apple inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all duration-150 active:scale-90 " +
+                    (isActive
+                      ? "ring-2 ring-tg-button ring-offset-2 ring-offset-tg-bg scale-110"
+                      : "hover:scale-110")
+                  }
+                  style={{ backgroundColor: hex + "33", border: `2px solid ${hex}` }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Font size (text tool only) */}
+      {showFontSize && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-tg-hint">
+            Размер шрифта
+          </p>
+          <div className="flex items-center gap-1.5">
+            {FONT_SIZES.map(({ label, value }) => {
+              const isActive = activeFontSize === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-label={`Размер ${label}`}
+                  aria-pressed={isActive}
+                  onClick={() => onFontSizeChange(value)}
+                  className={
+                    "ease-apple inline-flex h-9 min-w-[44px] items-center justify-center rounded-xl px-2 text-sm font-semibold transition-all duration-150 active:scale-90 " +
+                    (isActive
+                      ? "bg-tg-button text-tg-button-text"
+                      : "bg-bento text-tg-text/70 hover:bg-bento/80")
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Thickness slider */}
+      {showStroke && activeTool !== "text" && (
+        <div className="mb-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-tg-hint">
+              Толщина
+            </p>
+            <span className="text-[11px] font-semibold tabular-nums text-tg-button">
+              {activeStrokeWidth}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={8}
+            step={1}
+            value={activeStrokeWidth}
+            onChange={(e) => onStrokeWidthChange(Number(e.target.value))}
+            className="board-slider w-full"
+            aria-label="Толщина линии"
+          />
+        </div>
+      )}
+
+      {/* Opacity slider */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-tg-hint">
+            Прозрачность
+          </p>
+          <span className="text-[11px] font-semibold tabular-nums text-tg-button">
+            {activeOpacity}%
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={activeOpacity}
+          onChange={(e) => onOpacityChange(Number(e.target.value))}
+          className="board-slider w-full"
+          aria-label="Прозрачность"
+        />
+      </div>
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function BoardCanvas({ boardId }: Props) {
   const [board, setBoard] = useState<BoardDetail | null>(null);
@@ -177,7 +423,6 @@ export function BoardCanvas({ boardId }: Props) {
   const [nameDraft, setNameDraft] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
 
-  // Background pattern — persisted globally via localStorage
   const [bgPattern, setBgPattern] = useState<BgPattern>(() => {
     if (typeof window === "undefined") return "dots";
     const stored = window.localStorage.getItem(BG_STORAGE_KEY);
@@ -185,22 +430,24 @@ export function BoardCanvas({ boardId }: Props) {
     return "dots";
   });
 
-  // Active tool mirrored from Excalidraw for our toolbar
+  // Active tool mirrored from Excalidraw
   const [activeTool, setActiveTool] = useState<ToolType>("selection");
-  // Colour + stroke-width mirrored from Excalidraw appState
+  // Drawing state mirrored from Excalidraw appState
   const [activeColor, setActiveColor] = useState<string>("#1f2937");
   const [activeStrokeWidth, setActiveStrokeWidth] = useState<number>(2);
+  const [activeOpacity, setActiveOpacity] = useState<number>(100);
+  const [activeFillColor, setActiveFillColor] = useState<string>("transparent");
+  const [activeFontSize, setActiveFontSize] = useState<number>(20);
 
   const debounceTimerRef = useRef<number | undefined>(undefined);
   const pendingSceneRef = useRef<Record<string, unknown> | null>(null);
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Two-finger gesture tool-switching
   const prevToolRef = useRef<ToolType>("selection");
   const isMultiTouchRef = useRef(false);
 
-  // RAF-throttled CSS-var updates for dot-pattern pan/zoom tracking
+  // RAF-throttled CSS-var updates
   const rafPendingRef = useRef(false);
   const scrollStateRef = useRef({ scrollX: 0, scrollY: 0, zoom: 1 });
 
@@ -231,7 +478,7 @@ export function BoardCanvas({ boardId }: Props) {
     void loadBoard();
   }, [loadBoard]);
 
-  // Register Telegram BackButton while this overlay is mounted.
+  // Register Telegram BackButton
   useEffect(() => {
     const bb = wa?.BackButton;
     if (!bb) return;
@@ -258,7 +505,6 @@ export function BoardCanvas({ boardId }: Props) {
     const scene = pendingSceneRef.current;
     if (scene === null) return;
     pendingSceneRef.current = null;
-    // Best-effort fire-and-forget on unmount/back.
     void apiClient.patchBoard(boardId, { scene_json: scene });
   }, [boardId]);
 
@@ -279,19 +525,17 @@ export function BoardCanvas({ boardId }: Props) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (api as any).updateScene({
-        appState: {
-          gridModeEnabled: isGrid,
-          viewBackgroundColor: bg,
-        },
+        appState: { gridModeEnabled: isGrid, viewBackgroundColor: bg },
         captureUpdate: "NEVER",
       });
     } catch {
-      // Best-effort — no-op on failure
+      // best-effort
     }
   }, [bgPattern]);
 
   // --------------------------------------------------------------------------
-  // Bug #1 fix: dot pattern follows pan/zoom via CSS vars (RAF-throttled)
+  // Bug #1: dot pattern follows pan/zoom via CSS vars (RAF-throttled)
+  // This writes CSS vars directly — NO React setState so no re-render.
   // --------------------------------------------------------------------------
   const scheduleCssVarUpdate = useCallback(() => {
     if (rafPendingRef.current) return;
@@ -316,7 +560,7 @@ export function BoardCanvas({ boardId }: Props) {
       appState: AppState,
       files: BinaryFiles,
     ) => {
-      // Mirror active tool from Excalidraw's internal appState
+      // Mirror active tool
       if (appState?.activeTool?.type) {
         const t = appState.activeTool.type as ToolType;
         if (TOOLS.some((tool) => tool.type === t)) {
@@ -324,15 +568,25 @@ export function BoardCanvas({ boardId }: Props) {
         }
       }
 
-      // Mirror stroke colour + width
+      // Mirror drawing state (batched into a single setStates call via flushSync
+      // is not needed — React batches these automatically in React 18)
       if (appState?.currentItemStrokeColor) {
         setActiveColor(appState.currentItemStrokeColor as string);
       }
       if (appState?.currentItemStrokeWidth !== undefined) {
         setActiveStrokeWidth(appState.currentItemStrokeWidth as number);
       }
+      if (appState?.currentItemOpacity !== undefined) {
+        setActiveOpacity(appState.currentItemOpacity as number);
+      }
+      if (appState?.currentItemBackgroundColor !== undefined) {
+        setActiveFillColor((appState.currentItemBackgroundColor as string) || "transparent");
+      }
+      if (appState?.currentItemFontSize !== undefined) {
+        setActiveFontSize(appState.currentItemFontSize as number);
+      }
 
-      // Bug #1: update CSS vars for dot pattern pan/zoom (RAF-throttled)
+      // CSS var update for dot-pattern — no setState, pure DOM write
       if (appState?.scrollX !== undefined) {
         scrollStateRef.current = {
           scrollX: (appState.scrollX as number) ?? 0,
@@ -342,11 +596,10 @@ export function BoardCanvas({ boardId }: Props) {
         scheduleCssVarUpdate();
       }
 
-      // Debounce the server save
+      // Debounce save
       if (debounceTimerRef.current !== undefined) {
         window.clearTimeout(debounceTimerRef.current);
       }
-
       debounceTimerRef.current = window.setTimeout(() => {
         debounceTimerRef.current = undefined;
         setSaveStatus("saving");
@@ -365,7 +618,7 @@ export function BoardCanvas({ boardId }: Props) {
         })();
       }, DEBOUNCE_MS);
 
-      // Keep latest scene buffered in case unmount fires before debounce.
+      // Buffer for flush-on-unmount
       void (async () => {
         const api = await getExcalidrawApi();
         const raw = api.serializeAsJSON(elements, appState, files, "database");
@@ -376,7 +629,7 @@ export function BoardCanvas({ boardId }: Props) {
   );
 
   // --------------------------------------------------------------------------
-  // Bug #2 fix: two-finger touch → switch to hand tool for pinch/pan
+  // Bug #2: two-finger touch → hand tool for pinch/pan
   // --------------------------------------------------------------------------
   useEffect(() => {
     const el = containerRef.current;
@@ -387,7 +640,6 @@ export function BoardCanvas({ boardId }: Props) {
         isMultiTouchRef.current = true;
         const api = excalidrawApiRef.current;
         if (!api) return;
-        // Remember the current active tool to restore after gesture
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const curState = (api as any).getAppState?.() as AppState;
         if (curState?.activeTool?.type) {
@@ -425,7 +677,7 @@ export function BoardCanvas({ boardId }: Props) {
       el.removeEventListener("touchend", handleTouchEnd, true);
       el.removeEventListener("touchcancel", handleTouchEnd, true);
     };
-  }, [board]); // re-attach when board loads (containerRef is stable)
+  }, [board]);
 
   // --------------------------------------------------------------------------
   // Header actions
@@ -437,7 +689,7 @@ export function BoardCanvas({ boardId }: Props) {
       try {
         window.localStorage.setItem(BG_STORAGE_KEY, next);
       } catch {
-        // localStorage may throw in private browsing — non-fatal.
+        // non-fatal
       }
       return next;
     });
@@ -462,10 +714,9 @@ export function BoardCanvas({ boardId }: Props) {
   }, [board, nameDraft, boardId]);
 
   // --------------------------------------------------------------------------
-  // Toolbar actions
+  // Toolbar actions (all memoised)
   // --------------------------------------------------------------------------
 
-  // Tool picker: imperative call + mirror local state immediately
   const handleSelectTool = useCallback((type: ToolType) => {
     haptic("select");
     setActiveTool(type);
@@ -479,7 +730,6 @@ export function BoardCanvas({ boardId }: Props) {
     }
   }, []);
 
-  // Colour picker
   const handleSelectColor = useCallback((hex: string) => {
     haptic("select");
     setActiveColor(hex);
@@ -488,10 +738,7 @@ export function BoardCanvas({ boardId }: Props) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (api as any).updateScene({
-        appState: {
-          currentItemStrokeColor: hex,
-          currentItemBackgroundColor: hex + "20",
-        },
+        appState: { currentItemStrokeColor: hex },
         captureUpdate: "NEVER",
       });
     } catch {
@@ -499,8 +746,7 @@ export function BoardCanvas({ boardId }: Props) {
     }
   }, []);
 
-  // Stroke width picker
-  const handleSelectStrokeWidth = useCallback((w: number) => {
+  const handleStrokeWidthChange = useCallback((w: number) => {
     haptic("select");
     setActiveStrokeWidth(w);
     const api = excalidrawApiRef.current;
@@ -508,10 +754,7 @@ export function BoardCanvas({ boardId }: Props) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (api as any).updateScene({
-        appState: {
-          currentItemStrokeWidth: w,
-          currentItemRoughness: 0,
-        },
+        appState: { currentItemStrokeWidth: w, currentItemRoughness: 0 },
         captureUpdate: "NEVER",
       });
     } catch {
@@ -519,7 +762,53 @@ export function BoardCanvas({ boardId }: Props) {
     }
   }, []);
 
-  // Zoom controls
+  const handleOpacityChange = useCallback((v: number) => {
+    setActiveOpacity(v);
+    const api = excalidrawApiRef.current;
+    if (!api) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (api as any).updateScene({
+        appState: { currentItemOpacity: v },
+        captureUpdate: "NEVER",
+      });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  const handleFillColorChange = useCallback((hex: string | "transparent") => {
+    haptic("select");
+    setActiveFillColor(hex);
+    const api = excalidrawApiRef.current;
+    if (!api) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (api as any).updateScene({
+        appState: { currentItemBackgroundColor: hex === "transparent" ? "transparent" : hex },
+        captureUpdate: "NEVER",
+      });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  const handleFontSizeChange = useCallback((size: number) => {
+    haptic("select");
+    setActiveFontSize(size);
+    const api = excalidrawApiRef.current;
+    if (!api) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (api as any).updateScene({
+        appState: { currentItemFontSize: size },
+        captureUpdate: "NEVER",
+      });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
   const handleZoom = useCallback((delta: number) => {
     const api = excalidrawApiRef.current;
     if (!api) return;
@@ -552,8 +841,6 @@ export function BoardCanvas({ boardId }: Props) {
     }
   }, []);
 
-  // Undo — Excalidraw 0.18 exposes history.clear() but not undoOnce().
-  // We dispatch a synthetic Ctrl+Z keyboard event to the canvas container.
   const handleUndo = useCallback(() => {
     haptic("select");
     try {
@@ -617,7 +904,6 @@ export function BoardCanvas({ boardId }: Props) {
           scrollToContent: true,
         });
       } catch {
-        // Corrupted scene — start fresh rather than crashing.
         setInitialData(undefined);
       } finally {
         setInitialDataReady(true);
@@ -637,7 +923,7 @@ export function BoardCanvas({ boardId }: Props) {
           ? "ошибка сохранения"
           : "";
 
-  const showBottomBar = DRAW_TOOLS.has(activeTool);
+  const showSettingsPanel = DRAW_TOOLS.has(activeTool);
 
   // --------------------------------------------------------------------------
   // Error state
@@ -721,7 +1007,6 @@ export function BoardCanvas({ boardId }: Props) {
           "relative min-h-0 flex-1 " +
           (bgPattern === "dots" ? "board-bg-dots" : "")
         }
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {board && initialDataReady ? (
           <Suspense
@@ -762,104 +1047,10 @@ export function BoardCanvas({ boardId }: Props) {
           </div>
         )}
 
-        {/* ── Left toolbar (tool picker pill) ── */}
-        <div
-          className="pointer-events-auto absolute left-3 top-1/2 z-10 -translate-y-1/2"
-          aria-label="Инструменты"
-        >
-          <div className="flex flex-col gap-1 rounded-2xl bg-tg-bg/90 p-[6px] shadow-island backdrop-blur-md">
-            {TOOLS.map(({ type, label, Icon }) => {
-              const isActive = activeTool === type;
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  aria-label={label}
-                  title={label}
-                  onClick={() => handleSelectTool(type)}
-                  className={
-                    "ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 active:scale-90 " +
-                    (isActive
-                      ? "bg-tg-button text-tg-button-text shadow-sm"
-                      : "text-tg-text/70 hover:bg-bento")
-                  }
-                >
-                  <Icon size={18} strokeWidth={2} aria-hidden />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ── Bottom colour + stroke-width bar (draw tools only) ── */}
-        {showBottomBar && (
-          <div className="pointer-events-auto absolute bottom-[calc(env(safe-area-inset-bottom,0px)+12px)] left-1/2 z-10 -translate-x-1/2">
-            <div className="flex flex-col gap-2 rounded-2xl bg-tg-bg/90 px-3 py-2.5 shadow-island backdrop-blur-md">
-              {/* Row 1: colour pills */}
-              <div className="flex items-center gap-1.5">
-                {PALETTE.map((hex) => {
-                  const isActive =
-                    activeColor === hex ||
-                    activeColor.toLowerCase() === hex.toLowerCase();
-                  return (
-                    <button
-                      key={hex}
-                      type="button"
-                      aria-label={hex}
-                      title={hex}
-                      onClick={() => handleSelectColor(hex)}
-                      className={
-                        "ease-apple inline-flex h-7 w-7 items-center justify-center rounded-full transition-all duration-150 active:scale-90 " +
-                        (isActive
-                          ? "ring-2 ring-tg-button ring-offset-1 ring-offset-tg-bg"
-                          : "hover:scale-110")
-                      }
-                      style={{
-                        backgroundColor: hex,
-                        border:
-                          hex === "#ffffff"
-                            ? "1px solid rgba(0,0,0,0.12)"
-                            : undefined,
-                      }}
-                    />
-                  );
-                })}
-              </div>
-              {/* Row 2: stroke-width buttons */}
-              <div className="flex items-center justify-center gap-2">
-                {STROKE_WIDTHS.map(({ value, label, thick }) => {
-                  const isActive = activeStrokeWidth === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-label={label}
-                      title={label}
-                      onClick={() => handleSelectStrokeWidth(value)}
-                      className={
-                        "ease-apple inline-flex h-9 min-w-[36px] items-center justify-center rounded-xl px-2 transition-all duration-150 active:scale-90 " +
-                        (isActive
-                          ? "bg-tg-button/15 ring-2 ring-tg-button"
-                          : "hover:bg-bento")
-                      }
-                    >
-                      <span
-                        className="block rounded-full bg-tg-text"
-                        style={{ width: 20, height: thick }}
-                        aria-hidden
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Bottom-right: undo + zoom controls ── */}
-        <div className="pointer-events-auto absolute bottom-[calc(env(safe-area-inset-bottom,0px)+12px)] right-3 z-10 flex flex-col gap-1.5">
+        {/* ── Top-right: undo + zoom (float, no collision with bottom bar) ── */}
+        <div className="pointer-events-auto absolute right-3 top-3 z-10 flex flex-col gap-1.5">
           {/* Undo */}
-          <div className="flex flex-col gap-1 rounded-2xl bg-tg-bg/90 p-[6px] shadow-island backdrop-blur-md">
+          <div className="flex flex-col gap-1 rounded-2xl bg-tg-bg/95 p-[5px] shadow-island backdrop-blur-xl ring-1 ring-black/[0.06] dark:ring-white/[0.06]">
             <button
               type="button"
               aria-label="Отменить"
@@ -867,26 +1058,11 @@ export function BoardCanvas({ boardId }: Props) {
               onClick={handleUndo}
               className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
             >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
-                <path
-                  d="M3.5 7.5H10a4.5 4.5 0 0 1 0 9H6"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M3.5 7.5L6 5m-2.5 2.5L6 10"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <Undo2 size={17} strokeWidth={2} aria-hidden />
             </button>
           </div>
           {/* Zoom */}
-          <div className="flex flex-col gap-1 rounded-2xl bg-tg-bg/90 p-[6px] shadow-island backdrop-blur-md">
+          <div className="flex flex-col gap-0.5 rounded-2xl bg-tg-bg/95 p-[5px] shadow-island backdrop-blur-xl ring-1 ring-black/[0.06] dark:ring-white/[0.06]">
             <button
               type="button"
               aria-label="Приблизить"
@@ -894,7 +1070,7 @@ export function BoardCanvas({ boardId }: Props) {
               onClick={() => handleZoom(0.2)}
               className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
             >
-              <ZoomIn size={18} strokeWidth={2} aria-hidden />
+              <ZoomIn size={17} strokeWidth={2} aria-hidden />
             </button>
             <button
               type="button"
@@ -903,7 +1079,7 @@ export function BoardCanvas({ boardId }: Props) {
               onClick={handleZoomReset}
               className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
             >
-              <Maximize size={16} strokeWidth={2} aria-hidden />
+              <Maximize size={15} strokeWidth={2} aria-hidden />
             </button>
             <button
               type="button"
@@ -912,9 +1088,50 @@ export function BoardCanvas({ boardId }: Props) {
               onClick={() => handleZoom(-0.2)}
               className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
             >
-              <ZoomOut size={18} strokeWidth={2} aria-hidden />
+              <ZoomOut size={17} strokeWidth={2} aria-hidden />
             </button>
           </div>
+        </div>
+
+        {/* ── Bottom toolbar stack ── */}
+        <div
+          className="pointer-events-auto absolute bottom-0 left-0 right-0 z-10 flex flex-col items-center gap-2 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] pt-2"
+          aria-label="Панель инструментов"
+        >
+          {/* Settings panel — slides up when draw tool active */}
+          <div
+            className={
+              "w-full max-w-[520px] transition-all duration-[200ms] " +
+              (showSettingsPanel
+                ? "translate-y-0 opacity-100 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                : "pointer-events-none translate-y-3 opacity-0 ease-[cubic-bezier(0.16,1,0.3,1)]")
+            }
+            style={{ willChange: "transform, opacity" }}
+            aria-hidden={!showSettingsPanel}
+          >
+            {showSettingsPanel && (
+              <SettingsPanel
+                activeTool={activeTool}
+                activeColor={activeColor}
+                activeStrokeWidth={activeStrokeWidth}
+                activeOpacity={activeOpacity}
+                activeFillColor={activeFillColor}
+                activeFontSize={activeFontSize}
+                onColorChange={handleSelectColor}
+                onStrokeWidthChange={handleStrokeWidthChange}
+                onOpacityChange={handleOpacityChange}
+                onFillColorChange={handleFillColorChange}
+                onFontSizeChange={handleFontSizeChange}
+              />
+            )}
+          </div>
+
+          {/* Tool row — always visible */}
+          <ToolRow
+            tools={TOOLS}
+            activeTool={activeTool}
+            onSelect={handleSelectTool}
+          />
         </div>
       </div>
     </div>
