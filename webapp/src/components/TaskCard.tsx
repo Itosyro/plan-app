@@ -68,7 +68,7 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
       {...attributes}
       {...listeners}
       className={
-        "ease-apple touch-manipulation rounded-3xl bg-bento-card p-4 ring-1 ring-black/5 transition-all duration-200 " +
+        "ease-apple touch-manipulation rounded-3xl bg-bento-card p-4 ring-1 ring-tg-divider/40 transition-all duration-200 " +
         (isDone ? "opacity-50 " : "opacity-100 ") +
         (isDragging ? "shadow-bento-lg" : "shadow-bento")
       }
@@ -96,7 +96,7 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
             "ease-spring mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all duration-300 " +
             (isDone
               ? "scale-100 border-emerald-500 bg-emerald-500 text-white"
-              : "scale-100 border-tg-hint/40 bg-bento-card hover:border-emerald-400 active:scale-90")
+              : "scale-100 border-tg-hint/40 bg-transparent hover:border-emerald-400 active:scale-90")
           }
         >
           {isDone && <Check size={14} strokeWidth={3} />}

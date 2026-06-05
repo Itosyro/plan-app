@@ -162,7 +162,7 @@ export function BoardsList() {
           <SkeletonList rows={4} kind="note" />
         ) : sortedBoards.length === 0 ? (
           <div className="mt-16 flex flex-col items-center gap-3 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
+            <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-bento-card shadow-bento ring-1 ring-tg-divider/40">
               <PenLine size={28} strokeWidth={1.75} className="text-tg-hint" aria-hidden />
             </div>
             <p className="text-[15px] font-medium text-tg-text">
@@ -222,7 +222,7 @@ function BoardRow({
     <li>
       {confirmDelete ? (
         // Confirm-delete inline state: replace the row with an action bar.
-        <div className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-4 py-3 ring-1 ring-black/5 shadow-bento animate-fade-in">
+        <div className="ease-apple flex items-center gap-2 rounded-2xl bg-bento-card px-4 py-3 ring-1 ring-tg-divider/40 shadow-bento animate-fade-in">
           <span className="min-w-0 flex-1 truncate text-[14px] text-tg-text">
             Удалить «{board.name}»?
           </span>
@@ -247,7 +247,7 @@ function BoardRow({
           role="button"
           tabIndex={0}
           aria-label={`Открыть доску ${board.name}`}
-          className="ease-apple flex cursor-pointer items-center gap-3 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-black/5 transition-all duration-150 active:scale-[0.98]"
+          className="ease-apple flex cursor-pointer items-center gap-3 rounded-2xl bg-bento-card px-4 py-3 shadow-bento ring-1 ring-tg-divider/40 transition-all duration-150 active:scale-[0.98]"
           onClick={() => onOpen(board.id)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") onOpen(board.id);

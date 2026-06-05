@@ -116,7 +116,7 @@ function KanbanColumn({ categoryId, label, tasks, onOpen, onDone }: ColumnProps)
       ref={setNodeRef}
       className={
         "flex w-[80vw] max-w-[290px] shrink-0 snap-start flex-col rounded-3xl bg-bento-card p-2.5 shadow-bento ring-1 transition-colors duration-150 " +
-        (isOver ? "ring-2 ring-tg-button/50" : "ring-black/[0.06]")
+        (isOver ? "ring-2 ring-tg-button/50" : "ring-tg-divider/40")
       }
     >
       <div className="mb-1 flex items-center justify-between border-b border-tg-divider/50 px-1.5 pb-2 pt-0.5">
@@ -198,7 +198,7 @@ export function KanbanCardView({ task, onOpen, onDone, overlay = false }: CardVi
       className={
         "ease-apple rounded-2xl p-3 ring-1 transition-shadow duration-150 " +
         (overlay
-          ? "bg-bento-card shadow-bento-lg ring-black/5 rotate-[1.5deg] scale-[1.03]"
+          ? "bg-bento-card shadow-bento-lg ring-tg-divider/40 rotate-[1.5deg] scale-[1.03]"
           : "bg-bento ring-black/[0.05]")
       }
     >
@@ -281,7 +281,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
   }
 
   return (
-    <div className="flex w-[80vw] max-w-[290px] shrink-0 snap-start flex-col gap-2 rounded-3xl bg-bento-card p-2.5 shadow-bento ring-1 ring-black/[0.06]">
+    <div className="flex w-[80vw] max-w-[290px] shrink-0 snap-start flex-col gap-2 rounded-3xl bg-bento-card p-2.5 shadow-bento ring-1 ring-tg-divider/40">
       <div className="flex items-center gap-1.5">
         <input
           autoFocus
@@ -296,7 +296,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
           }}
           placeholder="Название раздела"
           maxLength={64}
-          className="font-display min-w-0 flex-1 rounded-xl bg-bento-card px-3 py-2 text-[14px] text-tg-text shadow-bento ring-1 ring-black/5 outline-none placeholder:text-tg-hint/60"
+          className="font-display min-w-0 flex-1 rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text ring-1 ring-tg-divider/40 outline-none placeholder:text-tg-hint/60"
         />
         <button
           type="button"

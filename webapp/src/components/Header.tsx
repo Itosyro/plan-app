@@ -74,7 +74,7 @@ export function Header({
               "ease-apple inline-flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3 text-[13px] font-medium transition-all duration-200 active:scale-[0.96] " +
               (hasActiveFilter
                 ? "bg-tg-button/10 text-tg-button ring-1 ring-tg-button/20"
-                : "bg-bento-card text-tg-text/70 ring-1 ring-black/5 hover:text-tg-text")
+                : "bg-bento-card text-tg-text/70 ring-1 ring-tg-divider/40 hover:text-tg-text")
             }
           >
             <ListFilter size={16} strokeWidth={2.25} aria-hidden />
@@ -90,7 +90,7 @@ export function Header({
             type="button"
             onClick={onOpenSearch}
             aria-label="Поиск"
-            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-tg-divider/40 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
           >
             <Search size={16} strokeWidth={2.25} aria-hidden />
           </button>
@@ -100,7 +100,7 @@ export function Header({
             type="button"
             onClick={onOpenLayout}
             aria-label="Раскладка"
-            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-tg-divider/40 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
           >
             <SlidersHorizontal size={16} strokeWidth={2.25} aria-hidden />
           </button>
@@ -110,7 +110,7 @@ export function Header({
             type="button"
             onClick={onOpenBoards}
             aria-label="Доски"
-            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-tg-divider/40 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
           >
             <PenLine size={16} strokeWidth={2.25} aria-hidden />
           </button>
