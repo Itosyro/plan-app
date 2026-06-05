@@ -120,7 +120,7 @@ export function CompletedPage({ tz }: Props) {
           <header className="mb-2 px-4 text-[13px] font-semibold tracking-tight text-tg-link">
             {dayHeading(key, tz)}
           </header>
-          <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-tg-divider/40">
+          <div className="overflow-hidden rounded-3xl bg-bento-card shadow-bento ring-1 ring-black/5">
             <div className="divide-y divide-tg-divider/40">
               {items.map((task) => (
                 <div
@@ -140,7 +140,7 @@ export function CompletedPage({ tz }: Props) {
                   <button
                     disabled={pending === task.id}
                     onClick={() => reopen(task)}
-                    className="ease-apple flex shrink-0 items-center gap-1.5 rounded-xl bg-bento px-3 py-2 text-[13px] font-medium text-tg-link ring-1 ring-tg-divider/30 transition-all duration-200 active:scale-[0.96] disabled:opacity-40"
+                    className="ease-apple flex shrink-0 items-center gap-1.5 rounded-xl bg-bento px-3 py-2 text-[13px] font-medium text-tg-link ring-1 ring-black/[0.04] transition-all duration-200 active:scale-[0.96] disabled:opacity-40"
                   >
                     <RotateCcw size={15} strokeWidth={2.25} aria-hidden />
                     В работу

@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   Inbox,
@@ -9,25 +8,23 @@ import {
 } from "lucide-react";
 import { haptic } from "../lib/telegram";
 
-// Material 3 NavigationBar with sliding active-indicator pill.
+// Five top-level Mini-App tabs. Telegram-style floating pill: deep
+// 28px radius, strong blur, soft outer shadow. The active state is a
+// sliding capsule behind the icon — it animates left/right when the
+// user switches tabs instead of just swapping colors. Icons gain a
+// slight scale + the label switches to semibold so the active cell
+// reads as "raised" even on grayscale screens.
 //
-// Visual spec:
-//   - Full-width bar flush to screen edges with a hairline top border.
-//     Matches Android Telegram style (not the iOS floating island).
-//   - Active tab gets an M3 "active indicator" pill: tg-button/12 tinted
-//     capsule behind the icon only (not the label).
-//   - Single absolutely-positioned pill element that translates to the
-//     active tab center. Stays mounted and slides — no remount, pure CSS.
-//   - Labels always visible under icons (M3 spec).
-//   - Icon strokeWidth: active 2.25, inactive 1.75, same 22px size.
-//   - Easing: cubic-bezier(0.16, 1, 0.3, 1) — expo ease-out (spring feel).
-//
-// Badge: numeric bubble on inbox tab, capped at 9+.
+// The capsule is one absolutely-positioned element translated via
+// transform — keeps the layout 100% stable (no width recomputation,
+// no flex jitter when switching tabs).
 export type NavTab = "tasks" | "notes" | "calendar" | "inbox" | "settings";
 
 interface Props {
   active: NavTab;
   onChange: (tab: NavTab) => void;
+  // Optional per-tab counts shown as a small bubble (e.g. «Входящие»
+  // pending-review count). Zero / missing → no bubble.
   badges?: Partial<Record<NavTab, number>>;
 }
 
@@ -38,16 +35,18 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
-  { id: "tasks",    label: "Задачи",    icon: ListTodo    },
-  { id: "notes",    label: "Заметки",   icon: StickyNote  },
+  { id: "tasks", label: "Задачи", icon: ListTodo },
+  { id: "notes", label: "Заметки", icon: StickyNote },
   { id: "calendar", label: "Календарь", icon: CalendarDays },
-  { id: "inbox",    label: "Входящие",  icon: Inbox       },
-  { id: "settings", label: "Настройки", icon: Settings    },
+  { id: "inbox", label: "Входящие", icon: Inbox },
+  { id: "settings", label: "Настройки", icon: Settings },
 ];
 
-// M3 active indicator dimensions (px).
-const PILL_W = 56;
-const PILL_H = 32;
+// Fixed cell width so the capsule can slide with a simple
+// ``translateX(activeIndex * CELL_PX)``. Narrowed from 86 to fit five
+// cells on a phone-width island (5 × 68 + padding ≈ 356px) while still
+// keeping ≥56px touch targets and readable labels.
+const CELL_PX = 68;
 
 export function BottomNav({ active, onChange, badges }: Props) {
   const activeIndex = Math.max(
@@ -55,83 +54,77 @@ export function BottomNav({ active, onChange, badges }: Props) {
     ITEMS.findIndex((it) => it.id === active),
   );
 
-  // Track rendered cell widths to center the pill precisely.
-  const cellRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [pillX, setPillX] = useState(0);
-
-  useEffect(() => {
-    const el = cellRefs.current[activeIndex];
-    if (!el) return;
-    const { offsetLeft, offsetWidth } = el;
-    setPillX(offsetLeft + offsetWidth / 2 - PILL_W / 2);
-  }, [activeIndex]);
-
   return (
     <nav
       aria-label="Главные разделы"
-      className="fixed inset-x-0 bottom-0 z-30"
-      style={{ paddingBottom: "var(--safe-bottom, 0px)" }}
+      className="fixed inset-x-0 z-30 flex justify-center px-4"
+      style={{ bottom: "calc(var(--safe-bottom) + 0.875rem)" }}
     >
-      {/* Hairline top border + frosted glass bar */}
-      <div className="border-t border-black/[0.04] bg-tg-bg/95 backdrop-blur-xl dark:border-white/[0.06]">
-        <div className="relative flex items-stretch">
-          {/* M3 active-indicator pill: single element, translates to active tab */}
-          <span
+      <div className="rounded-[30px] bg-bento-card/85 p-2 shadow-island ring-1 ring-black/[0.06] backdrop-blur-2xl">
+        <div
+          className="relative flex items-center"
+          style={{ width: `${CELL_PX * ITEMS.length}px` }}
+        >
+          {/* Sliding active-tab capsule — a clear filled pill (Mira
+              style) so the current tab reads unmistakably. cubic-bezier
+              matches the iOS / Telegram spring (soft overshoot). */}
+          <div
             aria-hidden
-            className="pointer-events-none absolute top-2 rounded-full bg-tg-button/[0.12]"
+            className="pointer-events-none absolute inset-y-0 rounded-[24px] bg-tg-button/[0.14] ring-1 ring-tg-button/[0.10]"
             style={{
-              width: `${PILL_W}px`,
-              height: `${PILL_H}px`,
-              transform: `translateX(${pillX}px)`,
-              transition: "transform 220ms cubic-bezier(0.16, 1, 0.3, 1)",
+              width: `${CELL_PX}px`,
+              transform: `translateX(${activeIndex * CELL_PX}px)`,
+              transition: "transform 340ms cubic-bezier(0.32, 0.72, 0.20, 1.05)",
             }}
           />
-
-          {ITEMS.map((item, i) => {
+          {ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = item.id === active;
             const badge = badges?.[item.id] ?? 0;
             return (
               <button
                 key={item.id}
-                ref={(el) => { cellRefs.current[i] = el; }}
                 type="button"
-                aria-label={badge > 0 ? `${item.label} (${badge})` : item.label}
+                aria-label={
+                  badge > 0 ? `${item.label} (${badge})` : item.label
+                }
                 aria-current={isActive ? "page" : undefined}
                 onClick={() => {
                   if (isActive) return;
                   haptic("select");
                   onChange(item.id);
                 }}
-                className="relative z-10 flex flex-1 flex-col items-center gap-0.5 pb-1.5 pt-2"
+                className={
+                  "relative z-10 flex min-h-[56px] flex-col items-center justify-center gap-1 rounded-[24px] py-2 transition-colors duration-200 active:scale-[0.94] " +
+                  // Inactive: solid black icon + label (Mira style, not
+                  // washed-out grey). Active: turns blue inside the pill.
+                  (isActive ? "text-tg-button" : "text-tg-text/90 hover:text-tg-text")
+                }
+                style={{ width: `${CELL_PX}px` }}
               >
-                {/* Icon zone — pill sits behind this */}
-                <span className="relative flex h-8 w-14 items-center justify-center">
+                <span className="relative">
                   <Icon
-                    size={22}
-                    strokeWidth={isActive ? 2.25 : 1.75}
+                    size={24}
+                    strokeWidth={isActive ? 2.5 : 2.0}
                     aria-hidden
                     className={
-                      "transition-colors duration-150 " +
-                      (isActive ? "text-tg-button" : "text-tg-hint")
+                      "transition-transform duration-300 " +
+                      (isActive ? "scale-110" : "scale-100")
                     }
                   />
                   {badge > 0 && (
                     <span
                       aria-hidden
-                      className="absolute right-0.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-tg-button-text ring-2 ring-tg-bg"
+                      className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-bento-card"
                     >
                       {badge > 9 ? "9+" : badge}
                     </span>
                   )}
                 </span>
-                {/* Label */}
                 <span
                   className={
-                    "text-[10.5px] leading-tight tracking-tight transition-colors duration-150 " +
-                    (isActive
-                      ? "font-medium text-tg-button"
-                      : "font-normal text-tg-hint")
+                    "font-display text-[11px] leading-tight tracking-tight transition-all duration-200 " +
+                    (isActive ? "font-semibold" : "font-medium")
                   }
                 >
                   {item.label}
