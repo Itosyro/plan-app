@@ -220,18 +220,87 @@ body::before {
   background-position: var(--bg-pan-x, 0px) var(--bg-pan-y, 0px);
 }
 
-/* Hide Excalidraw's default side toolbar + bottom bar — our custom
-   Miro-style overlay toolbar takes their place. CSS suppression is used
-   because UIOptions doesn't expose full-toolbar visibility in 0.18. */
+/* ─── Hide ALL stock Excalidraw chrome ────────────────────────────────────
+   Our custom overlay is the single source of truth. UIOptions doesn't
+   expose full-toolbar visibility in v0.18.x, so we suppress via CSS.
+
+   Selectors verified against Excalidraw v0.18 rendered DOM:
+   - .App-toolbar-container   → main tool palette (left/bottom on mobile)
+   - .layer-ui__wrapper__footer → bottom footer bar (pen/selection strip)
+   - .App-menu_top .App-menu__left → hamburger / main menu
+   - .Island                  → floating property panels (stroke, fill, etc.)
+                                 that appear on element selection — the user's
+                                 main complaint about "overlapping panels"
+   - .App-toolbar             → mobile bottom tool strip (phone form-factor)
+   - .layer-ui__wrapper__footer-right → zoom controls in footer
+   - .FixedSideContainer      → left fixed side panel (properties on desktop)
+   - .popover                 → any remaining popovers / context menus
+                                 (we intercept all settings in our panel)
+   - .stats                   → element stats panel
+   - .context-menu            → right-click context menu (keep hidden on mobile)
+   ───────────────────────────────────────────────────────────────────────── */
 .excalidraw .App-toolbar-container,
-.excalidraw .layer-ui__wrapper__footer {
+.excalidraw .layer-ui__wrapper__footer,
+.excalidraw .App-menu_top .App-menu__left,
+.excalidraw .Island,
+.excalidraw .App-toolbar,
+.excalidraw .FixedSideContainer,
+.excalidraw .stats,
+.excalidraw .context-menu {
+  display: none !important;
   opacity: 0 !important;
   pointer-events: none !important;
 }
 
-/* Hide the main-menu (hamburger) — back navigation + bg-toggle
-   handle those actions from our header. */
-.excalidraw .App-menu_top .App-menu__left {
-  opacity: 0 !important;
-  pointer-events: none !important;
+/* ─── Board bottom-toolbar slider (range input) ──────────────────────────
+   Custom track + thumb styled to match the tg-button accent.
+   Large touch target (28px thumb) for comfortable mobile use.
+   ───────────────────────────────────────────────────────────────────────── */
+.board-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--tg-theme-button-color, #2563eb) 20%, var(--tg-theme-hint-color, #8e8e93) 30%);
+  outline: none;
+  cursor: pointer;
+}
+
+.board-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+}
+
+.board-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--tg-theme-button-color, #2563eb);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.22), 0 0 0 2px rgba(255,255,255,0.9);
+  margin-top: -9px;
+  cursor: pointer;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+
+.board-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--tg-theme-button-color, #2563eb);
+  border: 2px solid rgba(255,255,255,0.9);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.22);
+  cursor: pointer;
+}
+
+.board-slider::-webkit-slider-thumb:active {
+  transform: scale(1.18);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.28), 0 0 0 3px rgba(255,255,255,0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-slider::-webkit-slider-thumb {
+    transition: none;
+  }
 }
