@@ -51,7 +51,29 @@ services:
     # we prepend the upgrade step to ``startCommand`` so it runs once
     # per container start. Idempotent: on subsequent deploys with no new
     # migrations, ``alembic upgrade head`` is a few-ms no-op.
-    startCommand: uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    #
+    # Retry the migration up to 5 times with exponential backoff: Render
+    # Postgres free tier occasionally drops idle SSL connections during
+    # the few seconds between worker spin-up and the first DB query,
+    # surfacing as ``SSL connection has been closed unexpectedly`` and
+    # killing the deploy (real incident 2026-06-06). A single transient
+    # close shouldn't take the whole container down — alembic itself is
+    # idempotent so re-running is free.
+    startCommand: |
+      set -e
+      for attempt in 1 2 3 4 5; do
+        if uv run alembic upgrade head; then
+          break
+        fi
+        if [ "$attempt" = "5" ]; then
+          echo "alembic upgrade failed after 5 attempts" >&2
+          exit 1
+        fi
+        sleep_s=$((attempt * attempt * 2))
+        echo "alembic upgrade attempt $attempt failed, retrying in ${sleep_s}s" >&2
+        sleep "$sleep_s"
+      done
+      exec uv run uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
     envVars:
       - key: ENV
         value: production
