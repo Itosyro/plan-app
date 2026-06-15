@@ -312,9 +312,7 @@ async def test_generate_reply_llm_timeout_degrades_to_template(monkeypatch) -> N
     """
     from app.shared import config
 
-    monkeypatch.setattr(
-        config.get_settings(), "pipeline_call_timeout_seconds", 0.01, raising=False
-    )
+    monkeypatch.setattr(config.get_settings(), "pipeline_call_timeout_seconds", 0.01, raising=False)
 
     async def _never(*_args: object, **_kwargs: object) -> object:
         import asyncio
