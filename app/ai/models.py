@@ -14,12 +14,14 @@ via a ``GROQ_MODEL_<STAGE>`` environment variable so production can
 roll a new model without a code change. When OpenRouter keys land,
 the same env hooks point individual stages at OpenRouter IDs.
 
-The picks below trade pure speed for accuracy on long, multi-unit
-Russian messages — the user's pain point. ``openai/gpt-oss-20b``
-runs at ~1000 tok/s on Groq LPUs (fast enough for tight loop stages
-like splitter/intent/courier) while still reasoning. The heavier
-``openai/gpt-oss-120b`` handles classifier and critic where one
-wrong call cascades.
+The live defaults are the proven Llama line: ``llama-3.1-8b-instant``
+for the tight loop stages (splitter/intent/reorder/courier/task_splitter)
+and ``llama-3.3-70b-versatile`` for the heavy stages (classifier/critic)
+where one wrong call cascades. An earlier iteration pointed the heavy
+stages at ``openai/gpt-oss-*`` reasoning models, but those broke
+``instructor`` structured output on Groq (every message errored) and
+were reverted — see the History note above the defaults below before
+swapping them again.
 """
 
 from __future__ import annotations
