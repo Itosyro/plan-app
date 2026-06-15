@@ -289,6 +289,45 @@ async def test_generate_reply_llm_only() -> None:
     assert reply == "Принял к сведению, всё записано!"
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_generate_reply_llm_failure_degrades_to_template() -> None:
+    """The courier LLM runs *after* the work is persisted, so a 5xx / exhausted
+    keys must NOT bubble up — it would surface as "Ошибка при разборе" even
+    though every task was saved. ``generate_courier_reply`` must swallow the
+    failure and fall back to a template instead.
+    """
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        return_value=respx.MockResponse(500, json={"error": "boom"}),
+    )
+    router = GroqKeyRouter(keys=_FAKE_KEYS)
+    reply = await generate_courier_reply(router, "terse", mode="llm_only")
+    assert reply in TEMPLATES["terse"]
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_llm_timeout_degrades_to_template(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A hung Groq call must hit the hard timeout and degrade to a template
+    rather than freezing the user's placeholder forever.
+    """
+    from app.shared import config
+
+    monkeypatch.setattr(
+        config.get_settings(), "pipeline_call_timeout_seconds", 0.01, raising=False
+    )
+
+    async def _never(*_args: object, **_kwargs: object) -> object:
+        import asyncio
+
+        await asyncio.sleep(10)
+        raise AssertionError("should have timed out")  # pragma: no cover
+
+    monkeypatch.setattr("app.ai.courier.call_with_rotation", _never)
+    router = GroqKeyRouter(keys=_FAKE_KEYS)
+    reply = await generate_courier_reply(router, "playful", mode="llm_only")
+    assert reply in TEMPLATES["playful"]
+
+
 # ── courier_respond (returns tuple in PR-E) ───────────────────────────
 
 

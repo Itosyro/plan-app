@@ -6,12 +6,14 @@ The caller downloads the Telegram voice file and passes raw bytes.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from groq import AsyncGroq
 
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
+from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,8 +40,15 @@ async def transcribe_voice(
             temperature=0.0,
         )
 
+    # Bound transcription with a hard timeout. A stuck Whisper call would
+    # otherwise hold the voice-message placeholder ("⏳ Расшифровываю…")
+    # indefinitely — the pipeline stages already have this guard, Whisper
+    # was the one hot-path Groq call without it. We allow a more generous
+    # budget than the per-stage timeout: long voice notes legitimately take
+    # longer to transcribe than a single classifier round-trip.
+    timeout = get_settings().pipeline_call_timeout_seconds * 2
     t0 = time.monotonic()
-    result = await call_with_rotation(router, _do_call)
+    result = await asyncio.wait_for(call_with_rotation(router, _do_call), timeout=timeout)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     text = str(result).strip()

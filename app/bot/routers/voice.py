@@ -215,6 +215,22 @@ def create_router() -> Router:
                     )
                     pipeline_text = text_content
 
+                else:
+                    # Defensive: ``resolve_effective_payload`` only ever returns
+                    # ``None`` / ``VoicePayload`` / ``TextPayload`` today, but
+                    # without this branch a future payload type would leave
+                    # ``pipeline_text``/``inbox_id`` unbound and raise an opaque
+                    # ``UnboundLocalError`` swallowed by the generic handler.
+                    logger.error(
+                        "voice.unexpected_payload",
+                        tg_user_id=from_user_id,
+                        payload_type=type(payload).__name__,
+                    )
+                    await placeholder.edit_text(
+                        "Не смог разобрать это сообщение — попробуй ещё раз."
+                    )
+                    return
+
                 reply, keyboard = await run_pipeline(
                     groq_router,
                     pipeline_text,

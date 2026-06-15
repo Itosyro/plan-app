@@ -49,7 +49,21 @@ def init_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
     first if needed.
     """
     global _engine, _sessionmaker
-    _engine = create_async_engine(_to_async_url(database_url), echo=echo, future=True)
+    async_url = _to_async_url(database_url)
+    # ``pool_pre_ping``: managed Postgres (Render free tier / Neon) cuts idle
+    # server-side connections, and the free-dyno keep-alive means the engine
+    # often holds connections across long idle gaps. Without a pre-ping the
+    # first query after such a gap throws a stale-connection error (the same
+    # family as the ``SSL connection has been closed unexpectedly`` that the
+    # alembic startCommand retry papers over). ``pool_recycle`` proactively
+    # discards connections older than 30 min so we rarely hand out a dead one.
+    # SQLite (tests / local) ignores both — it has no real pool.
+    is_sqlite = async_url.startswith("sqlite")
+    engine_kwargs: dict[str, object] = {"echo": echo, "future": True}
+    if not is_sqlite:
+        engine_kwargs["pool_pre_ping"] = True
+        engine_kwargs["pool_recycle"] = 1800
+    _engine = create_async_engine(async_url, **engine_kwargs)
     _sessionmaker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _engine
 

@@ -27,6 +27,7 @@ Pre-2026-05-09 настройка источника шла под именам�
 
 from __future__ import annotations
 
+import asyncio
 import random
 import time
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from groq import AsyncGroq
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.ai.schemas import ClassifierResult
+from app.shared.config import get_settings
 from app.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -174,8 +176,24 @@ async def generate_courier_reply(
             max_retries=2,
         )
 
+    # The courier reply is pure flavour text and runs *after* the work is
+    # already persisted. It must never be allowed to hang or fail the whole
+    # background task — a stuck/rate-limited Groq call here would leave the
+    # user on a frozen "⏳ Разбираю…" placeholder and then surface as a
+    # generic "Ошибка при разборе", even though every task was saved. Bound
+    # it with the same hard timeout as the pipeline stages and degrade to a
+    # template on any failure (timeout, exhausted keys, 5xx).
+    timeout = get_settings().pipeline_call_timeout_seconds
     t0 = time.monotonic()
-    reply = await call_with_rotation(router, _do_call)
+    try:
+        reply = await asyncio.wait_for(call_with_rotation(router, _do_call), timeout=timeout)
+    except Exception as exc:  # degrade, never fail the reply (incl. TimeoutError)
+        logger.warning(
+            "courier.llm_fallback",
+            style=style,
+            error=type(exc).__name__,
+        )
+        return _pick_template(style)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     logger.info(
