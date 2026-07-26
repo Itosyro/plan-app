@@ -177,3 +177,24 @@ def test_auto_migrate_builds_the_schema_on_boot(
         sync_engine.dispose()
     # Ключевые таблицы + отметка Alembic, что миграции реально прогнаны.
     assert {"users", "tasks", "reminders", "alembic_version"} <= tables
+
+
+def test_dockerfile_from_lines_are_parseable() -> None:
+    """``FROM`` принимает один или три аргумента — не больше.
+
+    Хвостовой комментарий после ``AS name`` («# 20-alpine») делает
+    строку пятиаргументной, и образ не собирается вообще. Это лежало в
+    репозитории незамеченным, потому что управляемый деплой собирает не
+    из Dockerfile — поймали только когда self-hosting сделал сборку
+    обязательной. Тест дешёвый, а класс поломки тихий.
+    """
+    dockerfile = Path(__file__).resolve().parent.parent / "Dockerfile"
+    for lineno, line in enumerate(dockerfile.read_text().splitlines(), start=1):
+        if not line.startswith("FROM"):
+            continue
+        parts = line.split()
+        assert len(parts) in (2, 4), (
+            f"Dockerfile:{lineno} — FROM с {len(parts)} аргументами: {line}"
+        )
+        if len(parts) == 4:
+            assert parts[2].upper() == "AS", f"Dockerfile:{lineno} — ожидался AS: {line}"
