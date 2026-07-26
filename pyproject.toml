@@ -17,6 +17,10 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "alembic>=1.14",
     "psycopg[binary]>=3.2",
+    # SQLite driver. Runtime (not dev-only) dependency: the self-hosted
+    # deploy runs on a plain SQLite file so a single VPS needs no
+    # database service at all. Tests use it too.
+    "aiosqlite>=0.20",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     # ai
@@ -43,7 +47,6 @@ dev = [
     "pytest-cov>=6.0",
     "mypy>=1.13",
     "types-dateparser>=1.2",
-    "aiosqlite>=0.20",
     "respx>=0.21",
 ]
 

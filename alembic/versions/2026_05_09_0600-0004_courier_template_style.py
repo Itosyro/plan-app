@@ -50,7 +50,15 @@ def upgrade() -> None:
     )
     # Strip the server_default once the rows are filled — the model
     # default (``"neutral"``) takes over for new INSERTs.
-    op.alter_column("user_settings", "courier_template_style", server_default=None)
+    #
+    # ``batch_alter_table`` (а не голый ``alter_column``): SQLite не
+    # умеет ALTER COLUMN и падает с синтаксической ошибкой — batch-режим
+    # пересоздаёт таблицу под капотом. На Postgres результат тот же
+    # ALTER, так что для управляемого прода ничего не меняется. Нужно
+    # для self-hosted запуска на SQLite-файле. Тот же приём уже
+    # используется в миграции 0010.
+    with op.batch_alter_table("user_settings") as batch_op:
+        batch_op.alter_column("courier_template_style", server_default=None)
 
     # Old vocab → new vocab. ``formal`` and ``casual`` silently
     # behaved as ``template_only`` (the courier ``if/elif`` chain
