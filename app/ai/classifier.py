@@ -1,6 +1,6 @@
 """Classifier — categorise a single intent unit as task or note.
 
-Uses ``llama-3.3-70b-versatile`` via Groq with ``instructor`` for
+Uses the heavy registry model via Groq with ``instructor`` for
 structured output.  The prompt lives in ``app/ai/prompts/classifier.md``.
 """
 
@@ -13,7 +13,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import instructor
-from groq import AsyncGroq
 
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
@@ -82,8 +81,8 @@ async def classify_intent(
 
     async def _do_call(r: GroqKeyRouter) -> ClassifierResult:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().classifier,

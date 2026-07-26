@@ -45,6 +45,7 @@ from app.bot.services import (
     get_user_categories_full,
     mark_task_done,
     mark_task_undone,
+    restore_task,
     update_task_category,
     update_task_horizon,
 )
@@ -158,6 +159,71 @@ def horizon_list_keyboard(tasks_with_indices: list[tuple[int, int]]) -> InlineKe
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _keyboard_task_ids(markup: InlineKeyboardMarkup | None) -> list[int]:
+    """Collect task ids from the ``task:done:<id>`` buttons of a keyboard.
+
+    Each task row in :func:`horizon_list_keyboard` (and the single-task
+    :func:`task_action_keyboard`) carries exactly one done-button, so the
+    result is one id per task, in display order.
+    """
+    if markup is None:
+        return []
+    ids: list[int] = []
+    for row in markup.inline_keyboard:
+        for btn in row:
+            parsed = parse_task_callback(btn.callback_data or "", "done")
+            if parsed is not None:
+                ids.append(parsed[0])
+    return ids
+
+
+async def _rebuild_horizon_list(
+    markup: InlineKeyboardMarkup | None,
+    message_text: str | None,
+    acted_task_id: int,
+    user_id: int,
+    user_tz: str,
+) -> tuple[str, InlineKeyboardMarkup | None] | None:
+    """Rebuild a /today-style list message without the acted task.
+
+    Returns ``(new_text, new_keyboard)`` when the message is a multi-task
+    horizon list (R-NEW-I-6 compact keyboard) — the caller edits the
+    message in place instead of затирать весь список подтверждением
+    одной задачи. Returns ``None`` for single-task cards (caller keeps
+    the plain confirmation edit).
+    """
+    ids = _keyboard_task_ids(markup)
+    if len(ids) < 2 or acted_task_id not in ids:
+        return None
+    remaining_ids = [tid for tid in ids if tid != acted_task_id]
+
+    async with session_scope() as session:
+        rows = (
+            await session.exec(
+                select(Task).where(
+                    Task.user_id == user_id,
+                    Task.id.in_(remaining_ids),  # type: ignore[union-attr]
+                    Task.deleted_at.is_(None),  # type: ignore[union-attr]
+                    Task.status != "done",
+                )
+            )
+        ).all()
+    # Сохраняем порядок исходного списка — клавиатура источник правды.
+    order = {tid: i for i, tid in enumerate(remaining_ids)}
+    tasks = sorted(rows, key=lambda t: order.get(t.id or -1, len(order)))
+
+    # Локальный импорт: commands.py импортирует клавиатуры из этого
+    # модуля, верхнеуровневый импорт был бы циклическим.
+    from app.bot.routers.commands import _format_task_list
+
+    first_line = (message_text or "").splitlines()[0] if message_text else ""
+    title = first_line.removeprefix("📋").strip() or "Список"
+    new_text = _format_task_list(list(tasks), title, user_tz)
+    indices = [(i, t.id) for i, t in enumerate(tasks, 1) if t.id is not None]
+    new_kb = horizon_list_keyboard(indices) if indices else None
+    return new_text, new_kb
 
 
 def category_picker_keyboard(task_id: int, categories: list[Category]) -> InlineKeyboardMarkup:
@@ -1003,7 +1069,13 @@ def create_router() -> Router:
                 await callback.answer("Задача не найдена.")
                 return
 
-            reply = _apply_undo(task, snap)
+            if snap.field == "deleted_at":
+                # Отмена удаления восстанавливает и подзадачи, мягко
+                # удалённые тем же каскадом delete_task (тот же timestamp).
+                await restore_task(session, task, user.id)
+                reply = f"Отменил удаление: «{task.title}» восстановлена."
+            else:
+                reply = _apply_undo(task, snap)
             await session.delete(snap)
             await session.flush()
 

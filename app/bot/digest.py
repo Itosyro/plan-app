@@ -440,20 +440,30 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
     minute (or even the same wall-clock second) can never double-send.
     See ``docs/REVIEW-2026-05-09.md::C-3``.
 
+    Each gate is flipped only *after* a successful send and committed
+    per-user (same discipline as the per-row commit in
+    ``tick_reminders``): a failed send leaves the gate unset so the
+    catch-up fires on the next tick, and a SIGTERM mid-batch can't roll
+    back gates of digests already delivered (→ no duplicates).
+
     Returns a counter dict (``morning``, ``evening``, ``errors``).
     """
     sent_morning = sent_evening = errors = 0
     async with session_scope() as session:
-        users = list((await session.exec(select(User))).all())
-        for user in users:
-            if user.id is None or user.onboarded_at is None:
-                continue
-            settings = (
+        # Один join-запрос вместо select всех users + N запросов
+        # UserSettings (N+1). Пользователи без settings-строки и без
+        # onboarded_at отфильтрованы сразу.
+        rows = list(
+            (
                 await session.exec(
-                    select(UserSettings).where(UserSettings.user_id == user.id),
+                    select(User, UserSettings)
+                    .join(UserSettings, UserSettings.user_id == User.id)  # type: ignore[arg-type]
+                    .where(User.onboarded_at.is_not(None)),  # type: ignore[union-attr]
                 )
-            ).first()
-            if settings is None:
+            ).all()
+        )
+        for user, settings in rows:
+            if user.id is None or user.onboarded_at is None:
                 continue
             local = _user_local_now(user.tz, now_utc=now)
             local_date = local.date()
@@ -482,26 +492,45 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
             try:
                 if morning:
                     text = await build_morning_digest(session, user, now_utc=now)
-                    settings.last_morning_digest_on = local_date
                     # Phase 6.3: pin the digest so we can re-edit it as
                     # tasks complete during the day. ``send_and_pin``
                     # falls back to a plain ``send_message`` if pinning
                     # fails (e.g. group chat where bot isn't admin).
                     from app.bot.pinned_today import send_and_pin_morning_digest
 
-                    await send_and_pin_morning_digest(bot, session, user, settings, text)
-                    sent_morning += 1
+                    # Гейт выставляем до вызова только потому, что
+                    # ``send_and_pin_morning_digest`` читает его как дату
+                    # пина; при неуспехе (``None`` или исключение)
+                    # значение откатывается ДО коммита — семантически
+                    # гейт ставится после успешной отправки, и следующий
+                    # тик доотправит потерянный дайджест (catch-up).
+                    prev_morning_on = settings.last_morning_digest_on
+                    settings.last_morning_digest_on = local_date
+                    message_id: int | None = None
+                    try:
+                        message_id = await send_and_pin_morning_digest(
+                            bot, session, user, settings, text
+                        )
+                    finally:
+                        if message_id is None:
+                            settings.last_morning_digest_on = prev_morning_on
+                    if message_id is None:
+                        errors += 1
+                    else:
+                        sent_morning += 1
+                        # Пер-пользовательский commit сразу после успешной
+                        # отправки (образец — per-row commit в
+                        # tick_reminders): SIGTERM посреди батча не
+                        # откатит гейт уже отправленного дайджеста.
+                        session.add(settings)
+                        await session.commit()
                 if evening:
                     text = await build_evening_digest(session, user, now_utc=now)
                     await bot.send_message(chat_id=user.telegram_id, text=text)
                     settings.last_evening_digest_on = local_date
                     sent_evening += 1
-                # Persist the gate flips so a follow-up tick in the same
-                # session_scope (or a crash before commit) doesn't lose
-                # them. session_scope commits on exit; this flush makes
-                # the gate visible to subsequent loop iterations too.
-                session.add(settings)
-                await session.flush()
+                    session.add(settings)
+                    await session.commit()
             except Exception as exc:
                 errors += 1
                 logger.warning(

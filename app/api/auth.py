@@ -25,7 +25,7 @@ from collections.abc import Mapping
 from typing import Final
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, status
 from sqlmodel import select
 
 from app.db.base import session_scope
@@ -36,13 +36,15 @@ from app.shared.time import utcnow_epoch
 
 logger = get_logger(__name__)
 
-# Telegram says ``auth_date`` must be checked to prevent replay. We use
-# a tight 10-minute window: an intercepted ``initData`` is useless after
-# this expires, and a real Mini-App reopens trigger a fresh ``initData``
-# from Telegram so users never notice. 24 h (the prior value) was a
-# replay window wide enough to matter; this matches the official
-# Telegram SDK examples.
-INIT_DATA_MAX_AGE_SECONDS: Final[int] = 10 * 60
+# Telegram says ``auth_date`` must be checked to prevent replay.
+# Telegram выдаёт ``initData`` ОДИН раз при открытии WebView и не
+# обновляет его, пока Mini App живёт, — жёсткое 10-минутное окно
+# (прошлое значение) отстреливало любую сессию длиннее 10 минут:
+# все мутации начинали отвечать 401 и правки (например, доски)
+# терялись. 12 часов покрывают любой реалистичный сеанс; защита от
+# перехвата остаётся на HMAC-подписи + том, что initData ходит
+# только в заголовке (query-fallback удалён — см. ``current_user``).
+INIT_DATA_MAX_AGE_SECONDS: Final[int] = 12 * 60 * 60
 
 
 def _hex_digest(secret: bytes, msg: bytes) -> bytes:
@@ -118,17 +120,19 @@ def extract_user(parsed: Mapping[str, str]) -> dict[str, object] | None:
 
 async def current_user(
     x_telegram_init_data: str | None = Header(default=None),
-    init_data: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),
 ) -> User:
     """FastAPI dependency that resolves the request's authenticated user.
 
-    Order of precedence: ``X-Telegram-Init-Data`` header > ``init_data``
-    query parameter. Returns the matching ``User`` row, or raises
+    Auth material is accepted ONLY via the ``X-Telegram-Init-Data``
+    header. The former ``?init_data=`` query fallback is gone: query
+    strings land in access logs, so a replayable auth token (plus the
+    user's PII inside it) was being written to infrastructure logs on
+    every request. Returns the matching ``User`` row, or raises
     ``HTTPException`` (401 for missing/invalid init-data, 404 if the
     Telegram user has not yet run ``/start`` and onboarded).
     """
-    raw = x_telegram_init_data or init_data
+    raw = x_telegram_init_data
     if not raw:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

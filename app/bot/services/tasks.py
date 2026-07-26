@@ -21,6 +21,7 @@ from app.db.models import (
     Reminder,
     Task,
     TaskEvent,
+    UserSettings,
 )
 from app.shared.logging import get_logger
 from app.shared.time import to_naive_utc, utcnow_naive
@@ -874,14 +875,55 @@ async def update_task_title(
     return task
 
 
+async def _offsets_for_reschedule(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    old_due_at: datetime | None,
+    new_due_at: datetime,
+    cancelled: list[Reminder],
+) -> list[int]:
+    """Pick minute-offsets for reminders re-created after a due_at change.
+
+    With an old deadline, each cancelled pending reminder keeps its
+    advance (``old_due_at - fire_at``). Without one there is nothing to
+    preserve, so the user's default offsets apply — same source as
+    :func:`persist_classification` (``UserSettings.default_reminder_offsets``
+    with :data:`DEFAULT_REMINDER_OFFSETS` as the fallback).
+    """
+    if old_due_at is not None:
+        offsets: list[int] = []
+        for reminder in cancelled:
+            minutes = int((old_due_at - reminder.fire_at).total_seconds() // 60)
+            if minutes >= 0 and minutes not in offsets:
+                offsets.append(minutes)
+        return offsets
+    settings = (
+        await session.exec(select(UserSettings).where(UserSettings.user_id == user_id))
+    ).first()
+    defaults = settings.default_reminder_offsets if settings is not None else None
+    # Как в ``_select_reminder_offsets``: близкий дедлайн — короткие
+    # опережения, дальний — суточные.
+    bucket = "same_day" if new_due_at - utcnow_naive() < timedelta(days=1) else "multi_day"
+    raw = (defaults or DEFAULT_REMINDER_OFFSETS).get(bucket) or []
+    return [int(o) for o in raw if int(o) > 0]
+
+
 async def update_task_due_at(
     session: AsyncSession,
     task: Task,
     new_due_at: datetime | None,
     user_id: int,
 ) -> Task:
-    """Change a task's due_at and log the event."""
-    old_due = task.due_at.isoformat() if task.due_at else None
+    """Change a task's due_at, log the event, and reschedule reminders.
+
+    Pending reminders are anchored to the old deadline, so after a
+    reschedule they would fire at the wrong time. When ``due_at``
+    changes we cancel them and, if the new deadline is set, re-create
+    them via :func:`_offsets_for_reschedule`. Clearing ``due_at``
+    (``None``) just cancels the pending reminders.
+    """
+    old_due_at = task.due_at
     task.due_at = new_due_at
     session.add(task)
     await session.flush()
@@ -892,12 +934,33 @@ async def update_task_due_at(
                 task_id=task.id,
                 kind="due_changed",
                 payload_json={
-                    "old": old_due,
+                    "old": old_due_at.isoformat() if old_due_at else None,
                     "new": new_due_at.isoformat() if new_due_at else None,
                 },
             ),
         )
         await session.flush()
+
+        if new_due_at != old_due_at:
+            # Перенос дедлайна: старые pending-напоминания указывают на
+            # прежнее время — отменяем и, если новый дедлайн задан,
+            # пересоздаём с теми же опережениями.
+            cancelled = await cancel_task_reminders(session, user_id, task.id)
+            if new_due_at is not None:
+                offsets = await _offsets_for_reschedule(
+                    session,
+                    user_id=user_id,
+                    old_due_at=old_due_at,
+                    new_due_at=new_due_at,
+                    cancelled=cancelled,
+                )
+                await schedule_reminders(
+                    session,
+                    user_id=user_id,
+                    task_id=task.id,
+                    due_at=new_due_at,
+                    offsets=offsets,
+                )
 
     logger.info("task.due_changed", task_id=task.id, user_id=user_id)
     return task
@@ -1220,10 +1283,14 @@ async def delete_task(
     task: Task,
     user_id: int,
 ) -> None:
-    """Soft-delete a task by setting ``deleted_at``.
+    """Soft-delete a task (and its live subtasks) by setting ``deleted_at``.
 
     The record stays in the DB for 24 hours (recoverable via the Trash
-    page); a background worker purges it after that.
+    page); a background worker purges it after that. Live subtasks get
+    the *same* ``deleted_at`` timestamp: without this, the purge worker's
+    hard-delete of the parent would FK-CASCADE away children that were
+    never deleted. The shared timestamp also lets :func:`restore_task`
+    tell cascade-deleted children apart from ones deleted separately.
     """
     if task.id is not None:
         session.add(
@@ -1235,10 +1302,49 @@ async def delete_task(
         )
         await session.flush()
 
-    task.deleted_at = utcnow_naive()
+    now = utcnow_naive()
+    task.deleted_at = now
     session.add(task)
+    if task.id is not None:
+        await session.exec(
+            sa_update(Task)
+            .where(
+                Task.parent_id == task.id,  # type: ignore[arg-type]
+                Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            )
+            .values(deleted_at=now),
+        )
     await session.flush()
     logger.info("task.soft_deleted", task_id=task.id, user_id=user_id)
+
+
+async def restore_task(
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> Task:
+    """Restore a soft-deleted task together with its cascade-deleted subtasks.
+
+    Only children whose ``deleted_at`` equals the parent's are restored —
+    those are the ones :func:`delete_task` cascaded (same timestamp).
+    Subtasks the user deleted separately keep their own timestamp and
+    stay in the trash.
+    """
+    cascade_ts = task.deleted_at
+    task.deleted_at = None
+    session.add(task)
+    if task.id is not None and cascade_ts is not None:
+        await session.exec(
+            sa_update(Task)
+            .where(
+                Task.parent_id == task.id,  # type: ignore[arg-type]
+                Task.deleted_at == cascade_ts,  # type: ignore[arg-type]
+            )
+            .values(deleted_at=None),
+        )
+    await session.flush()
+    logger.info("task.restored", task_id=task.id, user_id=user_id)
+    return task
 
 
 async def get_task_by_id(

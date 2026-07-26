@@ -72,6 +72,24 @@ async def claim_update(
     return True
 
 
+async def release_update(
+    session: AsyncSession,
+    *,
+    update_id: int,
+) -> None:
+    """Drop the idempotency claim for *update_id*.
+
+    Used by the webhook when ``feed_update`` raises AFTER the claim was
+    inserted: without releasing the claim, Telegram's automatic retry of
+    the same ``update_id`` would be treated as a duplicate and the
+    user's message would be lost forever.
+    """
+    row = await session.get(TelegramUpdate, update_id)
+    if row is not None:
+        await session.delete(row)
+        await session.flush()
+
+
 async def store_inbox_text(
     session: AsyncSession,
     *,

@@ -78,6 +78,26 @@ async def tick_reminders(
     sent = retry = failed = 0
 
     async with session_scope() as session:
+        # Задача уже выполнена → её просроченные pending-напоминания не
+        # шлём, а отменяем одним UPDATE, чтобы строки не матчились
+        # условию выборки на каждом тике вечно. Покрывает все пути
+        # завершения (бот, API, авто-завершение родителя).
+        cancel_result = await session.exec(
+            update(Reminder)
+            .where(
+                Reminder.status == "pending",  # type: ignore[arg-type]
+                Reminder.fire_at <= cutoff,  # type: ignore[arg-type]
+                Reminder.task_id.in_(  # type: ignore[attr-defined]
+                    select(Task.id).where(Task.status == "done"),
+                ),
+            )
+            .values(status="cancelled"),
+        )
+        await session.commit()
+        assert isinstance(cancel_result, CursorResult)
+        if cancel_result.rowcount:
+            logger.info("reminders.cancelled_done", count=cancel_result.rowcount)
+
         rows = list(
             (
                 await session.exec(
@@ -87,6 +107,7 @@ async def tick_reminders(
                     .where(Reminder.status == "pending")
                     .where(Reminder.fire_at <= cutoff)
                     .where(Task.deleted_at.is_(None))  # type: ignore[union-attr]
+                    .where(Task.status != "done")
                     .order_by(Reminder.fire_at)  # type: ignore[arg-type]
                     .limit(REMINDER_BATCH_SIZE),
                 )
@@ -165,6 +186,16 @@ async def purge_trash(*, now: datetime | None = None) -> dict[str, int]:
     purged_notes = 0
 
     async with session_scope() as session:
+        # Страховка от потери данных: не hard-делитим задачу, у которой
+        # остались ЖИВЫЕ подзадачи — FK CASCADE унёс бы их вместе с
+        # родителем. Такое возможно, если ребёнка восстановили из
+        # корзины отдельно от родителя.
+        # ponytail: такой родитель остаётся в корзине, пока жив ребёнок;
+        # авто-отвязка (parent_id=NULL) — если это начнёт мешать.
+        live_children = select(Task.parent_id).where(
+            Task.deleted_at.is_(None),  # type: ignore[union-attr]
+            Task.parent_id.is_not(None),  # type: ignore[union-attr]
+        )
         stale_tasks = list(
             (
                 await session.exec(
@@ -172,6 +203,7 @@ async def purge_trash(*, now: datetime | None = None) -> dict[str, int]:
                     .where(
                         Task.deleted_at.is_not(None),  # type: ignore[union-attr]
                         Task.deleted_at <= cutoff,  # type: ignore[operator]
+                        Task.id.not_in(live_children),  # type: ignore[union-attr]
                     )
                     .limit(PURGE_BATCH_SIZE)
                 )

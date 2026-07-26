@@ -26,8 +26,10 @@ from app.bot.services import (
     delete_task,
     get_task_by_id,
     mark_task_done,
+    mark_task_undone,
     split_existing_task,
     update_task_category,
+    update_task_due_at,
     update_task_horizon,
 )
 from app.db.base import session_scope
@@ -396,14 +398,29 @@ async def patch_task(
         if body.priority is not None:
             task.priority = body.priority
 
-        if body.due_at is not None:
-            task.due_at = to_naive_utc(body.due_at)
+        # ``due_at`` — как и ``category_id`` ниже — различает явный null
+        # (очистить дедлайн) и отсутствующий ключ (не трогать) через
+        # ``model_fields_set``. Смена идёт через ``update_task_due_at``,
+        # который отменяет и пересоздаёт pending-напоминания под новое
+        # время (явный null — просто отменяет).
+        if "due_at" in body.model_fields_set:
+            new_due = to_naive_utc(body.due_at) if body.due_at is not None else None
+            await update_task_due_at(session, task, new_due, user.id)
 
         if body.status is not None:
             if body.status == "done":
                 await mark_task_done(session, task, user.id)
                 # Phase 6.3: trigger a pinned-digest refresh after commit
                 # so the strikethrough state is live across surfaces.
+                refresh_pin = True
+            elif task.status == "done":
+                # Reopen из done: mark_task_undone очищает completed_at и
+                # переоткрывает авто-завершённого родителя — как бот.
+                await mark_task_undone(session, task, user.id)
+                if body.status != "new":
+                    # mark_task_undone ставит "new"; уважаем явно
+                    # запрошенный статус (in_progress / cancelled).
+                    task.status = body.status
                 refresh_pin = True
             else:
                 task.status = body.status

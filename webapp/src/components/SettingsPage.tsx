@@ -160,6 +160,10 @@ export function SettingsPage({ me, onUpdated }: Props) {
     return () => {
       // offClick is part of Bot API 6.1+; guard defensively for very old clients.
       try { bb.offClick(handler); } catch { /* ignore */ }
+      // Hide on cleanup too: without this, leaving the settings tab while a
+      // sub-screen is open strands a visible-but-dead BackButton (the effect
+      // above only hides at root depth). Same pattern as BoardCanvas.
+      bb.hide();
     };
   }, [stack.length]);
 
@@ -216,7 +220,7 @@ export function SettingsPage({ me, onUpdated }: Props) {
         <button
           onClick={back}
           aria-label="Назад"
-          className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-all duration-150 hover:bg-bento active:scale-90"
+          className="ease-apple inline-flex h-9 w-9 items-center justify-center rounded-xl text-tg-text/70 transition-[transform,background-color] duration-150 hover:bg-bento active:scale-90"
         >
           <ChevronLeft size={22} strokeWidth={2.25} />
         </button>
@@ -729,7 +733,7 @@ function OffsetChipRow({ offsets, presets, disabled, onChange }: OffsetEditorPro
               onChange([...next].sort((a, b) => b - a));
             }}
             className={
-              "ease-apple rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-150 active:scale-95 " +
+              "ease-apple rounded-full px-3 py-1 text-[12px] font-medium transition-[transform,background-color,color] duration-150 active:scale-95 " +
               (isOn
                 ? "bg-tg-button text-tg-button-text shadow-bento"
                 : "bg-bento text-tg-hint ring-1 ring-black/[0.04] hover:text-tg-text") +
@@ -910,14 +914,14 @@ function SettingsTextRow({
       <button
         type="button"
         onClick={onCancel}
-        className="ease-apple shrink-0 rounded-xl px-2.5 py-1.5 text-[13px] text-tg-hint transition-all duration-200 active:scale-[0.96]"
+        className="ease-apple shrink-0 rounded-xl px-2.5 py-1.5 text-[13px] text-tg-hint transition-transform duration-200 active:scale-[0.96]"
         disabled={pending}
       >
         Отмена
       </button>
       <button
         type="submit"
-        className="ease-apple shrink-0 rounded-xl bg-tg-button px-2.5 py-1.5 text-[13px] font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
+        className="ease-apple shrink-0 rounded-xl bg-tg-button px-2.5 py-1.5 text-[13px] font-medium text-tg-button-text transition-[transform,opacity] duration-200 active:scale-[0.96] disabled:opacity-50"
         disabled={pending}
       >
         Сохранить
@@ -1026,7 +1030,7 @@ function SettingsTimezoneRow({
               type="button"
               onClick={() => setSheetOpen(true)}
               disabled={pending || timezones.length === 0}
-              className="ease-apple flex min-w-0 flex-1 items-center justify-between rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text transition-all duration-200 active:scale-[0.99] hover:bg-bento/70 animate-fade-in"
+              className="ease-apple flex min-w-0 flex-1 items-center justify-between rounded-xl bg-bento px-3 py-2 text-[14px] text-tg-text transition-[transform,background-color] duration-200 active:scale-[0.99] hover:bg-bento/70 animate-fade-in"
             >
               <span className="truncate">
                 {timezones.find((t) => t.iana === draft)?.label ?? draft}
@@ -1038,7 +1042,7 @@ function SettingsTimezoneRow({
         <div className="flex items-center justify-between gap-2 text-[13px]">
           <button
             type="button"
-            className="ease-apple rounded-xl px-2 py-1 text-tg-link transition-all duration-200 active:scale-[0.96]"
+            className="ease-apple rounded-xl px-2 py-1 text-tg-link transition-transform duration-200 active:scale-[0.96]"
             onClick={() => setCustomMode((m) => !m)}
             disabled={pending}
           >
@@ -1048,14 +1052,14 @@ function SettingsTimezoneRow({
             <button
               type="button"
               onClick={onCancel}
-              className="ease-apple rounded-xl px-2.5 py-1.5 text-tg-hint transition-all duration-200 active:scale-[0.96]"
+              className="ease-apple rounded-xl px-2.5 py-1.5 text-tg-hint transition-transform duration-200 active:scale-[0.96]"
               disabled={pending}
             >
               Отмена
             </button>
             <button
               type="submit"
-              className="ease-apple rounded-xl bg-tg-button px-2.5 py-1.5 font-medium text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
+              className="ease-apple rounded-xl bg-tg-button px-2.5 py-1.5 font-medium text-tg-button-text transition-[transform,opacity] duration-200 active:scale-[0.96] disabled:opacity-50"
               disabled={pending}
             >
               Сохранить

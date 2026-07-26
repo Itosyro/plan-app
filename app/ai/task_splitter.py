@@ -3,7 +3,7 @@
 Used by the «Входящие» review card in the Mini-App: a user can ask the
 backend to take a single high-level task and propose a list of atomic
 subtasks to break it down. Mirrors :mod:`app.ai.intent` in structure
-(instructor JSON mode, key rotation, wrap_untrusted, logging).
+(instructor tools mode, key rotation, wrap_untrusted, logging).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 
 import instructor
-from groq import AsyncGroq
 from pydantic import BaseModel, Field
 
 from app.ai._safety import wrap_untrusted
@@ -68,8 +67,8 @@ async def split_task_to_subtasks(
 
     async def _do_call(r: GroqKeyRouter) -> TaskSplitResult:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().task_splitter,

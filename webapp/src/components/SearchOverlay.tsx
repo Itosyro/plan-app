@@ -78,7 +78,9 @@ export function SearchOverlay({ tz, onClose, onOpen }: Props) {
         } else {
           setError("Не удалось загрузить результаты");
         }
-        setResults([]);
+        // null, not []: an empty array would render the "ничего не
+        // нашлось" empty state on top of the error banner.
+        setResults(null);
       } finally {
         if (currentSeq.current === seq) setLoading(false);
       }
@@ -119,7 +121,7 @@ export function SearchOverlay({ tz, onClose, onOpen }: Props) {
           type="button"
           onClick={onClose}
           aria-label="Закрыть"
-          className="ease-apple inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-tg-text transition-all duration-200 active:scale-[0.95] hover:bg-bento"
+          className="ease-apple inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-tg-text transition-[transform,background-color] duration-200 active:scale-[0.95] hover:bg-bento"
         >
           <ArrowLeft size={22} strokeWidth={2.25} aria-hidden />
         </button>

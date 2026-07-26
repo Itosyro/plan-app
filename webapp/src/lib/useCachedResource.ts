@@ -13,14 +13,15 @@
 //   • Optimistic ``mutate(updater)``: writes through to both the
 //     component state and the underlying cache so other mounted
 //     screens see the same optimistic value.
-//   • Subscribes to the global invalidation bus so a mutation in
-//     another screen triggers a refetch here, dropping the
-//     nonce-prop chain that used to plumb refresh signals through
-//     App.tsx.
+//   • Subscribes to the global cache bus: an ``invalidate`` in
+//     another screen triggers a refetch here, a ``mutateCache``
+//     repaints from the cache without touching the network —
+//     dropping the nonce-prop chain that used to plumb refresh
+//     signals through App.tsx.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getCache, setCache, subscribeInvalidate } from "./cache";
+import { getCache, setCache, subscribeInvalidate, type CacheEvent } from "./cache";
 
 export interface CachedResource<T> {
   /** Last-known value. Cached entry on cold mount, fresh value
@@ -51,6 +52,11 @@ interface Options {
    *  bus. Useful for CalendarView which keys by window
    *  (``cal:from:to``) but wants to refetch on any ``cal:`` bump. */
   invalidationPrefix?: string;
+  /** When false, the fetcher never runs (and nothing is cached) —
+   *  the hook just serves whatever the cache holds. Use to gate on
+   *  auth / hydration instead of returning a fake empty value from
+   *  the fetcher, which would poison the cache under a real key. */
+  enabled?: boolean;
 }
 
 export function useCachedResource<T>(
@@ -59,7 +65,7 @@ export function useCachedResource<T>(
   deps: ReadonlyArray<unknown>,
   opts: Options = {},
 ): CachedResource<T> {
-  const { skeletonDelayMs = 300, invalidationPrefix } = opts;
+  const { skeletonDelayMs = 300, invalidationPrefix, enabled = true } = opts;
 
   // Seed from cache so first paint shows last-known data without
   // a flash. Cache lookup is keyed by ``key`` so changing the key
@@ -81,6 +87,9 @@ export function useCachedResource<T>(
     const cached = getCache<T>(key);
     // Repaint from cache on key change (new resource entirely).
     setData(cached);
+    // Gated off (auth pending, prefs not hydrated): serve the cache,
+    // skip the network. The effect re-runs when ``enabled`` flips on.
+    if (!enabled) return;
 
     let skeletonTimer: number | undefined;
     if (cached === undefined) {
@@ -112,25 +121,33 @@ export function useCachedResource<T>(
       if (skeletonTimer !== undefined) window.clearTimeout(skeletonTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick, ...deps]);
+  }, [key, tick, enabled, ...deps]);
 
-  // Wake up on global invalidation. Both an exact-key bus entry
-  // and an optional prefix subscription are honoured; the hook
-  // owner picks which (calendar wants prefix, notes want exact).
+  // Wake up on bus pings. Both an exact-key bus entry and an optional
+  // prefix subscription are honoured; the hook owner picks which
+  // (calendar wants prefix, notes want exact). A "mutate" ping means
+  // the cache already holds the optimistic value — repaint from it,
+  // never refetch (the GET would race the in-flight PATCH/DELETE and
+  // could overwrite the optimistic state with pre-mutation data).
+  // Only "invalidate" triggers a network refetch.
   useEffect(() => {
-    const unsubExact = subscribeInvalidate(key, () => {
+    const onEvent = (event: CacheEvent) => {
+      if (event === "mutate") {
+        const cached = getCache<T>(key);
+        // Missing entry (e.g. dropped by a concurrent invalidate):
+        // keep showing what we have, the refetch is already queued.
+        if (cached !== undefined) setData(cached);
+        return;
+      }
       setTick((n) => n + 1);
-    });
+    };
+    const unsubExact = subscribeInvalidate(key, onEvent);
     if (invalidationPrefix === undefined) {
       return unsubExact;
     }
-    const unsubPrefix = subscribeInvalidate(
-      invalidationPrefix,
-      () => {
-        setTick((n) => n + 1);
-      },
-      { prefix: true },
-    );
+    const unsubPrefix = subscribeInvalidate(invalidationPrefix, onEvent, {
+      prefix: true,
+    });
     return () => {
       unsubExact();
       unsubPrefix();

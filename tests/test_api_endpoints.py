@@ -36,6 +36,7 @@ from app.db.models import InboxEntry, Note, Task, UserSettings
 from app.main import create_app
 from app.shared.config import Settings
 from app.shared.time import utcnow_naive
+from tests._groq_mock import groq_tool_response
 
 # Must match conftest's ``_FAKE_BOT_TOKEN`` so signatures verify.
 _BOT_TOKEN = "123456789:AAEt-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1371,22 +1372,8 @@ async def test_inbox_confirm_rejects_other_user(
 
 
 def _split_groq_response(subtasks: list[str]) -> dict[str, object]:
-    """Fake Groq chat-completion response carrying the JSON subtasks payload."""
-    body = json.dumps({"subtasks": subtasks})
-    return {
-        "id": "chatcmpl-split-task",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": body},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 80, "completion_tokens": 30, "total_tokens": 110},
-    }
+    """Fake Groq chat-completion response carrying the subtasks tool call."""
+    return groq_tool_response("TaskSplitResult", {"subtasks": subtasks})
 
 
 @pytest.fixture
@@ -1586,3 +1573,54 @@ async def test_tasks_split_422_when_llm_returns_empty(
     async with session_scope() as session:
         children = (await session.exec(select(Task).where(Task.parent_id == parent_id))).all()
         assert len(children) == 0
+
+
+# ── HTTP surface hardening (audit 2026-07-26) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_query_param_init_data_no_longer_accepted(
+    aclient: httpx.AsyncClient, seeded: int
+) -> None:
+    """The ``?init_data=`` fallback is gone.
+
+    Query strings end up in access logs, so accepting auth material
+    there leaked a replayable token + user PII on every request. Only
+    the ``X-Telegram-Init-Data`` header authenticates now.
+    """
+    resp = await aclient.get("/api/me", params={"init_data": _build_init_data(user_id=_TG_USER)})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_api_body_over_limit_rejected_413(
+    aclient: httpx.AsyncClient, seeded: int, auth_headers: dict[str, str]
+) -> None:
+    """Oversized /api bodies are cut off by Content-Length before parsing."""
+    huge = b"0" * (6 * 1024 * 1024 + 1)
+    resp = await aclient.post("/api/boards", content=huge, headers=auth_headers)
+    assert resp.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_inbox_pending_count(
+    aclient: httpx.AsyncClient, seeded: int, auth_headers: dict[str, str]
+) -> None:
+    """Badge endpoint returns a bare count without hydrating the list."""
+    resp = await aclient.get("/api/inbox/pending/count", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0}
+
+    async with session_scope() as session:
+        session.add(
+            InboxEntry(
+                user_id=seeded,
+                kind="text",
+                raw_text="проверь входящие",
+                needs_review=True,
+            )
+        )
+
+    resp = await aclient.get("/api/inbox/pending/count", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 1}

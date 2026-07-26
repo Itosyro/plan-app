@@ -15,10 +15,11 @@
 // The board fetches its own task set (all open tasks) and reloads on
 // ``refreshSignal`` so a drag / complete keeps every column in sync.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Check, Plus, X } from "lucide-react";
 import { apiClient } from "../api/client";
+import { mutateCache } from "../lib/cache";
 import { useCachedResource } from "../lib/useCachedResource";
 import { haptic } from "../lib/telegram";
 import type { Category, Task } from "../types";
@@ -55,6 +56,24 @@ export function KanbanView({
   );
   const tasks = data ?? [];
 
+  // Checkbox done: App's handler only patches the LIST cache — mark
+  // the card done in the board cache too so it strikes through
+  // instantly. Server truth arrives via the KANBAN_CACHE_KEY
+  // invalidate App fires on both success and failure.
+  const handleDone = useCallback(
+    async (id: number) => {
+      mutateCache<Task[]>(KANBAN_CACHE_KEY, (prev) =>
+        (prev ?? []).map((t) =>
+          t.id === id
+            ? { ...t, status: "done", completed_at: new Date().toISOString() }
+            : t,
+        ),
+      );
+      await onDone(id);
+    },
+    [onDone],
+  );
+
   // Group open tasks by category. Columns follow the categories prop
   // order; uncategorized tasks land in the trailing "Без категории".
   const byCategory = useMemo(() => {
@@ -79,7 +98,7 @@ export function KanbanView({
           label={c.name}
           tasks={byCategory.get(c.id) ?? []}
           onOpen={onOpen}
-          onDone={onDone}
+          onDone={handleDone}
         />
       ))}
       <KanbanColumn
@@ -88,7 +107,7 @@ export function KanbanView({
         label="Без категории"
         tasks={byCategory.get(null) ?? []}
         onOpen={onOpen}
-        onDone={onDone}
+        onDone={handleDone}
       />
       <AddColumn onCreate={onCreateCategory} />
     </div>
@@ -191,6 +210,9 @@ interface CardViewProps {
 // DragOverlay snapshot.
 export function KanbanCardView({ task, onOpen, onDone, overlay = false }: CardViewProps) {
   const isDone = task.status === "done";
+  // Busy-guard (same as TaskCard): a second tap while the PATCH is in
+  // flight would fire a duplicate mutation.
+  const [busy, setBusy] = useState(false);
   // Tinted tile inside the white column. The drag overlay snapshot pops
   // to a solid white lifted card for clear "picked up" feedback.
   return (
@@ -206,11 +228,13 @@ export function KanbanCardView({ task, onOpen, onDone, overlay = false }: CardVi
         <button
           type="button"
           aria-label={isDone ? "Готово" : "Отметить выполненной"}
-          disabled={isDone || overlay}
+          disabled={isDone || overlay || busy}
           onClick={(e) => {
             e.stopPropagation();
+            if (busy || onDone === undefined) return;
             haptic("success");
-            void onDone?.(task.id);
+            setBusy(true);
+            void Promise.resolve(onDone(task.id)).finally(() => setBusy(false));
           }}
           className={
             "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all duration-200 " +

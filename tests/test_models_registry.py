@@ -1,11 +1,14 @@
 """Regression tests for the central model registry (``app.ai.models``).
 
-These lock in the production-safe defaults so a future "let's try the
-shiny new model" change can't silently re-break prod the way the
-``openai/gpt-oss-*`` switch did (reasoning models broke instructor's
-JSON parsing → every classify call failed → bot errored on every
-message). If you intentionally change a default, update the assertion
-AND verify the new model works with ``instructor`` JSON mode first.
+These lock in the production defaults so a model swap is always a
+deliberate, reviewed change. History: the May 2026 ``openai/gpt-oss-*``
+switch broke prod because instructor ran in ``Mode.JSON`` and reasoning
+tokens polluted ``message.content``; since then every call site uses
+``Mode.TOOLS`` (parses ``tool_calls``), which gpt-oss supports on Groq.
+The old Llama defaults were deprecated by Groq (shutdown August 2026)
+and must not come back. If you intentionally change a default, update
+the assertions AND verify the new model works with instructor
+``Mode.TOOLS`` first.
 """
 
 from __future__ import annotations
@@ -28,28 +31,26 @@ def _clear_caches() -> Generator[None, None, None]:
     get_models.cache_clear()
 
 
-def test_defaults_are_production_llama_models() -> None:
-    """The shipped defaults must be the battle-tested Llama line that
-    works with instructor JSON mode — NOT reasoning models."""
-    get_settings.cache_clear()
-    get_models.cache_clear()
+def test_defaults_are_gpt_oss_models() -> None:
+    """The shipped defaults are the gpt-oss line (tool-use capable on
+    Groq, parsed via instructor ``Mode.TOOLS``)."""
     models = get_models()
-    # Heavy stages: 70B versatile (native JSON mode + tool use).
-    assert models.classifier == "llama-3.3-70b-versatile"
-    assert models.critic == "llama-3.3-70b-versatile"
-    # Light stages: 8b-instant (fast, production).
-    assert models.splitter == "llama-3.1-8b-instant"
-    assert models.intent == "llama-3.1-8b-instant"
-    assert models.reorder == "llama-3.1-8b-instant"
-    assert models.courier == "llama-3.1-8b-instant"
-    assert models.task_splitter == "llama-3.1-8b-instant"
-    # STT unchanged.
+    # Тяжёлые стадии: 120b — одна ошибка классификации каскадится.
+    assert models.classifier == "openai/gpt-oss-120b"
+    assert models.critic == "openai/gpt-oss-120b"
+    # Лёгкие стадии: 20b — быстрый tight-loop.
+    assert models.splitter == "openai/gpt-oss-20b"
+    assert models.intent == "openai/gpt-oss-20b"
+    assert models.reorder == "openai/gpt-oss-20b"
+    assert models.courier == "openai/gpt-oss-20b"
+    assert models.task_splitter == "openai/gpt-oss-20b"
+    # STT без изменений.
     assert models.whisper == "whisper-large-v3"
 
 
-def test_no_reasoning_models_in_defaults() -> None:
-    """Guard rail: no ``gpt-oss`` / ``qwen-qwq`` reasoning model may be a
-    default. They emit reasoning tokens that break structured output."""
+def test_no_deprecated_models_in_defaults() -> None:
+    """Guard rail: models Groq has withdrawn or deprecated (shutdown
+    August 2026) may not reappear as defaults — they will 404 in prod."""
     models = get_models()
     blob = " ".join(
         [
@@ -63,16 +64,17 @@ def test_no_reasoning_models_in_defaults() -> None:
             models.critic,
         ]
     )
-    assert "gpt-oss" not in blob
+    assert "llama-3.1-8b-instant" not in blob
+    assert "llama-3.3-70b-versatile" not in blob
     assert "qwen-qwq" not in blob
 
 
 def test_env_override_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     """A ``GROQ_MODEL_<STAGE>`` env var must override the default so
     models can be A/B'd in prod without a redeploy."""
-    monkeypatch.setenv("GROQ_MODEL_CLASSIFIER", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_MODEL_CLASSIFIER", "moonshotai/kimi-k2-instruct")
     get_settings.cache_clear()
     get_models.cache_clear()
     # Re-read settings from the patched environment.
     s = Settings()
-    assert s.groq_model_classifier == "openai/gpt-oss-120b"
+    assert s.groq_model_classifier == "moonshotai/kimi-k2-instruct"

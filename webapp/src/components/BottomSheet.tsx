@@ -3,10 +3,13 @@
 // at the top and ``--safe-bottom`` padding so the close button
 // never tucks under the iPhone home indicator.
 //
-// Animation: backdrop fades in (200 ms), sheet slides up from
-// ``translateY(100%)`` to ``0`` with the Apple spring curve. The
-// sheet is mounted only while ``open`` is true so React doesn't
-// hold focus traps / scroll locks on closed sheets.
+// Animation: backdrop fades in, sheet slides up from
+// ``translateY(100%)`` to ``0`` with the Apple spring curve (250ms).
+// On close the sheet plays a faster slide-down (200ms, iOS drawer
+// curve) + backdrop fade-out, then unmounts — a presence pattern kept
+// internal so parents just toggle ``open`` and every sheet gets the
+// exit for free. Listeners/scroll locks are keyed on ``open``, so they
+// release the moment closing starts.
 //
 // Behaviour:
 //   - Click on the backdrop closes the sheet.
@@ -17,7 +20,7 @@
 //   - The first focusable inside is auto-focused for keyboard
 //     users (mobile users see no caret, which is fine).
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 interface Props {
@@ -37,6 +40,22 @@ interface Props {
 
 export function BottomSheet({ open, onClose, title, hint, children, footer }: Props) {
   const sheetRef = useRef<HTMLDivElement | null>(null);
+
+  // Presence: keep the sheet mounted for the exit animation after the
+  // parent flips ``open`` to false, then unmount on a timer slightly
+  // longer than the 200ms slide-down (timeout instead of transitionend
+  // — it can't be missed). Re-opening mid-exit cancels the timer.
+  const [mounted, setMounted] = useState(open);
+  const closing = mounted && !open;
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    if (!mounted) return;
+    const t = window.setTimeout(() => setMounted(false), 220);
+    return () => window.clearTimeout(t);
+  }, [open, mounted]);
 
   // Lock body scroll while open. The Mini-App container itself is
   // a scrolling div, so we use ``overflow: hidden`` on the document
@@ -79,25 +98,27 @@ export function BottomSheet({ open, onClose, title, hint, children, footer }: Pr
     focusable?.focus();
   }, [open]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center">
       <div
         aria-hidden
         onClick={onClose}
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        style={{ animation: "fade-in 150ms ease-out" }}
+        className={
+          "absolute inset-0 bg-black/40 backdrop-blur-sm " +
+          (closing ? "animate-backdrop-out" : "animate-fade-in")
+        }
       />
       <div
         ref={sheetRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card text-tg-text shadow-bento-lg ring-1 ring-black/5"
-        style={{
-          animation: "slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1)",
-        }}
+        className={
+          "relative z-10 w-full max-w-md rounded-t-3xl bg-bento-card text-tg-text shadow-bento-lg ring-1 ring-black/5 " +
+          (closing ? "animate-sheet-out" : "animate-sheet-in")
+        }
       >
         {/* Grabber */}
         <div className="flex justify-center pt-2">
@@ -117,7 +138,7 @@ export function BottomSheet({ open, onClose, title, hint, children, footer }: Pr
             type="button"
             onClick={onClose}
             aria-label="Закрыть"
-            className="ease-apple -mr-2 -mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-tg-hint transition-all duration-200 hover:bg-bento active:scale-[0.95]"
+            className="ease-apple -mr-2 -mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-tg-hint transition-[transform,background-color,color] duration-200 hover:bg-bento active:scale-[0.95]"
           >
             <X size={20} strokeWidth={2.25} aria-hidden />
           </button>

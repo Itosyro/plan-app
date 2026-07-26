@@ -20,6 +20,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlmodel import select
 
 from app.ai.schemas import EditIntent
+from app.ai.time_resolver import parse_user_datetime
 from app.bot.services import (
     cancel_task_reminders,
     delete_category,
@@ -64,6 +65,17 @@ PENDING_EDITS: dict[int, tuple[EditIntent, float]] = {}
 def touch_last_task(user_id: int, task_id: int) -> None:
     """Record the most-recently-used task for anaphora resolution."""
     LAST_TASK[user_id] = (task_id, time.monotonic())
+
+
+async def _get_user_tz(user_id: int) -> str:
+    """Load the user's IANA timezone (fallback UTC).
+
+    Все ветки, парсящие свободное время («завтра в 10»), обязаны знать
+    зону пользователя — см. ``parse_user_datetime``.
+    """
+    async with session_scope() as session:
+        row = (await session.exec(select(User.tz).where(User.id == user_id))).first()
+    return row or "UTC"
 
 
 def pop_last_task(user_id: int) -> int | None:
@@ -301,17 +313,18 @@ async def _execute_rename(task_id: int, user_id: int, intent: EditIntent) -> tup
 async def _execute_set_due(
     task_id: int, user_id: int, intent: EditIntent
 ) -> tuple[str, int | None]:
-    """Set or change a task's due date/time."""
-    import dateparser
+    """Set or change a task's due date/time.
 
+    Время парсится в таймзоне ПОЛЬЗОВАТЕЛЯ (``parse_user_datetime``) —
+    раньше здесь был голый ``dateparser.parse`` без TIMEZONE, и на
+    UTC-сервере «завтра в 10» для москвича сохранялось как 10:00 UTC
+    (реально 13:00 МСК), а strftime-подтверждение маскировало сдвиг.
+    """
     if not intent.new_due_raw:
         return "Не понял дату/время. Уточни: «до пятницы», «завтра в 10».", None
 
-    parsed = dateparser.parse(
-        intent.new_due_raw,
-        languages=["ru"],
-        settings={"PREFER_DATES_FROM": "future"},
-    )
+    user_tz = await _get_user_tz(user_id)
+    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
     if parsed is None:
         return f"Не смог разобрать дату «{intent.new_due_raw}». Попробуй иначе.", None
 
@@ -327,6 +340,8 @@ async def _execute_set_due(
         await update_task_due_at(session, task, naive_utc, user_id)
         title = task.title
 
+    # ``parsed`` aware в зоне пользователя — strftime даёт его локальное
+    # время, как пользователь и сказал.
     formatted = parsed.strftime("%d.%m %H:%M")
     snap_id = await _save_snapshot(task_id, user_id, "due_at", old_due, naive_utc.isoformat())
     return f"Поставил дедлайн «{title}» → {formatted}.", snap_id
@@ -377,17 +392,15 @@ async def _execute_set_category(
 async def _execute_reorder_time(
     task_id: int, user_id: int, intent: EditIntent
 ) -> tuple[str, int | None]:
-    """Change the exact time of a task (reorder_time ≈ set_due for time changes)."""
-    import dateparser
+    """Change the exact time of a task (reorder_time ≈ set_due for time changes).
 
+    Как и set_due — парсим в таймзоне пользователя, см. комментарий там.
+    """
     if not intent.new_due_raw:
         return "Не понял, на какое время перенести. Уточни: «на 14:00», «на 8 утра».", None
 
-    parsed = dateparser.parse(
-        intent.new_due_raw,
-        languages=["ru"],
-        settings={"PREFER_DATES_FROM": "future"},
-    )
+    user_tz = await _get_user_tz(user_id)
+    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
     if parsed is None:
         return f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.", None
 
@@ -419,23 +432,21 @@ async def _execute_set_reminder(
     purpose (a reminder is a ping; the deadline is the deadline).
 
     Parses the user's free-form time expression with the same
-    ``dateparser`` settings as ``_execute_set_due`` so phrases like
-    «завтра в 9», «через час», «пятница 12:00» behave identically across
-    intents — one cognitive model for the user.
+    ``parse_user_datetime`` helper as ``_execute_set_due`` so phrases
+    like «завтра в 9», «через час», «пятница 12:00» behave identically
+    across intents — one cognitive model for the user. Всё — в
+    таймзоне пользователя: раньше «напомни завтра в 10» для москвича
+    ставило напоминание на 13:00 МСК (10:00 UTC), и подтверждение
+    честно показывало неверные «13:00».
     """
-    import dateparser
-
     if not intent.new_due_raw:
         return (
             "Не понял, когда напомнить. Уточни: «напомни в 15:00», «напомни завтра в 9».",
             None,
         )
 
-    parsed = dateparser.parse(
-        intent.new_due_raw,
-        languages=["ru"],
-        settings={"PREFER_DATES_FROM": "future"},
-    )
+    user_tz = await _get_user_tz(user_id)
+    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
     if parsed is None:
         return (
             f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.",
@@ -458,8 +469,6 @@ async def _execute_set_reminder(
         if task is None:
             return "Задача не найдена.", None
         title = task.title
-        user_row = (await session.exec(select(User).where(User.id == user_id))).first()
-        user_tz = user_row.tz if user_row is not None else "UTC"
 
         # Replace existing pending reminders with the single new one.
         # ``cancel_task_reminders`` flips them to ``cancelled`` and emits
@@ -781,8 +790,19 @@ async def _dispatch_single(
 async def _execute_list_completed_today(
     user_id: int,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Return a list of tasks completed today (read-only)."""
-    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    """Return a list of tasks completed today (read-only).
+
+    «Сегодня» — по ЛОКАЛЬНОЙ полуночи пользователя, не по UTC: для
+    москвича в 01:00 ночи «что я сделал сегодня» раньше показывало ещё
+    вчерашний UTC-день. Сравнение — naive-UTC значением (конвенция БД).
+    """
+    from zoneinfo import ZoneInfo
+
+    user_tz = await _get_user_tz(user_id)
+    local_midnight = datetime.now(ZoneInfo(user_tz)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    today_start = local_midnight.astimezone(UTC).replace(tzinfo=None)
 
     async with session_scope() as session:
         stmt = (

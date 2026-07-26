@@ -99,3 +99,22 @@ def test_extract_user_handles_missing_user(bot_token: str) -> None:
     # Wipe user field to simulate corrupted payload.
     parsed_no_user = {k: v for k, v in parsed.items() if k != "user"}
     assert extract_user(parsed_no_user) is None
+
+
+def test_ttl_survives_long_miniapp_session(bot_token: str) -> None:
+    """initData issued hours ago must still validate.
+
+    Telegram issues ``initData`` once per WebView open and never
+    refreshes it mid-session — the old 10-minute TTL was 401-ing every
+    session longer than ten minutes (users lost board edits). The
+    window is now 12 h.
+    """
+    six_hours_ago = int(time.time()) - 6 * 60 * 60
+    raw = _make_init_data(bot_token, user_id=42, auth_date=six_hours_ago)
+    assert parse_init_data(raw, bot_token) is not None
+
+
+def test_ttl_rejects_older_than_twelve_hours(bot_token: str) -> None:
+    thirteen_hours_ago = int(time.time()) - 13 * 60 * 60
+    raw = _make_init_data(bot_token, user_id=42, auth_date=thirteen_hours_ago)
+    assert parse_init_data(raw, bot_token) is None

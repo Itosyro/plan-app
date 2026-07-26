@@ -133,6 +133,8 @@ export const apiClient = {
     api<Note>(`/notes/${id}`, { method: "PATCH", body }),
   deleteNote: (id: number) => api<void>(`/notes/${id}`, { method: "DELETE" }),
   pendingInbox: () => api<InboxReview[]>("/inbox/pending"),
+  // Badge-only count — avoids hydrating the whole pending list.
+  pendingInboxCount: () => api<{ count: number }>("/inbox/pending/count"),
   confirmInbox: (id: number, keepTaskIds: number[], keepNoteIds: number[]) =>
     api<void>(`/inbox/${id}/confirm`, {
       method: "POST",

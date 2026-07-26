@@ -1,7 +1,7 @@
 """Critic — review and optionally correct classifier output.
 
-Uses ``qwen-qwq-32b`` (reasoning model) via Groq with ``instructor``
-for structured output.  Runs conditionally based on user settings:
+Uses the heavy registry model via Groq with ``instructor`` for
+structured output.  Runs conditionally based on user settings:
 - ``confidence`` mode: only when classifier confidence < threshold
 - ``always`` mode: every classification gets reviewed
 """
@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 
 import instructor
-from groq import AsyncGroq
 
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
@@ -96,8 +95,8 @@ async def critique_classification(
 
     async def _do_call(r: GroqKeyRouter) -> CriticVerdict:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().critic,

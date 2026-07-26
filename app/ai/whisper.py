@@ -9,8 +9,6 @@ from __future__ import annotations
 import asyncio
 import time
 
-from groq import AsyncGroq
-
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
 from app.shared.config import get_settings
@@ -31,7 +29,7 @@ async def transcribe_voice(
     """
 
     async def _do_call(r: GroqKeyRouter) -> object:
-        client = AsyncGroq(api_key=r.current_key)
+        client = r.async_client()
         return await client.audio.transcriptions.create(
             model=get_models().whisper,
             file=(filename, audio_bytes),

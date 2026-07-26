@@ -61,15 +61,53 @@ const PRESETS: Preset[] = [
   },
 ];
 
-// Build a Date at ``today + offsetDays`` at the given local hour:minute
-// in ``tz``. We compute the offset in UTC, then format-and-reparse so
-// the returned Date represents the right wall-clock moment.
+// UTC offset (in minutes) of ``tz`` at the given UTC instant, via
+// Intl's ``longOffset`` name ("GMT+03:00" → 180, plain "GMT" → 0).
+function tzOffsetMinutes(utcMs: number, tz: string): number {
+  const name =
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
+      .formatToParts(utcMs)
+      .find((p) => p.type === "timeZoneName")?.value ?? "GMT";
+  const m = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
+  if (!m) return 0;
+  const sign = m[1] === "-" ? -1 : 1;
+  return sign * (Number(m[2]) * 60 + Number(m[3]));
+}
+
+// Convert a wall-clock time *in the profile tz* to a real UTC instant,
+// without any date library. This is the crux of the picker: the inputs
+// show wall-clock time in ``tz`` (the PROFILE zone), so parsing them
+// with ``new Date("YYYY-MM-DDTHH:mm")`` — which uses the DEVICE zone —
+// would silently shift due_at by the zone difference on every save.
+//
+// Method: pretend the wall-clock is UTC (Date.UTC), then subtract the
+// tz offset. The offset itself depends on the date (DST), so refine
+// once: first take the offset at the naive guess, then re-read it at
+// the corrected instant. One iteration is enough for real-world zones
+// (offsets are stable except at the ~1h transition edge).
+function wallTimeInTzToUtc(
+  y: number,
+  mo: number,
+  d: number,
+  hh: number,
+  mm: number,
+  tz: string,
+): Date {
+  const guess = Date.UTC(y, mo - 1, d, hh, mm);
+  try {
+    const utc = guess - tzOffsetMinutes(guess, tz) * 60000;
+    return new Date(guess - tzOffsetMinutes(utc, tz) * 60000);
+  } catch {
+    // Unknown tz — fall back to device-local interpretation.
+    return new Date(y, mo - 1, d, hh, mm);
+  }
+}
+
+// Build a Date at ``today + offsetDays`` at the given hour:minute in
+// ``tz``: take "today" as seen in the profile tz, then convert that
+// wall-clock to UTC with wallTimeInTzToUtc.
 function atLocal(offsetDays: number, hour: number, minute: number, tz: string): Date {
-  const now = new Date();
-  const dt = new Date(now.getTime() + offsetDays * 86400000);
-  // Format the calendar day in the target tz, then construct an
-  // ISO with the requested HH:mm and let JS interpret it as local
-  // wall-clock. The result is then re-zoned into ``tz``.
+  const dt = new Date(Date.now() + offsetDays * 86400000);
   try {
     const ymd = new Intl.DateTimeFormat("en-CA", {
       timeZone: tz,
@@ -78,9 +116,8 @@ function atLocal(offsetDays: number, hour: number, minute: number, tz: string): 
       day: "2-digit",
     }).format(dt);
     // ``ymd`` is ``YYYY-MM-DD``.
-    const hh = String(hour).padStart(2, "0");
-    const mm = String(minute).padStart(2, "0");
-    return new Date(`${ymd}T${hh}:${mm}:00`);
+    const [y, mo, d] = ymd.split("-").map(Number);
+    return wallTimeInTzToUtc(y, mo, d, hour, minute, tz);
   } catch {
     const fallback = new Date(dt);
     fallback.setHours(hour, minute, 0, 0);
@@ -114,9 +151,20 @@ function toLocalIsoParts(iso: string, tz: string): { date: string; time: string 
   }
 }
 
-function toIsoUtc(localDate: string, localTime: string): string | null {
-  if (!localDate || !localTime) return null;
-  const wallClock = new Date(`${localDate}T${localTime}:00`);
+// Inputs hold wall-clock in the PROFILE tz (that's how toLocalIsoParts
+// rendered them) — convert back through the same tz, never the device's.
+function toIsoUtc(localDate: string, localTime: string, tz: string): string | null {
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
+  const tm = /^(\d{2}):(\d{2})/.exec(localTime);
+  if (!dm || !tm) return null;
+  const wallClock = wallTimeInTzToUtc(
+    Number(dm[1]),
+    Number(dm[2]),
+    Number(dm[3]),
+    Number(tm[1]),
+    Number(tm[2]),
+    tz,
+  );
   if (Number.isNaN(wallClock.getTime())) return null;
   return wallClock.toISOString();
 }
@@ -137,7 +185,7 @@ export function BottomSheetDate({ open, onClose, value, onSelect, tz }: Props) {
   }, [open, value, tz]);
 
   function commit(): void {
-    const iso = toIsoUtc(date, time);
+    const iso = toIsoUtc(date, time, tz);
     if (iso === null) {
       // No date entered — close without changes.
       onClose();
@@ -179,7 +227,7 @@ export function BottomSheetDate({ open, onClose, value, onSelect, tz }: Props) {
       <button
         type="button"
         onClick={onClose}
-        className="ease-apple rounded-xl px-4 py-2 text-[14px] font-medium text-tg-hint transition-all duration-200 active:scale-[0.96]"
+        className="ease-apple rounded-xl px-4 py-2 text-[14px] font-medium text-tg-hint transition-transform duration-200 active:scale-[0.96]"
       >
         Отмена
       </button>
@@ -187,7 +235,7 @@ export function BottomSheetDate({ open, onClose, value, onSelect, tz }: Props) {
         type="button"
         onClick={commit}
         disabled={!date || !time}
-        className="ease-apple rounded-xl bg-tg-button px-5 py-2 text-[14px] font-semibold text-tg-button-text transition-all duration-200 active:scale-[0.96] disabled:opacity-50"
+        className="ease-apple rounded-xl bg-tg-button px-5 py-2 text-[14px] font-semibold text-tg-button-text transition-[transform,opacity] duration-200 active:scale-[0.96] disabled:opacity-50"
       >
         Готово
       </button>
@@ -206,7 +254,7 @@ export function BottomSheetDate({ open, onClose, value, onSelect, tz }: Props) {
                 type="button"
                 onClick={() => applyPreset(p)}
                 className={
-                  "ease-apple flex-1 rounded-2xl px-3 py-2.5 text-[13px] font-medium transition-all duration-200 active:scale-[0.96] " +
+                  "ease-apple flex-1 rounded-2xl px-3 py-2.5 text-[13px] font-medium transition-[transform,background-color,color] duration-200 active:scale-[0.96] " +
                   (isActive
                     ? "bg-tg-button/10 text-tg-button ring-1 ring-tg-button/30"
                     : "bg-bento text-tg-text/80 hover:text-tg-text")
@@ -248,7 +296,7 @@ export function BottomSheetDate({ open, onClose, value, onSelect, tz }: Props) {
           <button
             type="button"
             onClick={clear}
-            className="ease-apple mt-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[14px] font-medium text-rose-700 transition-all duration-200 active:scale-[0.97] dark:text-rose-300"
+            className="ease-apple mt-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[14px] font-medium text-rose-700 transition-transform duration-200 active:scale-[0.97] dark:text-rose-300"
           >
             <X size={16} strokeWidth={2.25} aria-hidden />
             Убрать дату

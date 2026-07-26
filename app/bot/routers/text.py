@@ -70,6 +70,19 @@ def create_router() -> Router:
             )
             return
 
+        # Проверяем онбординг ДО плейсхолдера и до resolve (mirrors
+        # voice.py): иначе неонборженный юзер навсегда видел «⏳ Разбираю…»,
+        # а reply-на-голосовое ещё и впустую тратил Whisper.
+        async with session_scope() as session:
+            user, _ = await get_or_create_user(
+                session,
+                telegram_id=message.from_user.id,
+                lang_code=message.from_user.language_code,
+            )
+            if user.onboarded_at is None:
+                await message.answer(NOT_ONBOARDED)
+                return
+
         groq_router = get_groq_router()
 
         # Acknowledge the message *before* any potentially-slow work so
@@ -136,9 +149,6 @@ def create_router() -> Router:
                 telegram_id=message.from_user.id,
                 lang_code=message.from_user.language_code,
             )
-            if user.onboarded_at is None:
-                await message.answer(NOT_ONBOARDED)
-                return
             assert user.id is not None
 
             # Store the *resolved* payload so the audit trail reflects what

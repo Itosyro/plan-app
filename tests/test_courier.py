@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import respx
 from aiogram.types import InlineKeyboardMarkup
@@ -23,6 +21,7 @@ from app.ai.courier import (
 )
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
@@ -64,27 +63,11 @@ def _item(
     )
 
 
-def _groq_json(text: str) -> dict[str, object]:
-    body = json.dumps({"text": text})
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": body},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
-    }
-
-
 def _mock_courier(text: str) -> None:
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=respx.MockResponse(200, json=_groq_json(text)),
+        return_value=respx.MockResponse(
+            200, json=groq_tool_response("CourierReply", {"text": text})
+        ),
     )
 
 

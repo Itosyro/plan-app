@@ -11,7 +11,6 @@ The tests verify that the pipeline correctly:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
@@ -28,6 +27,7 @@ from app.bot.routers._pipeline import (
 )
 from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import InboxEntry, Note, Task
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
@@ -46,75 +46,26 @@ def _kb_labels(kb: InlineKeyboardMarkup | None) -> list[str]:
 
 
 def _splitter_response(units: list[dict[str, str]]) -> dict[str, Any]:
-    body = json.dumps({"units": units})
-    return {
-        "id": "chatcmpl-split",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
-    }
+    return groq_tool_response("SplitterResult", {"units": units})
 
 
 def _classifier_response(result: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps(result)
-    return {
-        "id": "chatcmpl-class",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.3-70b-versatile",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
-    }
+    return groq_tool_response("ClassifierResult", result)
 
 
 def _courier_response(text: str) -> dict[str, Any]:
-    body = json.dumps({"text": text})
-    return {
-        "id": "chatcmpl-courier",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
-    }
+    return groq_tool_response("CourierReply", {"text": text})
 
 
 def _critic_response(result: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps({"approved": True, "reason": "ok", "corrected": result})
-    return {
-        "id": "chatcmpl-critic",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "qwen-qwq-32b",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
-    }
+    return groq_tool_response(
+        "CriticVerdict", {"approved": True, "reason": "ok", "corrected": result}
+    )
 
 
 def _intent_response(intent: str = "create") -> dict[str, Any]:
     """Fake Groq response for the PR-I1 intent detection call."""
-    payload: dict[str, Any] = {"intent": intent, "confidence": 0.95}
-    body = json.dumps(payload)
-    return {
-        "id": "chatcmpl-intent",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 80, "completion_tokens": 15, "total_tokens": 95},
-    }
+    return groq_tool_response("EditIntent", {"intent": intent, "confidence": 0.95})
 
 
 def _cr_dict(

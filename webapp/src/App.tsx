@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Sparkles } from "lucide-react";
+import { CloudOff, Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CAL_CACHE_PREFIX, CALDAY_PREFIX } from "./components/CalendarView";
@@ -113,6 +113,10 @@ const EMPTY_COUNTS: TaskCounts = {
   someday: 0,
   no_horizon: 0,
 };
+
+// Prefix shared by every per-(horizon, category) task-list cache key —
+// the invalidation target when a mutation elsewhere changes the lists.
+const TASKS_CACHE_PREFIX = "tasks:";
 
 const DEFAULT_HORIZON: HorizonSlug = "today";
 const VALID_HORIZONS: ReadonlySet<HorizonSlug> = new Set([
@@ -222,24 +226,26 @@ export default function App() {
 
   // Per (horizon, category) key. Reused below as the optimistic-mutate
   // target and the explicit-invalidation target.
-  const tasksCacheKey = `tasks:${activeHorizon}:${selectedCategory ?? "all"}`;
+  const tasksCacheKey = `${TASKS_CACHE_PREFIX}${activeHorizon}:${selectedCategory ?? "all"}`;
   const {
     data: tasksData,
+    error: tasksError,
     refetch: refetchTasks,
   } = useCachedResource<Task[]>(
     tasksCacheKey,
-    async () => {
-      if (!prefsHydrated || authError !== null) return [];
-      return apiClient.tasks({
+    () =>
+      apiClient.tasks({
         horizon: activeHorizon,
         category_id: selectedCategory ?? undefined,
         // Phase 7e/C: pull recently-done tasks too so they can linger
         // struck-through in the list; the render filter hides ones
         // completed > 24h ago (they live in the «Выполненные» screen).
         include_done: true,
-      });
-    },
-    [activeHorizon, selectedCategory, prefsHydrated, authError],
+      }),
+    [activeHorizon, selectedCategory],
+    // Gate the fetch instead of returning [] from the fetcher — the
+    // fake empty list used to get cached under the real key.
+    { enabled: prefsHydrated && authError === null },
   );
   const tasks = tasksData ?? [];
 
@@ -288,12 +294,13 @@ export default function App() {
     }
   }, []);
 
-  // «Входящие» badge count. Cheap — the pending list is small. Refreshed
-  // on shell load and after a review is confirmed.
+  // «Входящие» badge count. Dedicated count endpoint — the hydrated
+  // pending list is only fetched inside the review screen itself.
+  // Refreshed on shell load and after a review is confirmed.
   const loadInboxCount = useCallback(async () => {
     try {
-      const resp = await apiClient.pendingInbox();
-      setInboxCount(resp.length);
+      const resp = await apiClient.pendingInboxCount();
+      setInboxCount(resp.count);
     } catch (err) {
       if (err instanceof ApiError && err.status !== 401 && err.status !== 404) {
         console.error("loadInboxCount failed", err);
@@ -446,14 +453,19 @@ export default function App() {
       adjustCount(touchedSlug, -1);
       try {
         await apiClient.patchTask(id, { status: "done" });
+        // Done from the board: the task isn't in the current list
+        // cache, so the optimistic decrement above was a no-op —
+        // reconcile the badge from the server instead.
+        if (touchedSlug === undefined) void loadCounts();
         void refreshCategories();
         invalidate(CAL_CACHE_PREFIX, { prefix: true });
         invalidate(KANBAN_CACHE_KEY);
       } catch (err) {
-        // Optimism was wrong — reconcile both list and counts from
+        // Optimism was wrong — reconcile list, board and counts from
         // the server so the user doesn't see a phantom done-tick.
         refetchTasks();
         void loadCounts();
+        invalidate(KANBAN_CACHE_KEY);
         console.error("done failed", err);
       }
     },
@@ -572,6 +584,17 @@ export default function App() {
     invalidate(KANBAN_CACHE_KEY);
   }, [refetchTasks, loadCounts, refreshCategories]);
 
+  // «Выполненные» reopen / «Корзина» restore change the main lists and
+  // badges behind the archive screen's back — drop every task-shaped
+  // cache and reconcile counts. Restoring can also bring a note back.
+  const handleArchiveMutated = useCallback(() => {
+    invalidate(TASKS_CACHE_PREFIX, { prefix: true });
+    invalidate(KANBAN_CACHE_KEY);
+    invalidate(CAL_CACHE_PREFIX, { prefix: true });
+    invalidate(NOTES_CACHE_KEY);
+    void loadCounts();
+  }, [loadCounts]);
+
   // Optimistic delete from the detail screen: drop the row from the list
   // instantly so closing the detail reveals it already gone. The detail's
   // background DELETE then calls ``handleDetailMutated`` to reconcile.
@@ -581,10 +604,10 @@ export default function App() {
       mutateCache<Task[]>(tasksCacheKey, (prev) => {
         const list = prev ?? [];
         const hit = list.find((t) => t.id === id);
-        removedSlug = hit?.horizon_slug;
+        // Done tasks were already off the count; only adjust for live ones.
+        if (hit && hit.status !== "done") removedSlug = hit.horizon_slug;
         return list.filter((t) => t.id !== id);
       });
-      // Done tasks were already off the count; only adjust for live ones.
       if (removedSlug) adjustCount(removedSlug, -1);
     },
     [tasksCacheKey, adjustCount],
@@ -641,6 +664,9 @@ export default function App() {
       );
       try {
         await apiClient.patchTask(id, { due_at: dueAtIso });
+        // List caches key off horizon, not date — drop them so the
+        // old due date doesn't linger in the list view.
+        invalidate(TASKS_CACHE_PREFIX, { prefix: true });
         void loadCounts();
       } catch (err) {
         console.error("reschedule failed", err);
@@ -747,7 +773,12 @@ export default function App() {
         </Suspense>
         <BottomNav
           active={activeTab}
-          onChange={setActiveTab}
+          onChange={(tab) => {
+            // Leave the detail overlay first — otherwise the capsule
+            // moves but the task screen stays on top.
+            navigateHome();
+            setActiveTab(tab);
+          }}
           badges={{ inbox: inboxCount }}
         />
       </DndContext>
@@ -804,7 +835,11 @@ export default function App() {
           }}
         >
           <Suspense fallback={<ScreenFallback />}>
-            {route.path === "/completed" ? <CompletedPage tz={tz} /> : <TrashPage />}
+            {route.path === "/completed" ? (
+              <CompletedPage tz={tz} onMutated={handleArchiveMutated} />
+            ) : (
+              <TrashPage onMutated={handleArchiveMutated} />
+            )}
           </Suspense>
         </div>
         <BottomNav
@@ -953,7 +988,25 @@ export default function App() {
                   counts={counts}
                   onChange={handleHorizonChange}
                 />
-                {!hasVisibleTasks ? (
+                {tasksError !== null && tasksData === undefined ? (
+                  // Fetch failed and there's no cache to fall back on —
+                  // an empty list here would read as "всё сделано".
+                  <div className="flex flex-col items-center">
+                    <EmptyState
+                      icon={CloudOff}
+                      tone="rose"
+                      title="Не получилось"
+                      hint="Не удалось загрузить задачи. Проверь связь и попробуй ещё раз."
+                    />
+                    <button
+                      type="button"
+                      onClick={refetchTasks}
+                      className="ease-apple mt-3 min-h-11 rounded-2xl bg-tg-button px-6 py-2.5 text-[14px] font-semibold text-tg-button-text transition-all duration-200 active:scale-[0.97]"
+                    >
+                      Повторить
+                    </button>
+                  </div>
+                ) : !hasVisibleTasks ? (
                   <EmptyState
                     icon={Sparkles}
                     tone="emerald"

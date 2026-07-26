@@ -9,6 +9,7 @@ from sqlmodel import select
 
 from app.api.auth import current_user
 from app.api.schemas import TrashCountsOut, TrashItemOut, TrashKind
+from app.bot.services import restore_task
 from app.db.base import session_scope
 from app.db.models import Category, Note, Task, User
 
@@ -131,9 +132,9 @@ async def restore_item(
             task = task_result.first()
             if task is None or task.user_id != user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="item not found")
-            task.deleted_at = None
-            session.add(task)
-            await session.flush()
+            # Восстанавливаем вместе с подзадачами, мягко удалёнными тем
+            # же каскадом delete_task (тот же timestamp).
+            await restore_task(session, task, user.id)
         else:
             note_result = await session.exec(
                 select(Note).where(

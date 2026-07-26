@@ -188,3 +188,49 @@ async def test_webhook_user_id_is_none_when_user_not_yet_onboarded(
     ).all()
     assert len(rows) == 1
     assert rows[0].user_id is None
+
+
+@pytest.mark.asyncio
+async def test_webhook_releases_claim_when_dispatch_fails(
+    patched_client: TestClient,
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed dispatch must not burn the ``update_id`` claim.
+
+    The claim row is inserted before ``feed_update``; if dispatch then
+    raises, Telegram retries the same ``update_id`` — and used to be
+    told «duplicate», silently losing the user's message forever. The
+    handler now releases the claim on failure so the retry reprocesses.
+    """
+    from aiogram import Dispatcher
+
+    async def _boom(self: Dispatcher, bot: Any, update: Any, **kwargs: Any) -> None:
+        raise RuntimeError("handler exploded")
+
+    monkeypatch.setattr(Dispatcher, "feed_update", _boom)
+    payload = _make_update_payload(31337, text="не потеряй меня")
+    with pytest.raises(RuntimeError):
+        patched_client.post(
+            f"/tg/{_TEST_SECRET}",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": _TEST_SECRET},
+        )
+
+    rows = (
+        await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 31337))
+    ).all()
+    assert rows == []
+
+    # Ретрай Telegram после починки хендлера проходит как новый апдейт.
+    monkeypatch.undo()
+    resp = patched_client.post(
+        f"/tg/{_TEST_SECRET}",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": _TEST_SECRET},
+    )
+    assert resp.status_code == 200
+    rows = (
+        await session.exec(select(TelegramUpdate).where(TelegramUpdate.update_id == 31337))
+    ).all()
+    assert len(rows) == 1

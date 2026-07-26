@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.ai.time_resolver import resolve_time
+import pytest
+
+from app.ai.time_resolver import parse_user_datetime, resolve_time
 
 _TZ = "Europe/Moscow"
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
@@ -215,3 +217,132 @@ def test_weekday_on_same_weekday_still_rolls_forward() -> None:
     assert result.resolved_dt is not None
     delta_days = (result.resolved_dt.date() - now_tue.date()).days
     assert delta_days == 7, f"expected next Tuesday (+7d), got +{delta_days}d"
+
+
+# ── Аудит 2026-07-26: таймзонный кадр, «послезавтра», составные фразы ──
+#
+# _NOW = 12:00 МСК (09:00 UTC). Старый баг: для time-only «в HH:MM»
+# dateparser сравнивал «прошлое/будущее» в кадре, сдвинутом на UTC-офсет,
+# и «в 14:00» (будущее!) уезжало на завтра.
+
+
+@pytest.mark.parametrize(
+    "tz",
+    ["Europe/Moscow", "Asia/Novosibirsk", "America/New_York"],
+)
+def test_time_only_future_stays_today(tz: str) -> None:
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(tz))
+    result = resolve_time("в 14:00 звонок", tz, now=now)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.date() == now.date()
+    assert result.resolved_dt.hour == 14
+
+
+@pytest.mark.parametrize(
+    "tz",
+    ["Europe/Moscow", "Asia/Novosibirsk", "America/New_York"],
+)
+def test_time_only_past_moves_to_tomorrow(tz: str) -> None:
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(tz))
+    result = resolve_time("в 10:00 звонок", tz, now=now)
+    assert result is not None and result.resolved_dt is not None
+    assert (result.resolved_dt.date() - now.date()).days == 1
+    assert result.resolved_dt.hour == 10
+
+
+def test_poslezavtra_is_two_days_ahead() -> None:
+    # Раньше «послезавтра» матчился паттерном «завтра» → на день раньше.
+    result = resolve_time("послезавтра сдать отчёт", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert (result.resolved_dt.date() - _NOW.date()).days == 2
+
+
+def test_poslezavtra_with_time() -> None:
+    result = resolve_time("послезавтра в 10:00 сдать отчёт", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert (result.resolved_dt.date() - _NOW.date()).days == 2
+    assert result.resolved_dt.hour == 10
+
+
+def test_weekday_with_time_keeps_weekday() -> None:
+    # Раньше «в 15:00» перебивал «в пятницу» — задача падала на завтра.
+    # 2026-05-08 — пятница; «в пятницу в 15:00» при 12:00 МСК → сегодня 15:00
+    # (время ещё впереди) ЛИБО следующая пятница — главное, что ПЯТНИЦА.
+    result = resolve_time("в пятницу в 15:00 отчёт", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.weekday() == 4  # пятница
+    assert result.resolved_dt.hour == 15
+
+
+def test_zavtra_bare_hour() -> None:
+    # «завтра в 19» (без :00) раньше терял время суток.
+    result = resolve_time("завтра в 19 тренировка", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert (result.resolved_dt.date() - _NOW.date()).days == 1
+    assert result.resolved_dt.hour == 19
+
+
+def test_cherez_dva_dnya_s_vremenem() -> None:
+    # «через 2 дня в 18:00» раньше терял «в 18:00».
+    result = resolve_time("через 2 дня в 18:00 встреча", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert (result.resolved_dt.date() - _NOW.date()).days == 2
+    assert result.resolved_dt.hour == 18
+
+
+def test_sleduyushchaya_pyatnitsa_resolves() -> None:
+    # Раньше «следующ*» → "next" — dateparser отдавал None.
+    result = resolve_time("в следующую пятницу созвон", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.weekday() == 4
+
+
+def test_do_pyatnitsy_resolves() -> None:
+    # «до пятницы» раньше извлекался, но парсился в None.
+    result = resolve_time("сделать до пятницы", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.weekday() == 4
+
+
+def test_do_kontsa_nedeli() -> None:
+    result = resolve_time("закрыть до конца недели", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.weekday() == 6  # воскресенье
+    assert result.resolved_dt.hour == 23
+
+
+def test_do_kontsa_mesyatsa() -> None:
+    result = resolve_time("оплатить до конца месяца", _TZ, now=_NOW)
+    assert result is not None and result.resolved_dt is not None
+    assert result.resolved_dt.month == _NOW.month
+    assert result.resolved_dt.day == 31  # май
+    assert result.resolved_dt.hour == 23
+
+
+def test_v_tri_raza_not_a_deadline() -> None:
+    # «увеличить продажи в 3 раза» раньше получало дедлайн 03:00.
+    result = resolve_time("увеличить продажи в 3 раза", _TZ, now=_NOW)
+    assert result is None
+
+
+def test_parse_user_datetime_uses_user_tz() -> None:
+    # Хелпер для edit-веток: «завтра в 10» = 10:00 в зоне ЮЗЕРА.
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
+    parsed = parse_user_datetime("завтра в 10", _TZ, now=now)
+    assert parsed is not None
+    assert parsed.tzinfo is not None
+    assert parsed.hour == 10
+    assert (parsed.date() - now.date()).days == 1
+    # В naive-UTC это 07:00 (МСК = UTC+3) — раньше сохранялось 10:00 UTC.
+    from app.shared.time import to_naive_utc
+
+    assert to_naive_utc(parsed).hour == 7
+
+
+@pytest.mark.parametrize("raw", ["на 15:00", "в 15:00", "15:00"])
+def test_parse_user_datetime_time_only_today(raw: str) -> None:
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
+    parsed = parse_user_datetime(raw, _TZ, now=now)
+    assert parsed is not None
+    assert parsed.date() == now.date()
+    assert parsed.hour == 15

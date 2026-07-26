@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import respx
 
 from app.ai.critic import apply_verdict, critique_classification, should_run_critic
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, CriticVerdict, FieldCheck
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
@@ -34,27 +33,9 @@ def _cr(
     )
 
 
-def _groq_json(result: dict[str, object]) -> dict[str, object]:
-    body = json.dumps(result)
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "qwen-qwq-32b",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": body},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 300, "completion_tokens": 80, "total_tokens": 380},
-    }
-
-
 def _mock_critic(result: dict[str, object]) -> None:
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=respx.MockResponse(200, json=_groq_json(result)),
+        return_value=respx.MockResponse(200, json=groq_tool_response("CriticVerdict", result)),
     )
 
 

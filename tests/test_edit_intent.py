@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import respx
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -26,33 +24,15 @@ from app.bot.services import (
     persist_classification,
 )
 from app.db.models import Task
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
-
-
-def _groq_json(payload: dict[str, object]) -> dict[str, object]:
-    """Build a fake Groq chat completion response."""
-    body = json.dumps(payload)
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": body},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
-    }
 
 
 def _mock_intent(intent: str, **kwargs: object) -> None:
     payload: dict[str, object] = {"intent": intent, "confidence": 0.95, **kwargs}
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=respx.MockResponse(200, json=_groq_json(payload)),
+        return_value=respx.MockResponse(200, json=groq_tool_response("EditIntent", payload)),
     )
 
 

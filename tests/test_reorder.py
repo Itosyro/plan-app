@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import respx
 from sqlmodel import select
@@ -19,27 +17,9 @@ from app.bot.services import (
     update_task_horizon,
 )
 from app.db.models import Horizon, Task, TaskEvent
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
-
-
-def _groq_json(payload: dict[str, object]) -> dict[str, object]:
-    """Build a fake Groq chat completion response."""
-    body = json.dumps(payload)
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": body},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
-    }
 
 
 def _mock_reorder(
@@ -55,7 +35,7 @@ def _mock_reorder(
         "target_raw": target_raw,
     }
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=respx.MockResponse(200, json=_groq_json(payload)),
+        return_value=respx.MockResponse(200, json=groq_tool_response("ReorderRequest", payload)),
     )
 
 
