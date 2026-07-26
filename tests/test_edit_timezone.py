@@ -9,7 +9,8 @@ UTC-сервере «завтра в 10» для москвича сохраня
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlmodel import select
@@ -82,10 +83,20 @@ async def test_set_reminder_fires_at_user_local_time(session: AsyncSession) -> N
             select(Reminder).where(Reminder.task_id == task_id, Reminder.status == "pending")
         )
     ).one()
+    # «Завтра» отсчитывается от ЛОКАЛЬНОЙ даты пользователя, поэтому и
+    # ожидание строим в его зоне, а потом переводим в naive-UTC. Считать
+    # «завтра» по UTC нельзя: между 21:00 и 24:00 UTC в Москве уже
+    # следующие сутки, и тест падал бы каждый вечер — ровно тот сдвиг
+    # суток, против которого написан сам фикс.
+    msk = ZoneInfo("Europe/Moscow")
+    tomorrow_local = (datetime.now(msk) + timedelta(days=1)).date()
+    expected = (
+        datetime.combine(tomorrow_local, time(9, 0), tzinfo=msk)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
     # 09:00 МСК = 06:00 UTC; старый код поставил бы 09:00 UTC (12:00 МСК).
-    assert reminder.fire_at.hour == 6
-    tomorrow_utc = (datetime.now(UTC) + timedelta(days=1)).date()
-    assert reminder.fire_at.date() == tomorrow_utc
+    assert reminder.fire_at == expected
 
 
 @pytest.mark.asyncio
