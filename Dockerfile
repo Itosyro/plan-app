@@ -1,8 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
 # ── Stage 1: build the Mini-App static bundle ───────────────────────
-# We pin Node 20 LTS which matches Vite 5's supported runtime.
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend # 20-alpine
+# Node 20 LTS (digest-pinned), matching Vite 5's supported runtime.
+#
+# NB: никаких хвостовых комментариев после ``FROM ... AS name`` —
+# Docker считает их аргументами и падает с «FROM requires either one or
+# three arguments». Раньше здесь стоял ``# 20-alpine``, из-за чего образ
+# не собирался вообще; это не замечали, потому что управляемый деплой
+# (Render) собирает не из Dockerfile, а своим python-билдером.
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend
 
 WORKDIR /webapp
 
