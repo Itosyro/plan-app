@@ -33,6 +33,26 @@ class Settings(BaseSettings):
     webhook_base_url: str | None = None
     database_url: str | None = None
 
+    # Как бот получает апдейты от Telegram.
+    #
+    # ``webhook`` — Telegram сам стучится в наш публичный HTTPS-URL.
+    #   Быстрее и дешевле, но требует домен + TLS + открытый порт.
+    #   Так работает управляемый деплой (Render).
+    # ``polling`` — бот сам опрашивает Telegram исходящими запросами.
+    #   Ни домена, ни TLS, ни открытых портов: достаточно, чтобы у
+    #   машины был интернет. Это режим self-hosting'а на своём VPS
+    #   («закинул docker compose up и работает»).
+    #
+    # Дефолт ``webhook`` — чтобы существующий прод не сменил поведение
+    # молча при обновлении.
+    bot_mode: Literal["webhook", "polling"] = "webhook"
+
+    # Прогонять ли ``alembic upgrade head`` на старте приложения.
+    # Для self-hosting'а это разница между «работает сразу» и «сначала
+    # выполни миграции руками». На управляемом деплое миграции гоняет
+    # отдельная команда, поэтому дефолт — выключено.
+    auto_migrate: bool = False
+
     # Phase 2 — Groq
     groq_api_keys: str | None = Field(
         default=None,

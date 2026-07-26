@@ -19,7 +19,7 @@ Phase 5 wiring:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
@@ -41,6 +41,7 @@ from app.bot import build_dispatcher
 from app.bot.services import claim_update
 from app.bot.services.inbox import release_update
 from app.db.base import dispose_engine, init_engine, session_scope
+from app.db.migrate import run_migrations
 from app.db.models import User
 from app.shared.config import Settings, get_settings
 from app.shared.logging import configure_logging, get_logger
@@ -121,10 +122,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         scheduler_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
         keepalive_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
+        polling_task: asyncio.Task[None] | None = None
         if settings.database_url:
             init_engine(settings.database_url)
             logger.info("db.engine.init")
-        if bot is not None and settings.webhook_url:
+            if settings.auto_migrate:
+                # Self-hosting: схема доводится до head прямо на старте,
+                # чтобы «docker compose up» был единственной командой.
+                # ``run_in_executor`` — alembic синхронный, а мы внутри
+                # работающего event loop'а.
+                await asyncio.get_running_loop().run_in_executor(
+                    None, run_migrations, settings.database_url
+                )
+                logger.info("db.migrations.applied")
+        if bot is not None and settings.bot_mode == "polling":
+            # Polling: никакого публичного URL не нужно — бот сам ходит
+            # в Telegram исходящими запросами. Webhook обязательно
+            # снимаем: пока он зарегистрирован, Telegram отвечает на
+            # getUpdates ошибкой 409 и бот молча не получает сообщений.
+            await bot.delete_webhook(drop_pending_updates=True)
+            polling_task = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
+            logger.info("bot.polling.start")
+            if settings.miniapp_url:
+                try:
+                    await bot.set_chat_menu_button(
+                        menu_button=MenuButtonWebApp(
+                            text="Открыть план",
+                            web_app=WebAppInfo(url=settings.miniapp_url),
+                        ),
+                    )
+                    logger.info("bot.menu.miniapp", url=settings.miniapp_url)
+                except Exception:
+                    logger.exception("bot.menu.miniapp_failed")
+        elif bot is not None and settings.webhook_url:
             await bot.set_webhook(
                 url=settings.webhook_url,
                 secret_token=settings.telegram_webhook_secret,
@@ -183,6 +213,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            if polling_task is not None:
+                await dp.stop_polling()
+                polling_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await polling_task
             if keepalive_handle is not None:
                 ka_task, ka_stop = keepalive_handle
                 await stop_keepalive(ka_task, ka_stop)

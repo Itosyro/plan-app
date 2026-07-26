@@ -1,0 +1,54 @@
+# Self-hosted plan-app: один контейнер, никаких внешних сервисов.
+#
+#   docker compose up -d
+#
+# Что внутри и почему именно так:
+#   • BOT_MODE=polling — бот сам ходит в Telegram исходящими запросами.
+#     Не нужен ни домен, ни TLS-сертификат, ни проброс портов наружу.
+#   • SQLite-файл в ./data — не нужен ни Postgres-контейнер, ни облачная
+#     база. Для одного пользователя это ровно то, что надо.
+#   • AUTO_MIGRATE=true — схема БД доводится до актуальной на старте.
+#
+# Порт 8000 публикуется ТОЛЬКО на localhost (127.0.0.1): наружу торчать
+# нечему, а с самой машины можно проверить `curl localhost:8000/healthz`.
+
+services:
+  app:
+    # Готовый образ собирается в GitHub Actions при каждом пуше в main.
+    # На сервере он просто скачивается — это важно: локальная сборка
+    # тянет node_modules и компиляторы, которым нужно несколько ГБ.
+    image: ghcr.io/itosyro/plan-app:latest
+    # Чтобы собрать на месте (нужно ≥4 ГБ свободного диска):
+    #   docker compose build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plan-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENV: production
+      BOT_MODE: polling
+      AUTO_MIGRATE: "true"
+      DATABASE_URL: sqlite+aiosqlite:////app/data/plan.db
+      # Keep-alive нужен только против засыпания бесплатного Render.
+      # На своей машине это лишние запросы.
+      KEEPALIVE_ENABLED: "false"
+    volumes:
+      # Единственное, что переживает пересоздание контейнера: база.
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    logging:
+      # Без лимита docker-логи растут бесконечно и однажды забивают
+      # диск — на машине с парой свободных гигабайт это вопрос времени.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

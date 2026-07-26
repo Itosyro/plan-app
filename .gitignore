@@ -39,6 +39,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!.env.server.example
 credentials.json
 *.pem
 *.key
@@ -54,6 +55,8 @@ memory/*
 *.db-journal
 *.sqlite
 *.sqlite3
+# Self-hosted SQLite volume (docker-compose bind mount).
+data/
 
 # --- Logs ---
 *.log
