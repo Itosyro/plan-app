@@ -96,7 +96,11 @@ export function BottomSheet({ open, onClose, title, hint, children, footer }: Pr
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     focusable?.focus();
-  }, [open]);
+    // ``mounted`` is in the deps on purpose: on the first render after
+    // ``open`` flips the presence gate below still returns null, so the
+    // sheet node doesn't exist yet. The mount pass re-runs this effect
+    // once the DOM is there.
+  }, [open, mounted]);
 
   if (!mounted) return null;
 

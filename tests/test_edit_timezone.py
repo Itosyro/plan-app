@@ -21,7 +21,7 @@ from app.bot.edit_executor import (
     _execute_set_reminder,
 )
 from app.bot.services import get_or_create_user, persist_classification
-from app.db.models import Reminder, Task
+from app.db.models import Reminder, Task, UserSettings
 
 
 def _cr(title: str = "Позвонить маме") -> ClassifierResult:
@@ -86,3 +86,43 @@ async def test_set_reminder_fires_at_user_local_time(session: AsyncSession) -> N
     assert reminder.fire_at.hour == 6
     tomorrow_utc = (datetime.now(UTC) + timedelta(days=1)).date()
     assert reminder.fire_at.date() == tomorrow_utc
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_uses_user_evening_anchor(session: AsyncSession) -> None:
+    """«напомни вечером» must respect ``UserSettings.evening_anchor``.
+
+    M-6 сделал якоря утра/вечера настраиваемыми, но только на surface
+    первичного разбора (``resolve_time``). Голосовая правка шла через
+    ``parse_user_datetime``, который якоря игнорировал, — юзер с
+    evening_anchor="21:00" получал дефолтные 19:00.
+    """
+    user_id, task_id = await _seed_msk_user_with_task(session)
+    session.add(UserSettings(user_id=user_id, evening_anchor="21:00"))
+    await session.commit()
+
+    intent = EditIntent(
+        intent="set_reminder", task_query="маме", new_due_raw="вечером", confidence=0.9
+    )
+    reply, _snap = await _execute_set_reminder(task_id, user_id, intent)
+    assert "21:00" in reply
+
+    reminder = (
+        await session.exec(
+            select(Reminder).where(Reminder.task_id == task_id, Reminder.status == "pending")
+        )
+    ).one()
+    # 21:00 МСК = 18:00 UTC (naive-UTC в БД).
+    assert reminder.fire_at.hour == 18
+
+
+@pytest.mark.asyncio
+async def test_set_due_falls_back_to_default_anchor_without_settings(
+    session: AsyncSession,
+) -> None:
+    """Без строки ``UserSettings`` якоря остаются дефолтными (19:00)."""
+    user_id, task_id = await _seed_msk_user_with_task(session)
+
+    intent = EditIntent(intent="set_due", task_query="маме", new_due_raw="вечером", confidence=0.9)
+    reply, _snap = await _execute_set_due(task_id, user_id, intent)
+    assert "19:00" in reply

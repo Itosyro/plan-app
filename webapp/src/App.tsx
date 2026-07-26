@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { CloudOff, Sparkles } from "lucide-react";
+import { CloudOff, ListFilter, Sparkles } from "lucide-react";
 import { ApiError, apiClient } from "./api/client";
 import { BottomNav, type NavTab } from "./components/BottomNav";
 import { CalendarView, CAL_CACHE_PREFIX, CALDAY_PREFIX } from "./components/CalendarView";
@@ -434,6 +434,11 @@ export default function App() {
       StorageKeys.layoutPrefs,
       serializeLayoutPrefs(DEFAULT_LAYOUT_PREFS),
     );
+    // «Показывать выполненные» хранится отдельным ключом, но для юзера
+    // это такой же фильтр — «Сбросить» обязан снимать и его, иначе
+    // кнопка нажимается, а список остаётся пустым.
+    setShowCompleted(true);
+    void storageSet(StorageKeys.showCompleted, "1");
   }, []);
 
   const handleDone = useCallback(
@@ -558,7 +563,7 @@ export default function App() {
     [tasksCacheKey, refetchTasks, refreshCategories],
   );
 
-  // "+ Раздел" on the board creates a category = new column.
+  // "+ Категория" on the board creates a category = new column.
   const handleCreateCategoryColumn = useCallback(
     async (name: string) => {
       await apiClient.createCategory(name);
@@ -836,7 +841,11 @@ export default function App() {
         >
           <Suspense fallback={<ScreenFallback />}>
             {route.path === "/completed" ? (
-              <CompletedPage tz={tz} onMutated={handleArchiveMutated} />
+              <CompletedPage
+                tz={tz}
+                onMutated={handleArchiveMutated}
+                onOpen={handleOpenTask}
+              />
             ) : (
               <TrashPage onMutated={handleArchiveMutated} />
             )}
@@ -909,6 +918,13 @@ export default function App() {
     horizonLabels,
   );
   const hasVisibleTasks = taskGroups.some((g) => g.tasks.length > 0);
+  // Фильтры «Раскладки» опустошают список молча, и «Ничего на горизонте»
+  // начинает врать: задачи есть, юзер сам их скрыл и об этом не помнит.
+  const filtersActive =
+    layoutPrefs.filterPriority !== "all" ||
+    layoutPrefs.filterDue !== "all" ||
+    !showCompleted;
+  const emptyByFilters = !hasVisibleTasks && filtersActive && tasks.length > 0;
 
   return (
     <DndContext
@@ -943,6 +959,8 @@ export default function App() {
           filterLabel={activeFilterLabel}
           onOpenFilter={() => setShowCategorySheet(true)}
           onOpenLayout={() => setShowLayoutSheet(true)}
+          // Фильтры применяются только к списку — на доске подсветка врала бы.
+          layoutActive={tasksView === "list" && filtersActive}
           onOpenSearch={
             activeTab === "tasks"
               ? () => {
@@ -1004,6 +1022,25 @@ export default function App() {
                       className="ease-apple mt-3 min-h-11 rounded-2xl bg-tg-button px-6 py-2.5 text-[14px] font-semibold text-tg-button-text transition-all duration-200 active:scale-[0.97]"
                     >
                       Повторить
+                    </button>
+                  </div>
+                ) : emptyByFilters ? (
+                  <div className="flex flex-col items-center">
+                    <EmptyState
+                      icon={ListFilter}
+                      tone="amber"
+                      title="Здесь пусто из-за фильтров"
+                      hint="Задачи на этом горизонте есть — их скрывает «Раскладка»."
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        haptic("select");
+                        handleResetLayoutPrefs();
+                      }}
+                      className="ease-apple mt-3 min-h-11 rounded-2xl bg-tg-button px-6 py-2.5 text-[14px] font-semibold text-tg-button-text transition-all duration-200 active:scale-[0.97]"
+                    >
+                      Сбросить фильтры
                     </button>
                   </div>
                 ) : !hasVisibleTasks ? (
@@ -1121,6 +1158,7 @@ export default function App() {
         <Suspense fallback={null}>
           <SearchOverlay
             tz={tz}
+            horizonLabels={horizonLabels}
             onClose={() => setShowSearch(false)}
             onOpen={handleOpenTask}
           />

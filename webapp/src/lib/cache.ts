@@ -105,6 +105,11 @@ export function mutateCache<T>(
     }
     return;
   }
+  // No entry to patch: don't invent one. ``updater(undefined)`` would
+  // yield an empty list, cache it under a live key and make every
+  // mounted hook repaint an empty screen over its visible data. Same
+  // skip rule as the prefix branch above.
+  if (!store.has(key)) return;
   const next = updater(store.get(key) as T | undefined);
   store.set(key, next);
   exactListeners.get(key)?.forEach((fn) => fn("mutate"));

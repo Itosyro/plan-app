@@ -34,15 +34,25 @@
             ▼
        Supabase PostgreSQL
 
+   внутри того же web service:
    ┌──────────────────────────────────────┐
-   │    cron worker (Render, every 1 min) │
-   │  - dispatch due reminders            │
-   │  - send morning/evening digests      │
-   │  - retry failed AI runs              │
+   │  scheduler loop (in-process, 60 сек) │
+   │  app/workers/runner.py               │
+   │  - tick_reminders  — рассылка due    │
+   │  - tick_digests    — утро/вечер      │
    └──────────────────────────────────────┘
 ```
 
-Один web service содержит всё: webhook бота, REST API для mini-app, и саму mini-app (как статика). Cron worker — отдельный процесс, бьёт раз в минуту.
+Один web service содержит всё: webhook бота, REST API для mini-app, саму
+mini-app (как статика) **и планировщик**. Отдельного cron worker'а нет —
+Render Free его не поддерживает, поэтому тики крутятся в том же процессе
+фоновой asyncio-задачей (`app/workers/runner.py`), а внешний пингер держит
+free-dyno живым. Подробности и путь к настоящему cron'у — в
+[RENDER.md](RENDER.md).
+
+Третья задача, `purge_trash` (чистка корзины), живёт в standalone-энтрипоинте
+`python -m app.workers.scheduler` — он написан под будущий настоящий cron
+и на free-плане не запускается.
 
 ---
 
@@ -195,8 +205,11 @@ threshold`, то после персиста помечаем исходную �
 ### 2.7. Onboarding
 
 При первом `/start` (нет записи в `users` для этого telegram_id) бот ведёт визард:
-1. «Привет, как тебя зовут?» → `users.display_name`.
-2. «Какой у тебя часовой пояс?» (`/timezone Europe/Moscow` или авто по геолокации Telegram) → `users.tz`.
+1. Сначала часовой пояс: инлайн-клавиатура с популярными зонами
+   (Москва / Минск / Киев / Алма-Ата / Ташкент / …, `app/bot/onboarding.py`),
+   плюс кнопка «Указать другой ✏️» — она переводит визард в текстовый ввод
+   IANA-строки → `users.tz`.
+2. Потом имя: «как тебя зовут?» → `users.display_name`.
 3. Показывает дефолты:
    - утренний дайджест **08:00**, вечерний **21:00**;
    - напоминания за 1 час + 15 минут (для задач сегодня) и за 1 день + 1 час (для задач на N дней вперёд);
@@ -238,23 +251,30 @@ PostgreSQL, одна база, multi-tenant (`user_id` на каждой зап�
 |---|---|
 | `users` | id, telegram_id, display_name, lang_code, tz, onboarded_at, created_at |
 | `user_settings` | user_id, critic_mode (`off`/`confidence`/`paranoid`, default `confidence`), critic_confidence_threshold (default 0.7), default_reminder_offsets (JSON: `{same_day:[60,15], multi_day:[1440,60]}`), morning_digest_at (default `08:00`), evening_digest_at (default `21:00`), response_style_source (`template_only`/`llm_only`/`mix`, default `mix`), week_due_semantic (`deadline_sunday`/`label_no_due`, default `deadline_sunday`) |
-| `categories` | id, user_id, name, slug, prompt_hint, color, is_archived |
-| `horizons` | id, user_id, slug (today/tomorrow/week/month/year/someday/custom), label, ordinal |
-| `tasks` | id, user_id, category_id, horizon_id, title, description, priority, due_at, status, source_inbox_id, needs_clarification |
-| `notes` | id, user_id, category_id, title, body, source_inbox_id |
-| `reminders` | id, user_id, task_id (nullable), note_id (nullable), fire_at, status, sent_at, kind (custom/default) |
-| `inbox_entries` | id, user_id, kind (text/voice), raw_text, transcript, telegram_message_id, needs_review, received_at |
-| `ai_runs` | id, user_id, inbox_id, stage (split/classify/critic), model, key_index, latency_ms, tokens, status, error |
+| `categories` | id, user_id, name, created_at (уникальность по `user_id + name`) |
+| `horizons` | id, user_id, slug (today/tomorrow/week/month/year/someday/custom), label, created_at (уникальность по `user_id + slug`) |
+| `tasks` | id, user_id, parent_id (self-FK, `ON DELETE CASCADE` — подзадачи), category_id, horizon_id, title, title_original, description, priority, due_at, status, source_inbox_id, confidence, created_at, completed_at, deleted_at |
+| `notes` | id, user_id, category_id, title, body, source_inbox_id, created_at, deleted_at |
+| `boards` | id, user_id (`ON DELETE CASCADE`), name, scene_json (JSON — сцена Excalidraw), created_at, updated_at, deleted_at |
+| `reminders` | id, user_id, task_id (**NOT NULL**, `ON DELETE CASCADE`), fire_at, status (pending/sent/failed), attempts, last_error, sent_at, created_at |
+| `inbox_entries` | id, user_id, kind (text/voice/command), raw_text, transcript, telegram_message_id, needs_review, received_at |
+| `ai_runs` | id, user_id, inbox_id, stage, model, key_index, latency_ms, tokens, status, error, created_at |
 | `telegram_updates` | update_id PK, user_id, kind, processed_at |
-| `task_events` | id, task_id, kind (created/updated/done/snoozed/deleted), payload_json, created_at |
-| `processing_jobs` | id, user_id, kind, payload, run_at, status, attempts |
+| `task_events` | id, task_id (`ON DELETE CASCADE`), kind (created/updated/done/snoozed/deleted), payload_json, created_at |
+| `task_edit_snapshots` | id, task_id (`ON DELETE CASCADE`), user_id (`ON DELETE CASCADE`), field, old_value, new_value, created_at — снапшот одного поля для `[Отменить]`, lazy-TTL 5 минут |
+
+Всего 13 таблиц; источник правды — `app/db/models.py`.
 
 ### 5.2. Связи
 
 - `tasks.user_id` → `users.id`, `tasks.category_id` → `categories.id`, `tasks.horizon_id` → `horizons.id`.
+- `tasks.parent_id` → `tasks.id` (self-FK, опц., CASCADE) — подзадачи.
 - `notes.user_id` → `users.id`, `notes.category_id` → `categories.id`.
-- `reminders.task_id` → `tasks.id` (опц), `reminders.note_id` → `notes.id` (опц).
-- `task_events.task_id` → `tasks.id`.
+- `reminders.task_id` → `tasks.id` (обязательная, CASCADE) — напоминание всегда
+  привязано к задаче; связи с `notes` нет.
+- `task_events.task_id` → `tasks.id` (CASCADE).
+- `task_edit_snapshots.task_id` → `tasks.id`, `.user_id` → `users.id` (обе CASCADE).
+- `boards.user_id` → `users.id` (CASCADE).
 
 ### 5.3. Миграции
 

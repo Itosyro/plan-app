@@ -21,6 +21,9 @@ interface Props {
   /** Called after a successful reopen so App.tsx can invalidate the
    *  list/board/calendar caches and reconcile the horizon badges. */
   onMutated?: () => void;
+  /** Open a completed task's detail screen (подзадачи, описание —
+   *  всё это должно оставаться доступным после выполнения). */
+  onOpen?: (id: number) => void;
 }
 
 // Human day heading from a YYYY-MM-DD key, relative to today/yesterday.
@@ -38,7 +41,7 @@ function dayHeading(key: string, tz: string): string {
   });
 }
 
-export function CompletedPage({ tz, onMutated }: Props) {
+export function CompletedPage({ tz, onMutated, onOpen }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<number | null>(null);
@@ -131,7 +134,13 @@ export function CompletedPage({ tz, onMutated }: Props) {
                   key={task.id}
                   className="flex min-h-[56px] items-center justify-between gap-3 px-4 py-3"
                 >
-                  <div className="flex min-w-0 flex-col gap-0.5">
+                  <button
+                    type="button"
+                    disabled={onOpen === undefined}
+                    onClick={() => onOpen?.(task.id)}
+                    aria-label={`Открыть «${task.title}»`}
+                    className="ease-apple -m-1 flex min-w-0 flex-1 flex-col gap-0.5 rounded-xl p-1 text-left transition-transform duration-150 active:scale-[0.99]"
+                  >
                     <span className="truncate text-[15px] text-tg-hint line-through">
                       {task.title}
                     </span>
@@ -140,7 +149,7 @@ export function CompletedPage({ tz, onMutated }: Props) {
                         {task.category_name}
                       </span>
                     )}
-                  </div>
+                  </button>
                   <button
                     disabled={pending === task.id}
                     onClick={() => reopen(task)}

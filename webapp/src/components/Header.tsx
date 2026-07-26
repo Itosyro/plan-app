@@ -29,6 +29,9 @@ interface Props {
   createLabel?: string;
   /** Open the «Раскладка» layout sheet (view + show-completed). */
   onOpenLayout?: () => void;
+  /** Хотя бы один фильтр «Раскладки» включён — подсвечиваем кнопку так
+   *  же, как чип категории, иначе спрятанные задачи выглядят пропавшими. */
+  layoutActive?: boolean;
   /** Open the task search overlay. */
   onOpenSearch?: () => void;
   /** Navigate to the Boards (Excalidraw) section — shown in the Notes tab header. */
@@ -50,6 +53,7 @@ export function Header({
   onCreate,
   createLabel,
   onOpenLayout,
+  layoutActive = false,
   onOpenSearch,
   onOpenBoards,
 }: Props) {
@@ -99,8 +103,13 @@ export function Header({
           <button
             type="button"
             onClick={onOpenLayout}
-            aria-label="Раскладка"
-            className="ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl bg-bento-card px-3 text-tg-text/70 ring-1 ring-black/5 transition-all duration-200 hover:text-tg-text active:scale-[0.96]"
+            aria-label={layoutActive ? "Раскладка — фильтры включены" : "Раскладка"}
+            className={
+              "ease-apple inline-flex h-10 shrink-0 items-center justify-center rounded-2xl px-3 transition-all duration-200 active:scale-[0.96] " +
+              (layoutActive
+                ? "bg-tg-button/10 text-tg-button ring-1 ring-tg-button/20"
+                : "bg-bento-card text-tg-text/70 ring-1 ring-black/5 hover:text-tg-text")
+            }
           >
             <SlidersHorizontal size={16} strokeWidth={2.25} aria-hidden />
           </button>

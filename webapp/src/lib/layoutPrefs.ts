@@ -196,7 +196,7 @@ export function groupTasks(
   for (const t of tasks) {
     if (groupBy === "category") {
       const key = t.category_id === null ? "__none__" : `c${t.category_id}`;
-      const label = t.category_name ?? "Без раздела";
+      const label = t.category_name ?? "Без категории";
       push(key, label, t);
     } else if (groupBy === "priority") {
       const key = t.priority;

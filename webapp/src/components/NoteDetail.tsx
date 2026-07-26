@@ -8,7 +8,7 @@
 // but with fewer rows — notes have no date/horizon/priority, only
 // optional category.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Tag, Trash2, type LucideIcon } from "lucide-react";
 import { ApiError, apiClient } from "../api/client";
 import { haptic } from "../lib/telegram";
@@ -54,6 +54,13 @@ export function NoteDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isCreate = mode.kind === "create";
+  // Создание идёт из двух мест — blur поля «Название» и кнопка «Назад»,
+  // а blur срабатывает раньше клика. Без флага один и тот же черновик
+  // ушёл бы на сервер дважды.
+  const creatingRef = useRef(false);
+  // Пользователь мог уйти «Назад», пока летел POST — тогда не тащим его
+  // обратно в деталь только что созданной заметки.
+  const closedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (mode.kind !== "view") return;
@@ -86,6 +93,8 @@ export function NoteDetail({
 
   const createNote = useCallback(
     async (title: string): Promise<Note | null> => {
+      if (creatingRef.current) return null;
+      creatingRef.current = true;
       setPending("title");
       setSaveError(null);
       try {
@@ -97,9 +106,10 @@ export function NoteDetail({
         setNote(fresh);
         haptic("success");
         onMutated();
-        navigate(`/note/${fresh.id}`);
+        if (!closedRef.current) navigate(`/note/${fresh.id}`);
         return fresh;
       } catch (err) {
+        creatingRef.current = false;
         haptic("error");
         setSaveError(
           err instanceof ApiError && err.status === 422
@@ -160,6 +170,19 @@ export function NoteDetail({
     }
   }, [note, onMutated, onDeleted, onOptimisticDelete]);
 
+  // «Назад» из новой заметки. Раньше набранный текст без названия просто
+  // исчезал: create отправлялся только на blur непустого «Названия».
+  // Теперь заголовок при необходимости берём из первой строки текста —
+  // это меньше трения, чем диалог «сохранить / выйти».
+  const handleBack = useCallback(() => {
+    closedRef.current = true;
+    if (note === null) {
+      const title = titleDraft.trim() || firstLine(bodyDraft);
+      if (title) void createNote(title);
+    }
+    onClose();
+  }, [note, titleDraft, bodyDraft, createNote, onClose]);
+
   const categoryId = note?.category_id ?? draftCategoryId;
   const categoryLabel = useMemo(() => {
     if (categoryId === null || categoryId === undefined) return "Без категории";
@@ -178,7 +201,7 @@ export function NoteDetail({
       <header className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-bento/90 px-4 py-2 backdrop-blur-xl">
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleBack}
           aria-label="Назад"
           className="ease-apple inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-tg-text transition-all duration-200 active:scale-[0.95] hover:bg-bento-card"
         >
@@ -329,6 +352,13 @@ export function NoteDetail({
 
 // ── helpers ────────────────────────────────────────────────────────
 
+// Автозаголовок для заметки, у которой заполнен только текст: первая
+// непустая строка, обрезанная до вменяемой длины (поле держит 256).
+function firstLine(text: string): string {
+  const line = text.trim().split("\n")[0].trim();
+  return line.length > 120 ? line.slice(0, 119).trimEnd() + "…" : line;
+}
+
 interface RowProps {
   icon: LucideIcon;
   tone: TileTone;
@@ -404,6 +434,11 @@ function ConfirmDeleteSheet({ open, onCancel, onConfirm, pending, title }: Confi
         </h3>
         <p className="mt-1 line-clamp-2 text-center text-[13px] text-tg-hint">
           «{title}»
+        </p>
+        {/* Удаление обратимо (scheduler чистит корзину через 24 ч) —
+            говорим об этом ровно там, где страшно нажимать. */}
+        <p className="mt-2 text-center text-[12px] leading-snug text-tg-hint/80">
+          Можно вернуть из Корзины в течение 24 часов.
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <button

@@ -21,6 +21,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -440,11 +441,14 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
     minute (or even the same wall-clock second) can never double-send.
     See ``docs/REVIEW-2026-05-09.md::C-3``.
 
-    Each gate is flipped only *after* a successful send and committed
-    per-user (same discipline as the per-row commit in
-    ``tick_reminders``): a failed send leaves the gate unset so the
-    catch-up fires on the next tick, and a SIGTERM mid-batch can't roll
-    back gates of digests already delivered (→ no duplicates).
+    Each gate is committed per-user (same discipline as the per-row
+    commit in ``tick_reminders``), so a SIGTERM mid-batch can't roll
+    back gates of digests already delivered (→ no duplicates). A
+    *temporary* failure (RetryAfter / network / 5xx) leaves the gate
+    unset so the catch-up fires on the next tick; a *permanent* one
+    (bot blocked, chat gone → Forbidden / BadRequest) still sets the
+    gate — there is nobody to deliver to and retrying every minute for
+    the rest of the day is pure noise.
 
     Returns a counter dict (``morning``, ``evening``, ``errors``).
     """
@@ -498,37 +502,52 @@ async def tick_digests(bot: Bot, *, now: datetime | None = None) -> dict[str, in
                     # fails (e.g. group chat where bot isn't admin).
                     from app.bot.pinned_today import send_and_pin_morning_digest
 
-                    # Гейт выставляем до вызова только потому, что
+                    # Гейт выставляем до вызова, потому что
                     # ``send_and_pin_morning_digest`` читает его как дату
-                    # пина; при неуспехе (``None`` или исключение)
-                    # значение откатывается ДО коммита — семантически
-                    # гейт ставится после успешной отправки, и следующий
-                    # тик доотправит потерянный дайджест (catch-up).
+                    # пина. Откатываем только на ВРЕМЕННОЙ ошибке
+                    # (RetryAfter / сеть / 5xx — они прилетают исключением),
+                    # чтобы следующий тик доотправил дайджест (catch-up).
                     prev_morning_on = settings.last_morning_digest_on
                     settings.last_morning_digest_on = local_date
-                    message_id: int | None = None
                     try:
                         message_id = await send_and_pin_morning_digest(
                             bot, session, user, settings, text
                         )
-                    finally:
-                        if message_id is None:
-                            settings.last_morning_digest_on = prev_morning_on
+                    except Exception:
+                        settings.last_morning_digest_on = prev_morning_on
+                        raise
+                    # ``None`` — Telegram отказал НАВСЕГДА (Forbidden:
+                    # бот заблокирован / чат удалён, либо BadRequest).
+                    # Доставлять некому, повтор бессмыслен — гейт
+                    # оставляем выставленным, иначе тик ретраит каждую
+                    # минуту весь день.
                     if message_id is None:
                         errors += 1
                     else:
                         sent_morning += 1
-                        # Пер-пользовательский commit сразу после успешной
-                        # отправки (образец — per-row commit в
-                        # tick_reminders): SIGTERM посреди батча не
-                        # откатит гейт уже отправленного дайджеста.
-                        session.add(settings)
-                        await session.commit()
+                    # Пер-пользовательский commit сразу после отправки
+                    # (образец — per-row commit в tick_reminders):
+                    # SIGTERM посреди батча не откатит гейт уже
+                    # отправленного дайджеста.
+                    session.add(settings)
+                    await session.commit()
                 if evening:
                     text = await build_evening_digest(session, user, now_utc=now)
-                    await bot.send_message(chat_id=user.telegram_id, text=text)
+                    try:
+                        await bot.send_message(chat_id=user.telegram_id, text=text)
+                    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                        # Постоянная ошибка — см. утреннюю ветку: гейт
+                        # всё равно ставим. Временные (RetryAfter, сеть,
+                        # 5xx) улетают наружу и оставляют гейт снятым.
+                        errors += 1
+                        logger.warning(
+                            "digest.evening_send_rejected",
+                            user_id=user.id,
+                            error=str(exc)[:200],
+                        )
+                    else:
+                        sent_evening += 1
                     settings.last_evening_digest_on = local_date
-                    sent_evening += 1
                     session.add(settings)
                     await session.commit()
             except Exception as exc:

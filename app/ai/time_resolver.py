@@ -362,6 +362,9 @@ def parse_user_datetime(
     raw: str,
     user_tz: str,
     now: datetime | None = None,
+    *,
+    morning_anchor: str = "09:00",
+    evening_anchor: str = "19:00",
 ) -> datetime | None:
     """Parse a free-form Russian date/time expression in the user's timezone.
 
@@ -372,6 +375,11 @@ def parse_user_datetime(
     настройки и та же пост-коррекция, что и в :func:`resolve_time`,
     поэтому «завтра в 9», «в 15:00», «через час» ведут себя одинаково
     во всех интентах.
+
+    ``morning_anchor`` / ``evening_anchor`` — те же, что у
+    :func:`resolve_time`: без них «напомни вечером» через голосовую
+    правку давало дефолтные 19:00 вместо настроенного пользователем
+    времени (M-6 работал только на surface первичного разбора).
 
     Returns an AWARE datetime in the user's zone (callers convert with
     ``to_naive_utc``), or ``None`` when nothing parseable was found.
@@ -385,7 +393,12 @@ def parse_user_datetime(
     # Из reorder-интентов время приходит как «на 14:00» — dateparser
     # такой предлог не понимает, нормализуем в «в 14:00».
     normalized = re.sub(r"^на\s+", "в ", stripped, flags=re.I)
-    parsed = _parse_with_user_base(_preprocess(normalized), user_tz, now)
+    preprocessed = _preprocess(
+        normalized,
+        morning_anchor=morning_anchor,
+        evening_anchor=evening_anchor,
+    )
+    parsed = _parse_with_user_base(preprocessed, user_tz, now)
     if parsed is None:
         return None
     dt = _correct_time_only_frame(parsed, stripped, now)

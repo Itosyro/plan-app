@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 import pytest
+from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message
+from aiogram.types import User as TgUser
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.bot.routers import callbacks as callbacks_module
 from app.bot.routers.callbacks import (
     category_picker_keyboard,
+    horizon_list_keyboard,
     horizon_picker_keyboard,
     parse_reminder_cancel_callback,
     parse_task_callback,
@@ -395,3 +400,135 @@ async def test_get_task_by_id_wrong_user(session: AsyncSession) -> None:
 
     found = await get_task_by_id(session, user2.id, task.id)
     assert found is None
+
+
+# ── Horizon-list rebuild on tap (done / delete) ──────────────────────
+
+
+def _get_handler(name: str) -> Callable[[CallbackQuery], Awaitable[None]]:
+    """Pull one registered callback handler out of a fresh router."""
+    router = callbacks_module.create_router()
+    for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback  # type: ignore[no-any-return]
+    raise AssertionError(f"handler {name} not registered")
+
+
+def _make_callback(data: str, text: str, markup: InlineKeyboardMarkup) -> CallbackQuery:
+    """Build a CallbackQuery whose message carries a /today-style list."""
+    message = Message(
+        message_id=77,
+        date=datetime(2026, 5, 9, 12, 0),
+        chat=Chat(id=205, type="private"),
+        text=text,
+        reply_markup=markup,
+    )
+    return CallbackQuery(
+        id="cb-1",
+        from_user=TgUser(id=205, is_bot=False, first_name="Tester"),
+        chat_instance="ci",
+        message=message,
+        data=data,
+    )
+
+
+async def _seed_three_tasks(session: AsyncSession) -> tuple[list[Task], str]:
+    """Create an onboarded user with three открытых задач в «сегодня»."""
+    user, _ = await get_or_create_user(session, telegram_id=205)
+    await session.flush()
+    assert user.id is not None
+    hor = await get_or_create_horizon(session, user.id, "today")
+    tasks = [Task(user_id=user.id, horizon_id=hor.id, title=f"Задача {i}") for i in (1, 2, 3)]
+    for task in tasks:
+        session.add(task)
+    await session.commit()
+    return tasks, user.tz
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "action"),
+    [("cb_task_done", "done"), ("cb_task_delete", "delete")],
+)
+@pytest.mark.asyncio
+async def test_list_tap_keeps_remaining_list_and_keyboard(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    action: str,
+) -> None:
+    """Tapping ✅/🗑 in a /today list must leave the *rest of the list* intact.
+
+    Regression: the handlers used to ``edit_text`` a one-line
+    confirmation over the whole message, wiping 20 tasks and their
+    keyboard. Now the acted task is dropped and the list is re-rendered.
+    """
+    tasks, _tz = await _seed_three_tasks(session)
+    ids = [t.id for t in tasks]
+    assert all(i is not None for i in ids)
+    markup = horizon_list_keyboard([(i, tid) for i, tid in enumerate(ids, 1) if tid is not None])
+
+    edits: list[tuple[str, InlineKeyboardMarkup | None]] = []
+
+    async def fake_edit_text(
+        self: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None, **_: object
+    ) -> None:
+        edits.append((text, reply_markup))
+
+    async def fake_answer(self: CallbackQuery, text: str | None = None, **_: object) -> None:
+        return None
+
+    monkeypatch.setattr(Message, "edit_text", fake_edit_text)
+    monkeypatch.setattr(CallbackQuery, "answer", fake_answer)
+
+    callback = _make_callback(
+        f"task:{action}:{ids[1]}",
+        "📋 Сегодня\n\n1. ⚪ Задача 1\n2. ⚪ Задача 2\n3. ⚪ Задача 3",
+        markup,
+    )
+    await _get_handler(handler_name)(callback)
+
+    assert len(edits) == 1
+    new_text, new_markup = edits[0]
+    assert "Задача 1" in new_text
+    assert "Задача 3" in new_text
+    assert "Задача 2" not in new_text
+    assert new_markup is not None
+    remaining = [
+        btn.callback_data for row in new_markup.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert f"task:done:{ids[0]}" in remaining
+    assert f"task:done:{ids[2]}" in remaining
+    assert all(f":{ids[1]}" not in data for data in remaining)
+
+
+@pytest.mark.asyncio
+async def test_single_task_card_keeps_plain_confirmation(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single-task card is not a list — it keeps the one-line confirmation."""
+    tasks, _tz = await _seed_three_tasks(session)
+    task_id = tasks[0].id
+    assert task_id is not None
+
+    edits: list[tuple[str, InlineKeyboardMarkup | None]] = []
+
+    async def fake_edit_text(
+        self: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None, **_: object
+    ) -> None:
+        edits.append((text, reply_markup))
+
+    async def fake_answer(self: CallbackQuery, text: str | None = None, **_: object) -> None:
+        return None
+
+    monkeypatch.setattr(Message, "edit_text", fake_edit_text)
+    monkeypatch.setattr(CallbackQuery, "answer", fake_answer)
+
+    callback = _make_callback(
+        f"task:done:{task_id}",
+        "Задача 1",
+        task_action_keyboard(task_id),
+    )
+    await _get_handler("cb_task_done")(callback)
+
+    assert edits == [("✅ Выполнено: «Задача 1»", None)]

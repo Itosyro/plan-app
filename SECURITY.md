@@ -17,12 +17,14 @@ few days and to ship a fix or mitigation as soon as practical.
 In scope: the bot message pipeline (`app/`), the Mini-App API (`/api/*`),
 Telegram `initData` auth, and the web bundle (`webapp/`).
 
-Out of scope: third-party platforms (Telegram, Render, Neon, Groq) and issues
+Out of scope: third-party platforms (Telegram, Render, Supabase, Groq) and issues
 requiring a compromised maintainer account or device.
 
 ## Hardening already in place
 
-- Telegram `initData` HMAC verification with a 10-minute TTL (replay window).
+- Telegram `initData` HMAC verification with a 12-hour TTL (replay window) —
+  see `app/api/auth.py::INIT_DATA_MAX_AGE_SECONDS`. Raised from 10 minutes in
+  PR #187: sessions open longer than the old window started failing with 401.
 - Per-user rate limiting on the LLM pipeline (denial-of-wallet defence).
 - Prompt-injection defence: untrusted user text is wrapped in XML-style
   delimiters + a "treat as data" preamble and JSON-escaped before every LLM

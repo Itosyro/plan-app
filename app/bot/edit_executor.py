@@ -44,7 +44,15 @@ from app.bot.services import (
     update_task_title,
 )
 from app.db.base import session_scope
-from app.db.models import Category, Reminder, Task, TaskEditSnapshot, TaskEvent, User
+from app.db.models import (
+    Category,
+    Reminder,
+    Task,
+    TaskEditSnapshot,
+    TaskEvent,
+    User,
+    UserSettings,
+)
 from app.shared.logging import get_logger
 from app.shared.time import format_reminder_local, plural_ru
 
@@ -67,15 +75,26 @@ def touch_last_task(user_id: int, task_id: int) -> None:
     LAST_TASK[user_id] = (task_id, time.monotonic())
 
 
-async def _get_user_tz(user_id: int) -> str:
-    """Load the user's IANA timezone (fallback UTC).
+async def _get_user_time_prefs(user_id: int) -> tuple[str, str, str]:
+    """Load ``(tz, morning_anchor, evening_anchor)`` for the user.
 
-    Все ветки, парсящие свободное время («завтра в 10»), обязаны знать
-    зону пользователя — см. ``parse_user_datetime``.
+    Все ветки, парсящие свободное время («завтра в 10», «напомни
+    вечером»), обязаны знать и зону пользователя, и его персональные
+    якоря утра/вечера — см. ``parse_user_datetime``. Один join вместо
+    двух запросов; отсутствие строки ``UserSettings`` даёт дефолты.
     """
     async with session_scope() as session:
-        row = (await session.exec(select(User.tz).where(User.id == user_id))).first()
-    return row or "UTC"
+        row = (
+            await session.exec(
+                select(User.tz, UserSettings.morning_anchor, UserSettings.evening_anchor)
+                .join(UserSettings, UserSettings.user_id == User.id, isouter=True)  # type: ignore[arg-type]
+                .where(User.id == user_id)
+            )
+        ).first()
+    if row is None:
+        return "UTC", "09:00", "19:00"
+    tz, morning, evening = row
+    return tz or "UTC", morning or "09:00", evening or "19:00"
 
 
 def pop_last_task(user_id: int) -> int | None:
@@ -275,7 +294,7 @@ async def _execute_reorder_horizon(
 ) -> tuple[str, int | None]:
     """Move a task to a different horizon."""
     if not intent.new_horizon:
-        return "Не понял, в какой горизонт перенести. Уточни: сегодня, завтра, неделя?", None
+        return "Не понял, на когда перенести. Уточни: сегодня, завтра, на неделю?", None
 
     async with session_scope() as session:
         task = await get_task_by_id(session, user_id, task_id)
@@ -323,8 +342,10 @@ async def _execute_set_due(
     if not intent.new_due_raw:
         return "Не понял дату/время. Уточни: «до пятницы», «завтра в 10».", None
 
-    user_tz = await _get_user_tz(user_id)
-    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
+    user_tz, morning, evening = await _get_user_time_prefs(user_id)
+    parsed = parse_user_datetime(
+        intent.new_due_raw, user_tz, morning_anchor=morning, evening_anchor=evening
+    )
     if parsed is None:
         return f"Не смог разобрать дату «{intent.new_due_raw}». Попробуй иначе.", None
 
@@ -399,8 +420,10 @@ async def _execute_reorder_time(
     if not intent.new_due_raw:
         return "Не понял, на какое время перенести. Уточни: «на 14:00», «на 8 утра».", None
 
-    user_tz = await _get_user_tz(user_id)
-    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
+    user_tz, morning, evening = await _get_user_time_prefs(user_id)
+    parsed = parse_user_datetime(
+        intent.new_due_raw, user_tz, morning_anchor=morning, evening_anchor=evening
+    )
     if parsed is None:
         return f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.", None
 
@@ -445,8 +468,10 @@ async def _execute_set_reminder(
             None,
         )
 
-    user_tz = await _get_user_tz(user_id)
-    parsed = parse_user_datetime(intent.new_due_raw, user_tz)
+    user_tz, morning, evening = await _get_user_time_prefs(user_id)
+    parsed = parse_user_datetime(
+        intent.new_due_raw, user_tz, morning_anchor=morning, evening_anchor=evening
+    )
     if parsed is None:
         return (
             f"Не смог разобрать время «{intent.new_due_raw}». Попробуй иначе.",
@@ -633,7 +658,7 @@ async def _execute_category_intent(
         return await _execute_rename_category(user_id, intent), None
     if intent.intent == "delete_category":
         return await _category_delete_confirmation(user_id, intent)
-    return f"Действие «{intent.intent}» пока не поддерживается.", None
+    return "Пока не умею такое — напиши, что нужно сделать, своими словами.", None
 
 
 # ── Note management (voice/text) ─────────────────────────────────────
@@ -735,7 +760,7 @@ async def _execute_note_intent(
         return await _execute_set_note_category(user_id, intent), None
     if intent.intent == "delete_note":
         return await _note_delete_confirmation(user_id, intent)
-    return f"Действие «{intent.intent}» пока не поддерживается.", None
+    return "Пока не умею такое — напиши, что нужно сделать, своими словами.", None
 
 
 async def _delete_confirmation(
@@ -784,7 +809,7 @@ async def _dispatch_single(
         return await _execute_cancel_reminder(task_id, user_id)
     if intent.intent == "set_reminder":
         return await _execute_set_reminder(task_id, user_id, intent)
-    return f"Действие «{intent.intent}» пока не поддерживается — скоро добавлю.", None
+    return "Пока не умею такое — напиши, что нужно сделать, своими словами.", None
 
 
 async def _execute_list_completed_today(
@@ -798,7 +823,7 @@ async def _execute_list_completed_today(
     """
     from zoneinfo import ZoneInfo
 
-    user_tz = await _get_user_tz(user_id)
+    user_tz, _, _ = await _get_user_time_prefs(user_id)
     local_midnight = datetime.now(ZoneInfo(user_tz)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )

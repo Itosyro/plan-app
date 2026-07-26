@@ -1,8 +1,8 @@
 // Kanban board for the Mini-App (Phase 7e/A). Columns are the user's
 // **categories** (+ a synthetic "Без категории" column), Todoist-style
-// "разделы". Dragging a card between columns re-assigns its
+// "категории". Dragging a card between columns re-assigns its
 // ``category_id`` (drop into "Без категории" clears it). A trailing
-// "+ Раздел" affordance creates a new category = new column.
+// "+ Категория" affordance creates a new category = new column.
 //
 // DnD reliability (the 7d board was broken):
 //   - Cards set ``touch-action: none`` so the horizontal scroll
@@ -299,7 +299,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
         className="ease-apple flex h-[52px] w-[62vw] max-w-[210px] shrink-0 snap-start items-center gap-2 rounded-3xl border-2 border-dashed border-tg-hint/25 bg-bento-card/40 px-4 text-[14px] font-medium text-tg-hint transition-all duration-200 hover:border-tg-button/40 hover:text-tg-text active:scale-[0.98]"
       >
         <Plus size={18} strokeWidth={2.4} aria-hidden />
-        Добавить раздел
+        Добавить категорию
       </button>
     );
   }
@@ -318,7 +318,7 @@ function AddColumn({ onCreate }: { onCreate: (name: string) => Promise<void> | v
               setName("");
             }
           }}
-          placeholder="Название раздела"
+          placeholder="Название категории"
           maxLength={64}
           className="font-display min-w-0 flex-1 rounded-xl bg-bento-card px-3 py-2 text-[14px] text-tg-text shadow-bento ring-1 ring-black/5 outline-none placeholder:text-tg-hint/60"
         />

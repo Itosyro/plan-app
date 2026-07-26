@@ -22,7 +22,7 @@ const VIEW_OPTIONS: SegmentOption<"list" | "board">[] = [
 
 const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: "none", label: "Без группировки" },
-  { value: "category", label: "По разделу" },
+  { value: "category", label: "По категории" },
   { value: "priority", label: "По приоритету" },
   { value: "horizon", label: "По горизонту" },
 ];

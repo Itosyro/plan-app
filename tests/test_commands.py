@@ -10,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.bot.routers.callbacks import horizon_list_keyboard
 from app.bot.routers.commands import (
     HORIZON_PAGE_SIZE,
+    _format_category_list,
     _format_note_list,
     _format_task_list,
 )
@@ -23,7 +24,7 @@ from app.bot.services import (
     get_tasks_by_horizon,
     mark_task_done,
 )
-from app.db.models import Note, Task
+from app.db.models import Category, Note, Task
 
 # ── Service tests ────────────────────────────────────────────────────
 
@@ -267,7 +268,11 @@ def test_format_task_list_overflow_message_shown_when_paged() -> None:
     """When ``total_count > len(tasks)`` (i.e. more tasks than fit
     on the page), the formatter must surface the overflow line so
     the user knows *some* tasks are hidden — and the line includes
-    the actual numbers and a hint to /search.
+    the actual numbers and a hint that points at the Mini-App.
+
+    The hint must NOT name a command the bot doesn't have: there is no
+    ``/search`` handler, so the old copy sent the user into the LLM
+    pipeline (which happily created a task called "search").
 
     Regression for ``docs/REVIEW-2026-05-09-v2.md::R-NEW-I-6``.
     """
@@ -284,7 +289,8 @@ def test_format_task_list_overflow_message_shown_when_paged() -> None:
     ]
     result = _format_task_list(visible, "Сегодня", "UTC", total_count=42)
     assert "Показано 5 из 42" in result
-    assert "/search" in result
+    assert "/search" not in result
+    assert "приложении" in result
     # The literal "Всего: 5" line should be replaced by the
     # overflow message — never both.
     assert "Всего:" not in result
@@ -343,3 +349,60 @@ def test_horizon_page_size_fits_telegram_keyboard_limit() -> None:
     """
     assert HORIZON_PAGE_SIZE > 0
     assert HORIZON_PAGE_SIZE * 4 <= 100
+
+
+# ── UX copy: no invented commands, no robot plurals ──────────────────
+
+
+def test_overflow_hint_names_no_nonexistent_command() -> None:
+    """The overflow footer must not advertise a command the bot lacks.
+
+    Adversarial check: any ``/word`` in the footer has to be a real
+    handler. ``/search`` never existed — typing it fell through to the
+    LLM pipeline and created a task literally called "search".
+    """
+    visible = [
+        Task(id=1, user_id=1, title="T", priority="medium", category_id=1, horizon_id=1),
+    ]
+    result = _format_task_list(visible, "Сегодня", "UTC", total_count=99)
+    known = {
+        "/start",
+        "/help",
+        "/today",
+        "/tomorrow",
+        "/week",
+        "/month",
+        "/year",
+        "/someday",
+        "/notes",
+        "/reminders",
+        "/categories",
+        "/settings",
+    }
+    mentioned = {word for word in result.split() if word.startswith("/")}
+    assert mentioned <= known, f"footer advertises unknown command(s): {mentioned - known}"
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [
+        (1, "1 задача"),
+        (2, "2 задачи"),
+        (5, "5 задач"),
+        (11, "11 задач"),
+        (21, "21 задача"),
+        (0, "0 задач"),
+    ],
+)
+def test_format_category_list_uses_russian_plurals(count: int, expected: str) -> None:
+    """``{count} задач(и)`` was a placeholder-looking hedge. Real
+    Russian plurals come from ``app.shared.time.plural_ru``.
+    """
+    result = _format_category_list([(Category(id=1, user_id=1, name="Работа"), count)])
+    assert expected in result
+    assert "задач(и)" not in result
+
+
+def test_format_category_list_empty() -> None:
+    result = _format_category_list([])
+    assert "Пусто" in result

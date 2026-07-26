@@ -7,10 +7,14 @@ where user picks a tz button instead of typing IANA).
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.bot import courier_templates
 from app.bot.onboarding import (
     CUSTOM_TZ_CALLBACK,
     POPULAR_TIMEZONES,
@@ -150,3 +154,65 @@ async def test_re_onboarding_preserves_name_and_settings(
     assert fetched.tz == "Asia/Tashkent"  # tz updated
     assert settings2.critic_mode == "always"  # tweak preserved
     assert settings2.morning_digest_at == "09:30"  # tweak preserved
+
+
+# ── Copy audit: templates read like a person, not a dev ──────────────
+
+
+def test_no_raw_markdown_backticks_in_user_facing_templates() -> None:
+    """Nothing sets ``parse_mode``, so ``Europe/Berlin`` reached the
+    user with the backticks visible. Plain text only.
+    """
+    for name, text in vars(courier_templates).items():
+        if name.startswith("_") or not isinstance(text, str):
+            continue
+        assert "`" not in text, f"{name} contains a literal backtick the user will see"
+
+
+def test_help_lists_reminders_command() -> None:
+    """``/reminders`` is the only in-chat way to see or cancel pending
+    reminders — omitting it from /help hid the feature entirely.
+    """
+    assert "/reminders" in courier_templates.HELP
+
+
+def test_help_only_lists_commands_that_exist() -> None:
+    """Every ``/command`` advertised in HELP must have a registered
+    handler somewhere in ``app/bot/routers`` — otherwise the user types
+    it, it falls through to the LLM, and becomes a task.
+    """
+    routers_dir = Path(__file__).resolve().parents[1] / "app" / "bot" / "routers"
+    registered = set()
+    for path in routers_dir.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        registered.update(re.findall(r'Command\(\s*"([a-z_]+)"', source))
+        if "CommandStart()" in source:
+            registered.add("start")
+
+    advertised = {m.lstrip("/") for m in re.findall(r"/[a-z_]+", courier_templates.HELP)}
+    assert advertised <= registered, (
+        f"HELP advertises missing command(s): {advertised - registered}"
+    )
+
+
+def test_help_explains_the_mini_app_and_inbox() -> None:
+    """The pipeline routinely tells users to «открой Входящие в
+    приложении» — /help has to say what that app is and how to open it.
+    """
+    help_text = courier_templates.HELP
+    assert "приложени" in help_text
+    assert "Входящие" in help_text
+    assert "Открыть план" in help_text  # the actual menu-button label
+
+
+def test_onboarding_done_mentions_the_app() -> None:
+    assert "приложении" in courier_templates.ONBOARDING_DONE
+
+
+def test_pipeline_failed_is_honest() -> None:
+    """Says where the message is and what to do — and never promises a
+    re-parse, because nothing re-parses.
+    """
+    text = courier_templates.PIPELINE_FAILED
+    assert "Входящих" in text
+    assert "разберу позже" not in text

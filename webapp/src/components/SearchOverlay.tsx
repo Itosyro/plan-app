@@ -19,6 +19,9 @@ import { SkeletonList } from "./Skeleton";
 
 interface Props {
   tz: string;
+  /** slug → человеческая подпись горизонта (с бэкенда, через App).
+   *  Без него в результатах светились английские слаги. */
+  horizonLabels: Record<string, string>;
   onClose: () => void;
   onOpen: (id: number) => void;
 }
@@ -26,7 +29,7 @@ interface Props {
 const DEBOUNCE_MS = 200;
 const MIN_QUERY_LEN = 2;
 
-export function SearchOverlay({ tz, onClose, onOpen }: Props) {
+export function SearchOverlay({ tz, horizonLabels, onClose, onOpen }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Task[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +185,13 @@ export function SearchOverlay({ tz, onClose, onOpen }: Props) {
           <ul className="flex flex-col gap-2 animate-fade-in">
             {results.map((task) => (
               <li key={task.id}>
-                <SearchResultCard task={task} tz={tz} query={query} onOpen={handleOpen} />
+                <SearchResultCard
+                  task={task}
+                  tz={tz}
+                  query={query}
+                  horizonLabels={horizonLabels}
+                  onOpen={handleOpen}
+                />
               </li>
             ))}
           </ul>
@@ -196,10 +205,11 @@ interface ResultProps {
   task: Task;
   tz: string;
   query: string;
+  horizonLabels: Record<string, string>;
   onOpen: (id: number) => void;
 }
 
-function SearchResultCard({ task, tz, query, onOpen }: ResultProps) {
+function SearchResultCard({ task, tz, query, horizonLabels, onOpen }: ResultProps) {
   const isDone = task.status === "done";
   const c = categoryColor(task.category_id);
   const due = task.due_at ? formatDue(task.due_at, tz) : null;
@@ -226,7 +236,9 @@ function SearchResultCard({ task, tz, query, onOpen }: ResultProps) {
             </span>
           )}
           {due && <span className="tabular">{due}</span>}
-          {task.horizon_slug && task.horizon_slug !== "today" && <span>· {task.horizon_slug}</span>}
+          {task.horizon_slug && task.horizon_slug !== "today" && (
+            <span>· {horizonLabels[task.horizon_slug] ?? task.horizon_slug}</span>
+          )}
         </div>
       </div>
     </button>

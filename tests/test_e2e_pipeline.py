@@ -23,6 +23,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.ai.router import GroqKeyRouter
 from app.bot.routers._pipeline import (
     _plural_ru,
+    flag_needs_review,
     run_pipeline,
 )
 from app.bot.services import get_or_create_category, get_or_create_user
@@ -961,3 +962,59 @@ def test_plural_ru() -> None:
     assert _plural_ru(5, "пункт", "пункта", "пунктов") == "пунктов"
     assert _plural_ru(11, "пункт", "пункта", "пунктов") == "пунктов"
     assert _plural_ru(22, "пункт", "пункта", "пунктов") == "пункта"
+
+
+# ── flag_needs_review: the promise behind «лежит во Входящих» ────────
+
+
+@pytest.mark.asyncio
+async def test_flag_needs_review_sets_the_flag(session: AsyncSession) -> None:
+    """The routers' crash-path reply tells the user their message is in
+    «Входящие». That tab (``app/api/routers/inbox.py``) only returns
+    rows with ``needs_review=True``, so the helper must actually set it.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=9101)
+    await session.commit()
+    assert user.id is not None
+
+    entry = InboxEntry(user_id=user.id, kind="text", raw_text="что-то важное")
+    session.add(entry)
+    await session.commit()
+    entry_id = entry.id
+
+    await flag_needs_review(entry_id, review_enabled=True)
+
+    session.expire_all()
+    refreshed = await session.get(InboxEntry, entry_id)
+    assert refreshed is not None
+    assert refreshed.needs_review is True
+
+
+@pytest.mark.asyncio
+async def test_flag_needs_review_respects_review_disabled(session: AsyncSession) -> None:
+    """With review turned off the flag stays down — we must not shove
+    rows into a tab the user switched off.
+    """
+    user, _ = await get_or_create_user(session, telegram_id=9102)
+    await session.commit()
+    assert user.id is not None
+
+    entry = InboxEntry(user_id=user.id, kind="text", raw_text="что-то важное")
+    session.add(entry)
+    await session.commit()
+    entry_id = entry.id
+
+    await flag_needs_review(entry_id, review_enabled=False)
+
+    session.expire_all()
+    refreshed = await session.get(InboxEntry, entry_id)
+    assert refreshed is not None
+    assert refreshed.needs_review is False
+
+
+@pytest.mark.asyncio
+async def test_flag_needs_review_tolerates_missing_entry() -> None:
+    """``inbox_id`` is ``int | None`` at the call sites — a crash before
+    the inbox write must not turn into a second exception.
+    """
+    await flag_needs_review(None, review_enabled=True)

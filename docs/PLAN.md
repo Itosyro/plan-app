@@ -2,12 +2,9 @@
 
 Этот документ — северная звезда проекта. Он отвечает на вопрос «зачем» и «что должно делать», без деталей «как». «Как» — в [ARCHITECTURE.md](ARCHITECTURE.md), пошагово — в [ROADMAP.md](ROADMAP.md).
 
-> **Статус (2026-05-09):**
-> Бот работает в проде https://plan-app-t6nx.onrender.com (фазы 0..4
-> закрыты, все critical/important findings из ревью v2 закрыты).
-> Mini App (Phase 5) — не начат, можно стартовать.
-> Polish (Phase 6) — частичный (structlog/mypy/ruff есть,
-> golden-evals/DSPy/backup нет).
+> **Статус:** здесь его больше нет — копия статуса в этом документе
+> протухала быстрее, чем её обновляли. Актуальное состояние фаз и
+> что уже в проде — в README §Status и [PROGRESS.md](PROGRESS.md).
 
 ---
 
@@ -96,11 +93,12 @@ Telegram-бот, который превращает поток мыслей (г
 |---|---|
 | Язык | Python 3.12 |
 | LLM-провайдер | Groq, 3 ключа (round-robin + резерв) |
-| Модели Groq | Splitter — `llama-3.1-8b-instant`; Classifier — `llama-3.3-70b-versatile`; Critic — `qwen-qwq-32b` (reasoning); запасные — `llama-4-scout-17b-16e-instruct`, `gemma2-9b-it` (см. `ARCHITECTURE.md` §2.1) |
+| Модели Groq | Лёгкие стадии (Splitter / Intent / Reorder / Courier / TaskSplitter) — `openai/gpt-oss-20b`; Classifier и Critic — `openai/gpt-oss-120b`. Источник правды — `app/ai/models.py`, каждая стадия перекрывается env `GROQ_MODEL_<STAGE>` (см. `ARCHITECTURE.md` §2.1) |
+| История моделей | До июля 2026 стояли `llama-3.1-8b-instant` / `llama-3.3-70b-versatile` / `qwen-qwq-32b`; откат к ним невозможен (qwen снят, обе llama отключаются в августе 2026). Майская попытка перейти на gpt-oss провалилась из-за `instructor.Mode.JSON`, сейчас все колсайты на `Mode.TOOLS` — подробности в `ARCHITECTURE.md` §2.1 |
 | Транскрибация | `whisper-large-v3` (точная, не turbo) |
-| Деплой | Render Free + Neon Postgres (бесплатно, не умирает) |
+| Деплой | Render Free + Supabase Postgres (бесплатно, не умирает) |
 | Доставка апдейтов | Webhook (не polling) |
-| База | PostgreSQL через Neon |
+| База | PostgreSQL через Supabase |
 | Язык интерфейса | Только русский (пока) |
 | PR-стратегия | Маленькие PR пофазно |
 | Стиль кода | docstring на английском, комментарии на русском в сложных местах |
