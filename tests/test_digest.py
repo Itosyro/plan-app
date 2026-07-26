@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -784,3 +785,122 @@ async def test_tick_digests_persists_gate_to_db(session: AsyncSession) -> None:
     assert settings.last_morning_digest_on == datetime(2026, 5, 8).date()
     # Evening untouched.
     assert settings.last_evening_digest_on is None
+
+
+# ── Permanent vs temporary send failures ─────────────────────────────
+
+
+class _BlockedBot(_FakeBot):
+    """Every send is rejected the way a blocked/deleted chat rejects it."""
+
+    async def send_message(  # type: ignore[override]
+        self, *, chat_id: int, text: str, **_: Any
+    ) -> SimpleNamespace:
+        raise TelegramForbiddenError(method=None, message="bot was blocked by the user")  # type: ignore[arg-type]
+
+
+class _FlakyBot(_FakeBot):
+    """Fails the first send with a *temporary* error, then recovers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def send_message(  # type: ignore[override]
+        self, *, chat_id: int, text: str, **kw: Any
+    ) -> SimpleNamespace:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise TelegramNetworkError(method=None, message="connection reset")  # type: ignore[arg-type]
+        return await super().send_message(chat_id=chat_id, text=text, **kw)
+
+
+async def _arm_morning_gate(session: AsyncSession, telegram_id: int, day: date) -> None:
+    """Mark the morning digest as already sent so only the evening fires."""
+    from app.db.models import User
+
+    user = (await session.exec(select(User).where(User.telegram_id == telegram_id))).first()
+    assert user is not None and user.id is not None
+    settings = (
+        await session.exec(select(UserSettings).where(UserSettings.user_id == user.id))
+    ).first()
+    assert settings is not None
+    settings.last_morning_digest_on = day
+    session.add(settings)
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_morning_permanent_failure_sets_gate(
+    session: AsyncSession,
+) -> None:
+    """A blocked bot must not be retried every minute for the rest of the day.
+
+    Regression: gating strictly "after a successful send" turned a
+    permanent rejection (Forbidden / chat deleted) into an endless
+    retry loop — one attempt per scheduler tick, all day long.
+    """
+    await _onboard(session, telegram_id=1120, tz="Europe/Moscow")
+
+    bot = _BlockedBot()
+    now = datetime(2026, 5, 8, 5, 0, tzinfo=UTC)  # 08:00 MSK
+
+    first = await tick_digests(bot, now=now)
+    assert first == {"morning": 0, "evening": 0, "errors": 1}
+
+    # Минутой позже — гейт уже стоит, повторной попытки нет.
+    second = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 1, tzinfo=UTC))
+    assert second == {"morning": 0, "evening": 0, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_morning_temporary_failure_retries(
+    session: AsyncSession,
+) -> None:
+    """A transient network error leaves the gate unset → next tick delivers."""
+    await _onboard(session, telegram_id=1121, tz="Europe/Moscow")
+
+    bot = _FlakyBot()
+
+    first = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 0, tzinfo=UTC))
+    assert first == {"morning": 0, "evening": 0, "errors": 1}
+
+    second = await tick_digests(bot, now=datetime(2026, 5, 8, 5, 1, tzinfo=UTC))
+    assert second == {"morning": 1, "evening": 0, "errors": 0}
+    assert len(bot.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_evening_permanent_failure_sets_gate(
+    session: AsyncSession,
+) -> None:
+    """Evening branch mirrors the morning one on permanent rejections."""
+    await _onboard(session, telegram_id=1122, tz="Europe/Moscow")
+    await _arm_morning_gate(session, 1122, date(2026, 5, 8))
+
+    bot = _BlockedBot()
+    now = datetime(2026, 5, 8, 18, 0, tzinfo=UTC)  # 21:00 MSK
+
+    first = await tick_digests(bot, now=now)
+    assert first == {"morning": 0, "evening": 0, "errors": 1}
+
+    second = await tick_digests(bot, now=datetime(2026, 5, 8, 18, 1, tzinfo=UTC))
+    assert second == {"morning": 0, "evening": 0, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_tick_digests_evening_temporary_failure_retries(
+    session: AsyncSession,
+) -> None:
+    """Evening branch keeps the catch-up on transient failures."""
+    await _onboard(session, telegram_id=1123, tz="Europe/Moscow")
+    await _arm_morning_gate(session, 1123, date(2026, 5, 8))
+
+    bot = _FlakyBot()
+
+    first = await tick_digests(bot, now=datetime(2026, 5, 8, 18, 0, tzinfo=UTC))
+    assert first == {"morning": 0, "evening": 0, "errors": 1}
+
+    second = await tick_digests(bot, now=datetime(2026, 5, 8, 18, 1, tzinfo=UTC))
+    assert second == {"morning": 0, "evening": 1, "errors": 0}
+    assert len(bot.calls) == 1

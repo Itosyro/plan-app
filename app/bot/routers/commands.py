@@ -22,9 +22,9 @@ from app.bot.services import (
     list_pending_reminders,
 )
 from app.db.base import session_scope
-from app.db.models import Note, Task
+from app.db.models import Category, Note, Task
 from app.shared.logging import get_logger
-from app.shared.time import format_due_local
+from app.shared.time import format_due_local, plural_ru
 
 # /reminders renders one page at a time. The button below the list
 # loads the next page in-place via the rem:page:<offset> callback.
@@ -99,7 +99,7 @@ def _format_task_list(
     if total_count is not None and total_count > shown:
         lines.append(
             f"\nПоказано {shown} из {total_count}. "
-            "Используй /search или фильтр по категории, чтобы найти остальные."
+            "Остальные — в приложении, кнопка «Открыть план» рядом с полем ввода."
         )
     else:
         lines.append(f"\nВсего: {shown}")
@@ -119,6 +119,22 @@ def _format_note_list(notes: list[Note]) -> str:
         lines.append(f"{i}. {note.title}")
 
     lines.append(f"\nВсего: {len(notes)}")
+    return "\n".join(lines)
+
+
+def _format_category_list(pairs: list[tuple[Category, int]]) -> str:
+    """Format categories + task counts.
+
+    Counts go through ``plural_ru`` — the old ``{count} задач(и)``
+    hedge is the kind of thing a spreadsheet writes, not a person.
+    """
+    if not pairs:
+        return "🏷 Категории\n\nПусто — категории создаются автоматически при добавлении задач."
+
+    lines = ["🏷 Категории\n"]
+    for cat, count in pairs:
+        noun = plural_ru(count, ("задача", "задачи", "задач"))
+        lines.append(f"• {cat.name} — {count} {noun}")
     return "\n".join(lines)
 
 
@@ -228,16 +244,7 @@ def create_router() -> Router:
                 return
             pairs = await get_categories_with_counts(session, user.id)
 
-        if not pairs:
-            await message.answer(
-                "🏷 Категории\n\nПусто — категории создаются автоматически при добавлении задач.",
-            )
-            return
-
-        lines = ["🏷 Категории\n"]
-        for cat, count in pairs:
-            lines.append(f"• {cat.name} — {count} задач(и)")
-        await message.answer("\n".join(lines))
+        await message.answer(_format_category_list(pairs))
 
     @router.message(Command("reminders"))
     async def cmd_reminders(message: Message, command: CommandObject) -> None:

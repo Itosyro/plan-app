@@ -22,7 +22,7 @@ from aiogram.types import Message
 
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
-from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.courier_templates import NOT_ONBOARDED, PIPELINE_FAILED
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._message_payload import (
@@ -32,6 +32,7 @@ from app.bot.routers._message_payload import (
     resolve_effective_payload,
 )
 from app.bot.routers._pipeline import (
+    flag_needs_review,
     get_groq_router,
     log_task_exception,
     run_pipeline,
@@ -276,14 +277,15 @@ def create_router() -> Router:
                     await reactions.set_reaction(
                         message.bot, chat_id, user_message_id, reactions.ERROR
                     )
+                # Пайплайн упал целиком — сырьё осталось только в inbox.
+                # Без флага записи НЕТ в ревью-табе Mini-App, и обещание
+                # «лежит во Входящих» было бы неправдой.
+                with contextlib.suppress(Exception):
+                    await flag_needs_review(inbox_id, review_enabled=review_enabled)
                 try:
-                    await placeholder.edit_text(
-                        "Ошибка при разборе — сохранил во входящие, разберу позже."
-                    )
+                    await placeholder.edit_text(PIPELINE_FAILED)
                 except Exception:
-                    await message.answer(
-                        "Ошибка при разборе — сохранил во входящие, разберу позже."
-                    )
+                    await message.answer(PIPELINE_FAILED)
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)

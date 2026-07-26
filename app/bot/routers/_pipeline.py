@@ -424,10 +424,11 @@ async def _run_pipeline_inner(
     if not survivors:
         # Все пункты потеряны (rate-limit/timeout) — сырьё осталось только
         # во «Входящих», без флага оно пропадало из ревью-таба Mini-App.
-        await _flag_needs_review(inbox_id, review_enabled=review_enabled)
+        await flag_needs_review(inbox_id, review_enabled=review_enabled)
         return (
-            "Не удалось разобрать сообщение — сохранил его целиком во «Входящие», "
-            "загляни туда позже."
+            "Не смог разобрать сообщение, но оно сохранено целиком — "
+            "лежит во «Входящих» в приложении. "
+            "Можно заглянуть туда или прислать мне ещё раз."
         ), None
 
     # Critic: review classifications that need it (only survivors). Critic
@@ -605,7 +606,7 @@ async def _run_pipeline_inner(
     )
 
     if review_flagged:
-        review_note = "📥 Отправил на проверку — открой «Входящие» в приложении."
+        review_note = "📥 Отложил на проверку — загляни во «Входящие» в приложении."
         text_reply = f"{text_reply}\n\n{review_note}" if text_reply else review_note
 
     # If we lost units to classifier failures (rate-limit, timeout)
@@ -613,7 +614,9 @@ async def _run_pipeline_inner(
     # thought; pretending nothing was dropped silently loses items.
     if classify_failures > 0 and survivors:
         word = _plural_ru(classify_failures, "пункт", "пункта", "пунктов")
-        partial_note = f"⚠️ {classify_failures} {word} не разобрал — отложил во «Входящие»."
+        partial_note = (
+            f"⚠️ {classify_failures} {word} не разобрал — они лежат во «Входящих» в приложении."
+        )
         text_reply = f"{text_reply}\n\n{partial_note}" if text_reply else partial_note
 
     # PR-I3: prepend edit replies when message contained mixed intents.
@@ -644,7 +647,7 @@ def _attach_edit_keyboards(
     return text_reply, edit_keyboards[0]
 
 
-async def _flag_needs_review(inbox_id: int | None, *, review_enabled: bool) -> None:
+async def flag_needs_review(inbox_id: int | None, *, review_enabled: bool) -> None:
     """Mark the inbox entry for the Mini-App review tab (best-effort)."""
     if not review_enabled or inbox_id is None:
         return
@@ -661,6 +664,7 @@ __all__ = [
     "GLOBAL_PIPELINE_LIMIT",
     "PER_USER_PIPELINE_LIMIT",
     "PipelineReply",
+    "flag_needs_review",
     "get_groq_router",
     "log_task_exception",
     "reset_pipeline_semaphores_for_tests",

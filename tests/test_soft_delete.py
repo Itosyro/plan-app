@@ -347,3 +347,68 @@ async def test_hard_delete_from_trash(
     # Gone from DB.
     async with session_scope() as session:
         assert (await session.exec(select(Task).where(Task.id == task_id))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_refuses_parent_with_live_child(
+    aclient: httpx.AsyncClient,
+    seeded_two_users: tuple[int, int],
+) -> None:
+    """Hard-deleting a parent must not CASCADE away a restored subtask.
+
+    ``Task.parent_id`` carries ``ondelete="CASCADE"``, so a physical
+    delete of the parent takes its children with it. ``purge_trash``
+    has guarded against this since day one; the Mini App "Удалить
+    навсегда" button did not — a child restored separately from its
+    parent was silently destroyed.
+    """
+    user_a_id, _ = seeded_two_users
+    h = {"X-Telegram-Init-Data": _build_init_data(_TG_USER_A)}
+
+    tasks = (await aclient.get("/api/tasks", headers=h)).json()
+    parent_id = tasks[0]["id"]
+
+    # Подзадача живая, родитель — в корзине (ребёнка восстановили
+    # отдельно от родителя).
+    async with session_scope() as session:
+        session.add(Task(user_id=user_a_id, title="Живая подзадача", parent_id=parent_id))
+        await session.flush()
+    await aclient.delete(f"/api/tasks/{parent_id}", headers=h)
+    async with session_scope() as session:
+        child = (await session.exec(select(Task).where(Task.parent_id == parent_id))).first()
+        assert child is not None
+        child.deleted_at = None
+        session.add(child)
+        child_id = child.id
+
+    resp = await aclient.delete(f"/api/trash/task/{parent_id}", headers=h)
+    assert resp.status_code == 409
+
+    async with session_scope() as session:
+        assert (await session.exec(select(Task).where(Task.id == child_id))).first() is not None
+        assert (await session.exec(select(Task).where(Task.id == parent_id))).first() is not None
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_allows_parent_with_deleted_child(
+    aclient: httpx.AsyncClient,
+    seeded_two_users: tuple[int, int],
+) -> None:
+    """The guard only fires for *live* children — a fully trashed tree purges."""
+    user_a_id, _ = seeded_two_users
+    h = {"X-Telegram-Init-Data": _build_init_data(_TG_USER_A)}
+
+    tasks = (await aclient.get("/api/tasks", headers=h)).json()
+    parent_id = tasks[0]["id"]
+    async with session_scope() as session:
+        session.add(Task(user_id=user_a_id, title="Подзадача", parent_id=parent_id))
+        await session.flush()
+
+    # delete_task каскадит soft-delete на подзадачи — обе в корзине.
+    await aclient.delete(f"/api/tasks/{parent_id}", headers=h)
+
+    resp = await aclient.delete(f"/api/trash/task/{parent_id}", headers=h)
+    assert resp.status_code == 204
+
+    async with session_scope() as session:
+        assert (await session.exec(select(Task).where(Task.id == parent_id))).first() is None

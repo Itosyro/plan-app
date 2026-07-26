@@ -38,7 +38,8 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
   // is delayed (PointerSensor in App.tsx) so a quick tap on the
   // checkbox or card body still fires onClick. Long-press → card
   // lifts → user drags up to a horizon pill which is registered as
-  // a drop target in HorizonTabs.
+  // a drop target in HorizonTabs. Выполненные не таскаем — но открыть
+  // их можно: детали и подзадачи остаются доступными после галочки.
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     disabled: isDone,
@@ -106,11 +107,9 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
           aria-label={`Открыть «${task.title}»`}
           onClick={(e) => {
             e.stopPropagation();
-            if (isDone) return;
             haptic("select");
             onOpen(task.id);
           }}
-          disabled={isDone}
           className="ease-apple -m-1 min-w-0 flex-1 rounded-2xl p-1 text-left transition-transform duration-150 active:scale-[0.995]"
         >
           <div className="flex items-start gap-2">

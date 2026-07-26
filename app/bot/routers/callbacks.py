@@ -25,6 +25,7 @@ from app.ai.courier import (
 )
 from app.bot.edit_executor import (
     _UNDO_TTL_SECONDS,
+    PRIORITY_LABELS,
     _delete_confirmation,
     _dispatch_single,
     _execute_complete,
@@ -471,12 +472,24 @@ def create_router() -> Router:
                 return
             await mark_task_done(session, task, user.id)
             user_id_for_pin = user.id
+            user_tz = user.tz
 
         await callback.answer("✅ Выполнено!")
         if isinstance(callback.message, Message):
             # No parse_mode: task.title is user-controlled and can contain
             # Markdown metachars that crash Telegram's parser.
-            await callback.message.edit_text(f"✅ Выполнено: «{task.title}»")
+            rebuilt = await _rebuild_horizon_list(
+                callback.message.reply_markup,
+                callback.message.text,
+                task_id,
+                user_id_for_pin,
+                user_tz,
+            )
+            if rebuilt is None:
+                await callback.message.edit_text(f"✅ Выполнено: «{task.title}»")
+            else:
+                new_text, new_kb = rebuilt
+                await callback.message.edit_text(new_text, reply_markup=new_kb)
 
         # Phase 6.3: refresh the pinned morning digest so the strikethrough
         # state is live. Best-effort — handled inside refresh_pinned_morning.
@@ -516,10 +529,23 @@ def create_router() -> Router:
                 return
             title = task.title
             await delete_task(session, task, user.id)
+            user_id_for_list = user.id
+            user_tz = user.tz
 
         await callback.answer("🗑 Удалено!")
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(f"🗑 Удалено: «{title}»")
+            rebuilt = await _rebuild_horizon_list(
+                callback.message.reply_markup,
+                callback.message.text,
+                task_id,
+                user_id_for_list,
+                user_tz,
+            )
+            if rebuilt is None:
+                await callback.message.edit_text(f"🗑 Удалено: «{title}»")
+            else:
+                new_text, new_kb = rebuilt
+                await callback.message.edit_text(new_text, reply_markup=new_kb)
 
     @router.callback_query(F.data.startswith("task:pick_move:"))
     async def cb_task_pick_move(callback: CallbackQuery) -> None:
@@ -568,6 +594,9 @@ def create_router() -> Router:
         label = horizon_labels.get(target_horizon, target_horizon)
         await callback.answer(f"Перенесено → {label}")
         if isinstance(callback.message, Message):
+            # ``_rebuild_horizon_list`` здесь не применим: до этого шага
+            # ``cb_task_pick_move`` заменил клавиатуру списка на пикер
+            # горизонтов, и id остальных задач восстановить неоткуда.
             await callback.message.edit_text(f"🔄 «{task.title}» → {label}")
 
     @router.callback_query(F.data.startswith("task:cancel:"))
@@ -793,7 +822,9 @@ def create_router() -> Router:
         elif intent_name == "reopen":
             reply, snap_id = await _execute_reopen(task_id, user_id)
         else:
-            reply = f"Действие «{intent_name}» пока не поддерживается."
+            # ``intent_name`` — служебный слаг из callback_data
+            # («set_note_category»); показывать его человеку незачем.
+            reply = "Пока не умею такое — напиши, что нужно сделать, своими словами."
 
         touch_last_task(user_id, task_id)
 
@@ -1151,7 +1182,10 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
 
     if field == "priority":
         task.priority = old or "medium"
-        return f"Отменил: приоритет «{title}» → {old}."
+        # Показываем человеческую метку, а не служебное значение из БД
+        # («medium»): PRIORITY_LABELS — тот же словарь, что в ответах бота.
+        label = PRIORITY_LABELS.get(task.priority, task.priority)
+        return f"Отменил: приоритет «{title}» → {label}."
 
     if field == "due_at":
         from datetime import datetime
@@ -1164,7 +1198,7 @@ def _apply_undo(task: Task, snap: TaskEditSnapshot) -> str:
 
     if field == "horizon_id":
         task.horizon_id = int(old) if old is not None else None
-        return f"Отменил: горизонт «{title}» восстановлен."
+        return f"Отменил: «{title}» вернул на прежний срок."
 
     if field == "category_id":
         task.category_id = int(old) if old is not None else None

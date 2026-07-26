@@ -246,7 +246,7 @@ def create_router() -> Router:
         await callback.answer()
         if isinstance(callback.message, Message):
             await callback.message.edit_text(
-                f"✏️ {label}\n\nВыберите значение:",
+                f"✏️ {label}\n\nВыбери значение:",
                 reply_markup=_options_keyboard(field),
             )
 

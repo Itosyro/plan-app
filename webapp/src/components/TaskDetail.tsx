@@ -180,7 +180,9 @@ export function TaskDetail({
   }, [task, onMutated, onDeleted, onOptimisticDelete]);
 
   const categoryLabel = useMemo(() => {
-    if (task === null || task.category_id === null) return "Не выбрана";
+    // Та же формулировка, что и у опции в шите — иначе ряд говорит одно,
+    // а галочка в списке стоит на другом.
+    if (task === null || task.category_id === null) return "Без категории";
     const hit = categories.find((c) => c.id === task.category_id);
     return hit ? hit.name : task.category_name ?? "—";
   }, [task, categories]);
@@ -365,7 +367,7 @@ export function TaskDetail({
               label="Категория"
               value={categoryLabel}
               onClick={() => setShowCategorySheet(true)}
-              disabled={pending === "category_id" || categories.length === 0}
+              disabled={pending === "category_id"}
             />
             <DetailRow
               icon={Flag}
@@ -409,9 +411,28 @@ export function TaskDetail({
             open={showCategorySheet}
             onClose={() => setShowCategorySheet(false)}
             title="Категория"
-            options={categories.map((c) => ({ value: String(c.id), label: c.name }))}
+            // У нового пользователя категорий ещё нет — вместо мёртвого
+            // ряда объясняем, откуда они берутся (бот заводит их сам при
+            // разборе; вручную — «+» на доске).
+            hint={
+              categories.length === 0
+                ? "Появятся сами, когда бот разберёт задачи"
+                : undefined
+            }
+            options={[
+              // Явное «Без категории» — PATCH различает отсутствие поля
+              // и null, так что категорию можно и снять.
+              { value: "", label: "Без категории" },
+              ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+            ]}
             value={task.category_id === null ? "" : String(task.category_id)}
             onSelect={(value) => {
+              if (value === "") {
+                if (task.category_id !== null) {
+                  void patch("category_id", { category_id: null });
+                }
+                return;
+              }
               const id = Number.parseInt(value, 10);
               if (Number.isFinite(id) && id > 0) {
                 void patch("category_id", { category_id: id });
@@ -580,6 +601,11 @@ function ConfirmDeleteSheet({ open, onCancel, onConfirm, pending, title }: Confi
         </h3>
         <p className="mt-1 line-clamp-2 text-center text-[13px] text-tg-hint">
           «{title}»
+        </p>
+        {/* Удаление обратимо (scheduler чистит корзину через 24 ч) —
+            говорим об этом ровно там, где страшно нажимать. */}
+        <p className="mt-2 text-center text-[12px] leading-snug text-tg-hint/80">
+          Можно вернуть из Корзины в течение 24 часов.
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <button

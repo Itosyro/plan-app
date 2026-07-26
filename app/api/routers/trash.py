@@ -175,6 +175,23 @@ async def hard_delete_item(
             task = task_result.first()
             if task is None or task.user_id != user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="item not found")
+            # Та же страховка от потери данных, что в ``purge_trash``:
+            # ``parent_id`` объявлен с ondelete="CASCADE", поэтому
+            # hard-delete родителя унёс бы ЖИВОГО ребёнка (возможно, если
+            # ребёнка восстановили из корзины отдельно от родителя).
+            live_child = (
+                await session.exec(
+                    select(Task.id).where(
+                        Task.parent_id == item_id,
+                        Task.deleted_at.is_(None),  # type: ignore[union-attr]
+                    )
+                )
+            ).first()
+            if live_child is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="task has active subtasks",
+                )
             await session.delete(task)
             await session.flush()
         else:

@@ -10,6 +10,7 @@ WS3: accept replies/forwards of voice or text as pipeline input.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from aiogram import F, Router
 from aiogram.types import Message
@@ -17,11 +18,12 @@ from aiogram.types import Message
 from app.ai.models import get_models
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
-from app.bot.courier_templates import NOT_ONBOARDED
+from app.bot.courier_templates import NOT_ONBOARDED, PIPELINE_FAILED
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._message_payload import TextPayload, VoicePayload, resolve_effective_payload
 from app.bot.routers._pipeline import (
+    flag_needs_review,
     get_groq_router,
     log_task_exception,
     run_pipeline,
@@ -147,6 +149,9 @@ def create_router() -> Router:
                 logger.debug("pipeline.stage_edit_failed", exc_info=True)
 
         async def _background() -> None:
+            # Инициализируем до try: если упадём на Whisper, записи в
+            # inbox ещё нет — и обещать «лежит во Входящих» нельзя.
+            inbox_id: int | None = None
             try:
                 # Resolve effective payload: own voice, OR reply/forward target.
                 payload = await resolve_effective_payload(
@@ -265,12 +270,18 @@ def create_router() -> Router:
                 )
                 if message.bot is not None:
                     await reactions.set_reaction(message.bot, chat_id, msg_id, reactions.ERROR)
+                if inbox_id is None:
+                    # Упали до сохранения (скачивание/Whisper) — ничего не
+                    # сохранено, единственный честный совет: повторить.
+                    failed_text = "Не получилось обработать голосовое — попробуй ещё раз."
+                else:
+                    with contextlib.suppress(Exception):
+                        await flag_needs_review(inbox_id, review_enabled=review_enabled)
+                    failed_text = PIPELINE_FAILED
                 try:
-                    await placeholder.edit_text(
-                        "Ошибка при обработке голосового — попробуй ещё раз."
-                    )
+                    await placeholder.edit_text(failed_text)
                 except Exception:
-                    await message.answer("Ошибка при обработке голосового — попробуй ещё раз.")
+                    await message.answer(failed_text)
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)

@@ -148,6 +148,26 @@ export function CalendarView({ tz, onOpen }: Props) {
     return map;
   }, [tasks, tz]);
 
+  // Явный «Сегодня» показываем, только когда открыт не текущий период —
+  // раньше вернуться можно было лишь неочевидным тапом по диапазону дат
+  // (в неделе), а из чужого месяца — только листанием.
+  const tKey = todayKey(tz);
+  const isCurrentMonth =
+    viewYear === now.getFullYear() && viewMonth === now.getMonth();
+  const weekEndKey = dateKeyOf(
+    new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6),
+  );
+  const weekHasToday = dateKeyOf(weekStart) <= tKey && tKey <= weekEndKey;
+
+  const goToday = () => {
+    haptic("select");
+    const today = new Date();
+    setViewYear(today.getFullYear());
+    setViewMonth(today.getMonth());
+    setWeekStart(startOfWeek(today));
+    setSelectedKey(todayKey(tz));
+  };
+
   const changeMode = (m: CalMode) => {
     setMode(m);
     void storageSet(StorageKeys.lastCalendarView, m);
@@ -188,6 +208,8 @@ export function CalendarView({ tz, onOpen }: Props) {
             haptic("select");
             setSelectedKey(k);
           }}
+          showToday={!isCurrentMonth}
+          onToday={goToday}
           onOpen={onOpen}
         />
       )}
@@ -205,10 +227,8 @@ export function CalendarView({ tz, onOpen }: Props) {
             haptic("select");
             setWeekStart((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7));
           }}
-          onToday={() => {
-            haptic("select");
-            setWeekStart(startOfWeek(new Date()));
-          }}
+          showToday={!weekHasToday}
+          onToday={goToday}
           onOpen={onOpen}
         />
       )}
@@ -230,11 +250,14 @@ interface MonthProps {
   onPrev: () => void;
   onNext: () => void;
   onSelect: (key: string) => void;
+  showToday: boolean;
+  onToday: () => void;
   onOpen: (id: number) => void;
 }
 
 function MonthView({
-  tz, byDay, viewYear, viewMonth, selectedKey, onPrev, onNext, onSelect, onOpen,
+  tz, byDay, viewYear, viewMonth, selectedKey, onPrev, onNext, onSelect,
+  showToday, onToday, onOpen,
 }: MonthProps) {
   const cells = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
@@ -255,9 +278,12 @@ function MonthView({
       <div className="rounded-3xl bg-bento-card p-4 shadow-bento ring-1 ring-black/5">
         <div className="mb-3 flex items-center justify-between">
           <NavButton dir="prev" onClick={onPrev} label="Предыдущий месяц" />
-          <span className="font-display text-[16px] font-semibold tracking-tight text-tg-text">
-            {MONTHS[viewMonth]} {viewYear}
-          </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="font-display truncate text-[16px] font-semibold tracking-tight text-tg-text">
+              {MONTHS[viewMonth]} {viewYear}
+            </span>
+            {showToday && <TodayButton onClick={onToday} />}
+          </div>
           <NavButton dir="next" onClick={onNext} label="Следующий месяц" />
         </div>
         <div className="mb-1 grid grid-cols-7 gap-1">
@@ -359,11 +385,12 @@ interface WeekProps {
   weekStart: Date;
   onPrev: () => void;
   onNext: () => void;
+  showToday: boolean;
   onToday: () => void;
   onOpen: (id: number) => void;
 }
 
-function WeekView({ tz, byDay, weekStart, onPrev, onNext, onToday, onOpen }: WeekProps) {
+function WeekView({ tz, byDay, weekStart, onPrev, onNext, showToday, onToday, onOpen }: WeekProps) {
   const days = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
@@ -381,13 +408,16 @@ function WeekView({ tz, byDay, weekStart, onPrev, onNext, onToday, onOpen }: Wee
     <div className="rounded-3xl bg-bento-card p-3 shadow-bento ring-1 ring-black/5">
       <div className="mb-2 flex items-center justify-between">
         <NavButton dir="prev" onClick={onPrev} label="Предыдущая неделя" />
-        <button
-          type="button"
-          onClick={onToday}
-          className="font-display rounded-full px-3 py-1 text-[15px] font-semibold tracking-tight text-tg-text transition-colors hover:bg-bento"
-        >
-          {rangeLabel}
-        </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onToday}
+            className="font-display truncate rounded-full px-3 py-1 text-[15px] font-semibold tracking-tight text-tg-text transition-colors hover:bg-bento"
+          >
+            {rangeLabel}
+          </button>
+          {showToday && <TodayButton onClick={onToday} />}
+        </div>
         <NavButton dir="next" onClick={onNext} label="Следующая неделя" />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -592,6 +622,20 @@ function NavButton({ dir, onClick, label }: { dir: "prev" | "next"; onClick: () 
       className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-[transform,background-color] duration-150 hover:bg-bento active:scale-90"
     >
       <Icon size={20} strokeWidth={2.25} aria-hidden />
+    </button>
+  );
+}
+
+// Возврат к текущему периоду. Рендерится только когда открыт чужой
+// месяц/неделя — в текущем периоде кнопка была бы шумом.
+function TodayButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="ease-apple shrink-0 rounded-full bg-tg-button/10 px-3 py-1.5 text-[12px] font-semibold text-tg-button ring-1 ring-tg-button/20 transition-all duration-200 active:scale-[0.96]"
+    >
+      Сегодня
     </button>
   );
 }

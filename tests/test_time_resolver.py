@@ -346,3 +346,36 @@ def test_parse_user_datetime_time_only_today(raw: str) -> None:
     assert parsed is not None
     assert parsed.date() == now.date()
     assert parsed.hour == 15
+
+
+def test_parse_user_datetime_honours_evening_anchor() -> None:
+    """M-6 anchors must reach the edit-executor surface too.
+
+    Раньше ``parse_user_datetime`` звал ``_preprocess`` без якорей, и
+    «напомни вечером» через голосовую правку давало дефолтные 19:00
+    вместо настроенных пользователем.
+    """
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
+    parsed = parse_user_datetime("вечером", _TZ, now=now, evening_anchor="21:00")
+    assert parsed is not None
+    assert parsed.hour == 21
+    assert parsed.date() == now.date()
+
+
+def test_parse_user_datetime_honours_morning_anchor() -> None:
+    """Same for «утром» → morning_anchor."""
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
+    parsed = parse_user_datetime("утром", _TZ, now=now, morning_anchor="08:00")
+    assert parsed is not None
+    assert parsed.hour == 8
+    # 08:00 сегодня уже прошло в 12:00 — переносится на завтра.
+    assert (parsed.date() - now.date()).days == 1
+
+
+def test_parse_user_datetime_anchor_defaults_unchanged() -> None:
+    """Without kwargs the old hard-coded 19:00 / 09:00 still apply."""
+    now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=ZoneInfo(_TZ))
+    evening = parse_user_datetime("вечером", _TZ, now=now)
+    morning = parse_user_datetime("утром", _TZ, now=now)
+    assert evening is not None and evening.hour == 19
+    assert morning is not None and morning.hour == 9
