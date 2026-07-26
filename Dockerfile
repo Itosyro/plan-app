@@ -28,7 +28,12 @@ FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dc
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    # Куда ``uv sync`` кладёт окружение. Без этой переменной uv ставит
+    # всё в ``.venv`` внутри проекта и молча игнорирует ``VIRTUAL_ENV``
+    # — образ тогда собирается «успешно», но приезжает без единой
+    # зависимости и падает при первом запуске.
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
@@ -41,8 +46,7 @@ WORKDIR /app
 # Resolve from the lock file so the image matches CI exactly. Only the
 # runtime dependency group — no ruff/pytest/mypy in production.
 COPY pyproject.toml uv.lock ./
-RUN uv venv /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 
 # ── Stage 3: runtime ────────────────────────────────────────────────
@@ -71,6 +75,12 @@ COPY app/ ./app/
 # mounts ``webapp/dist`` at ``/app`` only when the directory exists,
 # so this also works in dev when the build step is skipped.
 COPY --from=frontend /webapp/dist /app/webapp/dist
+
+# Smoke-check прямо в сборке: импортируем приложение целиком. Ловит
+# класс ошибок «образ собрался, но нерабочий» — например, окружение,
+# уехавшее не в ту папку, из-за чего слой с зависимостями просто не
+# попадает в образ. Дешевле упасть здесь, чем на сервере пользователя.
+RUN python -c "import app.main"
 
 # non-root user. ``/app/data`` is where the self-hosted SQLite file
 # lives (bind-mounted by compose) — it must be writable by that user.
