@@ -32,7 +32,7 @@
    └────────┬───────────────────────────────────┘
             │ Postgres protocol
             ▼
-       Neon PostgreSQL
+       Supabase PostgreSQL
 
    ┌──────────────────────────────────────┐
    │    cron worker (Render, every 1 min) │
@@ -58,7 +58,7 @@ voice/text in
 └───────┬───────┘
         ▼
 ┌───────────────┐
-│  Splitter     │  llama-3.1-8b-instant via Groq key 1
+│  Splitter     │  openai/gpt-oss-20b via GroqKeyRouter
 │               │  task: разбить русский текст на отдельные интенты
 │               │  output: list[RawIntent]
 └───────┬───────┘
@@ -70,7 +70,7 @@ voice/text in
 └───────┬───────┘
         ▼
 ┌───────────────┐
-│  Classifier   │  llama-3.3-70b-versatile via Groq key 2
+│  Classifier   │  openai/gpt-oss-120b via GroqKeyRouter
 │               │  task: каждому интенту → category + horizon + priority +
 │               │       reminder_offsets (если есть)
 │               │       решает «task или note», создаёт новые категории
@@ -79,7 +79,7 @@ voice/text in
 └───────┬───────┘
         ▼
 ┌───────────────┐
-│  Critic       │  qwen-qwq-32b (reasoning) via Groq key 3
+│  Critic       │  openai/gpt-oss-120b via GroqKeyRouter
 │               │  task: проверяет результат, исправляет ошибки,
 │               │        либо отдаёт ОК. Режим «по уверенности» по
 │               │        умолчанию (тумблер в /settings)
@@ -91,7 +91,7 @@ voice/text in
         │
         ▼
 ┌───────────────┐
-│ Courier reply │  ~50% template / ~50% дешёвый LLM-call (8b-instant)
+│ Courier reply │  ~50% template / ~50% дешёвый LLM-call (gpt-oss-20b)
 │               │  Шаблонов ≥30 (≥5 на стиль), выбираются рандомно
 │               │  Юзер может зафиксировать «только шаблоны / только AI / микс»
 └───────────────┘
@@ -99,23 +99,30 @@ voice/text in
 
 ### 2.1. Распределение моделей по ключам
 
-| Шаг | Модель Groq | Ключ | Почему |
-|---|---|---|---|
-| Whisper | `whisper-large-v3` | round-robin | один большой запрос, точность > скорости |
-| Splitter | `llama-3.1-8b-instant` | key 1 | задача простая (разбить), важна скорость |
-| Classifier | `llama-3.3-70b-versatile` | key 2 | основной мозг, надо понимать контекст |
-| Critic | `qwen-qwq-32b` (reasoning) | key 3 | специально натаскана думать пошагово, отлично ловит ошибки Classifier'а |
-| Courier-LLM (~50% ответов) | `llama-3.1-8b-instant` | round-robin | очень короткая фраза, минимум токенов |
+Единственный источник правды — реестр `app/ai/models.py` (`get_models()`);
+каждая стадия читает свой ID оттуда, любой перекрывается env-переменной
+`GROQ_MODEL_<STAGE>` без редеплоя. Ключи не закреплены за стадиями:
+`GroqKeyRouter` — round-robin с ротацией на 429/5xx, клиент кэшируется
+на ключ.
 
-#### Резервы / альтернативы (для Phase 2 будем сравнивать)
+| Шаг | Модель Groq (дефолт) | Почему |
+|---|---|---|
+| Whisper | `whisper-large-v3` | один большой запрос, точность > скорости (turbo хуже на русском) |
+| Splitter / Intent / Reorder / Courier / TaskSplitter | `openai/gpt-oss-20b` | лёгкие стадии, важна скорость |
+| Classifier | `openai/gpt-oss-120b` | основной мозг, надо понимать контекст |
+| Critic | `openai/gpt-oss-120b` | вторая пара глаз над Classifier'ом |
 
-Groq на бесплатном тарифе сейчас даёт намного больше моделей, чем нам нужно. Кроме перечисленных выше доступны как минимум:
-- `meta-llama/llama-4-scout-17b-16e-instruct` — Llama 4 Scout, новая, может оказаться лучше 70B для Classifier;
-- `meta-llama/llama-4-maverick-17b-128e-instruct` — Llama 4 Maverick, крупнее Scout;
-- `gemma2-9b-it` — лёгкая Gemma от Google (запасная для Splitter, если 8B-instant ляжет);
-- `whisper-large-v3-turbo` — быстрее, чуть менее точно, чем `large-v3`.
+**История (важно, чтобы не откатили):** до июля 2026 здесь стояли
+`llama-3.1-8b-instant` / `llama-3.3-70b-versatile` / `qwen-qwq-32b`.
+`qwen-qwq-32b` Groq снял с обслуживания; обе llama депрекированы
+17 июня 2026 с отключением в августе 2026. Майская попытка перейти на
+gpt-oss (PR #171) провалилась из-за `instructor.Mode.JSON` —
+reasoning-токены ломали парсинг; в июле все колсайты переведены на
+`Mode.TOOLS` (схема как tool, ответ из `tool_calls[0].function.arguments`),
+и gpt-oss заработал. См. `docs/audit/2026-07-26-audit.md`.
 
-ChatGPT/OpenAI на Groq не хостится — у Groq только опенсорс/опенвейт. Это нормально: на текущем стеке нам этого хватает с запасом.
+ChatGPT/OpenAI на Groq не хостится — у Groq только опенсорс/опенвейт
+(`openai/gpt-oss-*` — это открытые веса OpenAI, а не API OpenAI).
 
 В Phase 2 проводим A/B на golden-set из 50 русских фраз (`tests/golden/ru/*.json`), оставляем то, что лучше по точности и стабильности.
 
@@ -179,7 +186,7 @@ threshold`, то после персиста помечаем исходную �
 
 **Подтверждение** генерируется одним из двух способов, выбор рандомный per-reply:
 - **Шаблон** (≥30 фраз, ≥5 на каждый стиль). Файл: `app/bot/courier_templates.py`. Стили: `neutral`, `formal_master` («мой господин»), `friendly`, `playful`, `terse`, `respectful`.
-- **LLM** — `llama-3.1-8b-instant`, очень короткий промпт «дай 1 фразу подтверждения в стиле X на русском, ≤8 слов». Логируется в `AiRun` для контроля стоимости.
+- **LLM** — лёгкая модель реестра (`openai/gpt-oss-20b`), очень короткий промпт «дай 1 фразу подтверждения в стиле X на русском, ≤8 слов». Логируется в `AiRun` для контроля стоимости.
 
 Юзер в `/settings.response_style.source` может выставить `template_only` / `llm_only` / `mix` (дефолт `mix` 50/50).
 
@@ -264,7 +271,7 @@ Alembic. Папка `alembic/versions/`. Каждый PR с изменениям
 | `TELEGRAM_BOT_TOKEN` | токен бота |
 | `TELEGRAM_WEBHOOK_SECRET` | секрет для пути `/tg/<secret>` |
 | `GROQ_API_KEYS` | список через запятую |
-| `DATABASE_URL` | Postgres URL (Neon) |
+| `DATABASE_URL` | Postgres URL (Supabase) |
 | `LOG_LEVEL` | INFO / DEBUG |
 | `CRITIC_DEFAULT_MODE` | confidence / paranoid |
 | `WEBHOOK_BASE_URL` | публичный URL Render |
