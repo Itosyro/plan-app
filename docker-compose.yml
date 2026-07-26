@@ -57,3 +57,32 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Маршрутизатор на один публичный порт. Запускается ТОЛЬКО явно:
+  #   docker compose --profile router up -d
+  # Нужен, когда хостинг публикует один порт, а он уже занят соседним
+  # проектом. Подробности и порядок переключения — docs/SELF-HOSTING.md.
+  router:
+    profiles: ["router"]
+    image: caddy:2-alpine
+    container_name: plan-app-router
+    restart: unless-stopped
+    # host-сеть: Caddy занимает порт прямо на машине и ходит к обоим
+    # сервисам по 127.0.0.1. Иначе пришлось бы пробрасывать соседний
+    # проект внутрь docker-сети, а он про нас ничего не знает.
+    network_mode: host
+    environment:
+      ROUTER_PORT: "${ROUTER_PORT:-3003}"
+      PLAN_UPSTREAM: "127.0.0.1:8000"
+      NEIGHBOUR_UPSTREAM: "${NEIGHBOUR_UPSTREAM:-127.0.0.1:3002}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy-data:
