@@ -2,6 +2,15 @@
 
 Каждая фаза = отдельный PR. Маленькие PR, ревьюить и откатывать удобнее.
 
+> **Status (на 2026-07-26, аудит-круг 1):** проект в режиме
+> **goal-loop** — повторяющиеся круги аудита свежим взглядом каждые
+> ~5 часов (скилл `.claude/skills/audit-loop`). Круг 1: 57
+> подтверждённых багов, все критические исправлены, модели мигрированы
+> на `openai/gpt-oss-20b/120b` (llama отключают в августе 2026),
+> 630 тестов. Детали: `docs/audit/2026-07-26-audit.md` и верх
+> `docs/PROGRESS.md`. Будущее мобильное приложение: PWA → Capacitor →
+> offline (план в `docs/plans/2026-07-26-audit-improvements.md`).
+>
 > **Status (на 2026-05-28, после PR #106..#155):**
 > Phase 0..7d + Voice/Text Edit (PR-I серия) + Reminder Management
 > (PR-J серия) — **done и в проде**. Needs-Clarification UI (PR-K)

@@ -66,15 +66,16 @@ export function BottomNav({ active, onChange, badges }: Props) {
           style={{ width: `${CELL_PX * ITEMS.length}px` }}
         >
           {/* Sliding active-tab capsule — a clear filled pill (Mira
-              style) so the current tab reads unmistakably. cubic-bezier
-              matches the iOS / Telegram spring (soft overshoot). */}
+              style) so the current tab reads unmistakably. iOS drawer
+              curve, 260ms: tab switching happens dozens of times a day,
+              so it stays under the 300ms budget with no bounce. */}
           <div
             aria-hidden
             className="pointer-events-none absolute inset-y-0 rounded-[24px] bg-tg-button/[0.14] ring-1 ring-tg-button/[0.10]"
             style={{
               width: `${CELL_PX}px`,
               transform: `translateX(${activeIndex * CELL_PX}px)`,
-              transition: "transform 340ms cubic-bezier(0.32, 0.72, 0.20, 1.05)",
+              transition: "transform 260ms cubic-bezier(0.32, 0.72, 0, 1)",
             }}
           />
           {ITEMS.map((item) => {
@@ -108,7 +109,7 @@ export function BottomNav({ active, onChange, badges }: Props) {
                     strokeWidth={isActive ? 2.5 : 2.0}
                     aria-hidden
                     className={
-                      "transition-transform duration-300 " +
+                      "transition-transform duration-200 " +
                       (isActive ? "scale-110" : "scale-100")
                     }
                   />
@@ -123,7 +124,7 @@ export function BottomNav({ active, onChange, badges }: Props) {
                 </span>
                 <span
                   className={
-                    "font-display text-[11px] leading-tight tracking-tight transition-all duration-200 " +
+                    "font-display text-[11px] leading-tight tracking-tight transition-[font-weight] duration-200 " +
                     (isActive ? "font-semibold" : "font-medium")
                   }
                 >

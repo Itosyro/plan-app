@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.api.auth import current_user
 from app.api.routers.notes import _note_to_out
@@ -21,6 +21,32 @@ from app.db.base import session_scope
 from app.db.models import Category, Horizon, InboxEntry, Note, Task, User
 
 router = APIRouter()
+
+
+@router.get("/pending/count")
+async def count_pending_reviews(
+    user: User = Depends(current_user),
+) -> dict[str, int]:
+    """Return only the number of entries awaiting review.
+
+    The nav badge needs a single integer; downloading the fully
+    hydrated review list (entries + tasks + notes) on every Mini-App
+    open just to call ``.length`` was pure waste. One COUNT query.
+    """
+    if user.id is None:
+        raise RuntimeError("authenticated user has no id")
+    async with session_scope() as session:
+        count = (
+            await session.exec(
+                select(func.count())
+                .select_from(InboxEntry)
+                .where(
+                    InboxEntry.user_id == user.id,
+                    InboxEntry.needs_review.is_(True),  # type: ignore[attr-defined]
+                )
+            )
+        ).one()
+    return {"count": int(count)}
 
 
 @router.get("/pending", response_model=list[InboxReviewOut])
@@ -51,13 +77,18 @@ async def list_pending_reviews(
             )
         ).all()
 
-        reviews: list[InboxReviewOut] = []
-        for entry in entries:
-            rows = (
+        # Два агрегированных запроса вместо пары запросов на каждую
+        # запись (N+1): собираем задачи/заметки всех ревью-записей одним
+        # IN и группируем в Python, сохраняя порядок created_at.
+        entry_ids = [e.id for e in entries if e.id is not None]
+        tasks_by_entry: dict[int, list[tuple[Task, str | None, str | None]]] = {}
+        notes_by_entry: dict[int, list[tuple[Note, str | None]]] = {}
+        if entry_ids:
+            all_task_rows = (
                 await session.exec(
                     select(Task, Horizon.slug, Category.name)
                     .where(
-                        Task.source_inbox_id == entry.id,
+                        Task.source_inbox_id.in_(entry_ids),  # type: ignore[union-attr]
                         Task.parent_id.is_(None),  # type: ignore[union-attr]
                         Task.deleted_at.is_(None),  # type: ignore[union-attr]
                     )
@@ -66,17 +97,28 @@ async def list_pending_reviews(
                     .order_by(Task.created_at.asc())  # type: ignore[attr-defined]
                 )
             ).all()
-            note_rows = (
+            for t, hslug, cname in all_task_rows:
+                if t.source_inbox_id is not None:
+                    tasks_by_entry.setdefault(t.source_inbox_id, []).append((t, hslug, cname))
+            all_note_rows = (
                 await session.exec(
                     select(Note, Category.name)
                     .where(
-                        Note.source_inbox_id == entry.id,
+                        Note.source_inbox_id.in_(entry_ids),  # type: ignore[union-attr]
                         Note.deleted_at.is_(None),  # type: ignore[union-attr]
                     )
                     .join(Category, Category.id == Note.category_id, isouter=True)  # type: ignore[arg-type]
                     .order_by(Note.created_at.asc())  # type: ignore[attr-defined]
                 )
             ).all()
+            for n, cname in all_note_rows:
+                if n.source_inbox_id is not None:
+                    notes_by_entry.setdefault(n.source_inbox_id, []).append((n, cname))
+
+        reviews: list[InboxReviewOut] = []
+        for entry in entries:
+            rows = tasks_by_entry.get(entry.id or -1, [])
+            note_rows = notes_by_entry.get(entry.id or -1, [])
             if not rows and not note_rows:
                 continue
             tasks_out = [_task_to_out(t, hslug, cname) for t, hslug, cname in rows]

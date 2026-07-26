@@ -143,6 +143,8 @@ export interface TaskUpdate {
   priority?: TaskPriority;
   horizon_slug?: HorizonSlug;
   category_id?: number | null;
+  // Explicit ``null`` clears the date («Убрать дату»); the server
+  // distinguishes absent (keep) from null (clear).
   due_at?: string | null;
 }
 

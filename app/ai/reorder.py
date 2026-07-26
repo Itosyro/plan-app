@@ -3,7 +3,7 @@
 Recognises phrases like «перенеси задачу X на завтра» and updates
 the task's horizon (and optionally due_at) in the database.
 
-Uses ``llama-3.1-8b-instant`` via Groq with ``instructor`` for
+Uses the light registry model via Groq with ``instructor`` for
 structured detection of reorder intent.
 """
 
@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 
 import instructor
-from groq import AsyncGroq
 
 from app.ai._safety import wrap_untrusted
 from app.ai.models import get_models
@@ -58,8 +57,8 @@ async def detect_reorder(
 
     async def _do_call(r: GroqKeyRouter) -> ReorderRequest:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().reorder,

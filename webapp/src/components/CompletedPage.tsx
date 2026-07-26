@@ -18,6 +18,9 @@ import { SkeletonList } from "./Skeleton";
 
 interface Props {
   tz: string;
+  /** Called after a successful reopen so App.tsx can invalidate the
+   *  list/board/calendar caches and reconcile the horizon badges. */
+  onMutated?: () => void;
 }
 
 // Human day heading from a YYYY-MM-DD key, relative to today/yesterday.
@@ -35,7 +38,7 @@ function dayHeading(key: string, tz: string): string {
   });
 }
 
-export function CompletedPage({ tz }: Props) {
+export function CompletedPage({ tz, onMutated }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<number | null>(null);
@@ -66,6 +69,7 @@ export function CompletedPage({ tz }: Props) {
       await apiClient.patchTask(task.id, { status: "new" });
       haptic("success");
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      onMutated?.();
     } catch {
       haptic("error");
     } finally {

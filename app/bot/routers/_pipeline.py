@@ -305,8 +305,16 @@ async def _run_pipeline_inner(
             "попробуй переформулировать."
         ), None
 
+    # Общий фан-аут-семафор + таймаут для всех тяжёлых Groq-вызовов
+    # пайплайна (per-unit intent, classify, critic) — см. комментарий
+    # у classify-стадии ниже.
+    pipeline_settings = get_settings()
+    fanout_sem = asyncio.Semaphore(pipeline_settings.pipeline_llm_fanout)
+    call_timeout = pipeline_settings.pipeline_call_timeout_seconds
+
     # PR-I3: multi-intent — detect_intent each unit, separate edits from creates.
     edit_replies: list[str] = []
+    edit_keyboards: list[InlineKeyboardMarkup] = []
     create_units = []
     if len(split_result.units) == 1:
         # Single-unit short-circuit: the whole-message detect_intent above
@@ -317,20 +325,37 @@ async def _run_pipeline_inner(
     else:
         # Detect intent for every unit in parallel, then split edits from
         # creates while preserving order. ``execute_edit`` stays sequential
-        # so edit replies keep their order.
+        # so edit replies keep their order. ``return_exceptions=True`` +
+        # ``_throttled_call``: один сбой Groq (429/5xx/таймаут) не должен
+        # ронять ВСЕ пункты сообщения — упавший юнит считаем create, чтобы
+        # пункт не потерялся (классификатор разберётся дальше).
         unit_intents = await asyncio.gather(
-            *[detect_intent(groq_router, unit.text) for unit in split_result.units]
+            *[
+                _throttled_call(fanout_sem, call_timeout, detect_intent(groq_router, unit.text))
+                for unit in split_result.units
+            ],
+            return_exceptions=True,
         )
         for unit, unit_intent in zip(split_result.units, unit_intents, strict=True):
+            if isinstance(unit_intent, BaseException):
+                logger.exception(
+                    "pipeline.unit_intent_failed",
+                    user_id=user_id,
+                    exc_info=(type(unit_intent), unit_intent, unit_intent.__traceback__),
+                )
+                create_units.append(unit)
+                continue
             if unit_intent.intent in EDIT_INTENTS_ALL:
-                reply_text, _kb = await execute_edit(unit_intent, user_id)
+                reply_text, unit_kb = await execute_edit(unit_intent, user_id)
                 edit_replies.append(reply_text)
+                if unit_kb is not None:
+                    edit_keyboards.append(unit_kb)
             else:
                 create_units.append(unit)
 
     if not create_units:
         # All units were edits — return combined replies.
-        return "\n".join(edit_replies), None
+        return _attach_edit_keyboards("\n".join(edit_replies), None, edit_keyboards)
 
     # Live-draft: for multi-item messages, tell the user what we found
     # before the slower classify+critic pass runs. Single-item messages
@@ -369,10 +394,6 @@ async def _run_pipeline_inner(
     # per-call timeout is the missing upper bound on a stuck Groq
     # request: without it one hung call would hold the per-user
     # pipeline semaphore indefinitely.
-    pipeline_settings = get_settings()
-    fanout_sem = asyncio.Semaphore(pipeline_settings.pipeline_llm_fanout)
-    call_timeout = pipeline_settings.pipeline_call_timeout_seconds
-
     classify_tasks = [
         _throttled_call(
             fanout_sem,
@@ -401,6 +422,9 @@ async def _run_pipeline_inner(
         survivors.append((item, resolved, unit.text))
 
     if not survivors:
+        # Все пункты потеряны (rate-limit/timeout) — сырьё осталось только
+        # во «Входящих», без флага оно пропадало из ревью-таба Mini-App.
+        await _flag_needs_review(inbox_id, review_enabled=review_enabled)
         return (
             "Не удалось разобрать сообщение — сохранил его целиком во «Входящие», "
             "загляни туда позже."
@@ -550,11 +574,17 @@ async def _run_pipeline_inner(
         # Flag the inbox entry for review when the message produced
         # several tasks or anything came back unsure. The tasks already
         # exist (вариант Б) — the flag just routes them to the Mini-App
-        # «Входящие» tab for a confirm / cleanup pass.
+        # «Входящие» tab for a confirm / cleanup pass. ``classify_failures``
+        # тоже флажит: раз пункты потеряны, «отложил во Входящие» из
+        # ответа должно совпадать с реальностью ревью-таба.
         if (
             review_enabled
             and inbox_id is not None
-            and ((created_task_count + created_note_count) >= 2 or any_low_confidence)
+            and (
+                (created_task_count + created_note_count) >= 2
+                or any_low_confidence
+                or classify_failures > 0
+            )
         ):
             entry = await session.get(InboxEntry, inbox_id)
             if entry is not None:
@@ -590,7 +620,39 @@ async def _run_pipeline_inner(
     if edit_replies:
         text_reply = "\n".join(edit_replies) + "\n\n" + text_reply
 
-    return text_reply, keyboard
+    return _attach_edit_keyboards(text_reply, keyboard, edit_keyboards)
+
+
+def _attach_edit_keyboards(
+    text_reply: str,
+    keyboard: InlineKeyboardMarkup | None,
+    edit_keyboards: list[InlineKeyboardMarkup],
+) -> PipelineReply:
+    """Attach edit-reply keyboards to the final single-message reply.
+
+    Клавиатура edit-ответа (подтверждение удаления, выбор задачи при
+    неоднозначности) — единственный способ завершить действие, поэтому
+    она приоритетнее summary-карточки courier.
+    """
+    if not edit_keyboards:
+        return text_reply, keyboard
+    if len(edit_keyboards) > 1:
+        # ponytail: одно сообщение — одна клавиатура; остальные
+        # подтверждения просим повторить по одному. Отдельные сообщения
+        # потребовали бы прокидывать bot/message через run_pipeline.
+        text_reply += "\n\n(остальные действия подтверди по одному — повтори команду)"
+    return text_reply, edit_keyboards[0]
+
+
+async def _flag_needs_review(inbox_id: int | None, *, review_enabled: bool) -> None:
+    """Mark the inbox entry for the Mini-App review tab (best-effort)."""
+    if not review_enabled or inbox_id is None:
+        return
+    async with session_scope() as session:
+        entry = await session.get(InboxEntry, inbox_id)
+        if entry is not None:
+            entry.needs_review = True
+            session.add(entry)
 
 
 # Re-export ``Note``/``Task`` only so static type-checkers don't strip the

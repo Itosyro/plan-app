@@ -275,7 +275,7 @@ export function NoteDetail({
                 setConfirmDelete(true);
               }}
               disabled={pending === "delete"}
-              className="ease-apple mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[15px] font-medium text-rose-700 transition-all duration-200 active:scale-[0.97] disabled:opacity-60 dark:text-rose-300 animate-fade-in"
+              className="ease-apple mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-3 text-[15px] font-medium text-rose-700 transition-[transform,opacity] duration-200 active:scale-[0.97] disabled:opacity-60 dark:text-rose-300 animate-fade-in"
             >
               <Trash2 size={16} strokeWidth={2.25} aria-hidden />
               Удалить заметку
@@ -290,18 +290,15 @@ export function NoteDetail({
         onClose={() => setShowCategorySheet(false)}
         title="Категория"
         options={[
-          { value: "", label: "Без категории" },
+          // «Без категории» only while drafting: the API contract can't
+          // clear category_id on a saved note (PATCH skips ``None``), so
+          // showing it there would be a silent no-op.
+          ...(note === null ? [{ value: "", label: "Без категории" }] : []),
           ...categories.map((c) => ({ value: String(c.id), label: c.name })),
         ]}
         value={categoryId === null || categoryId === undefined ? "" : String(categoryId)}
         onSelect={(value) => {
           if (value === "") {
-            if (note !== null && note.category_id !== null) {
-              // No backend support for clearing yet via API contract
-              // (PATCH skips ``None``). Treat as no-op visually.
-              setDraftCategoryId(null);
-              return;
-            }
             setDraftCategoryId(null);
             return;
           }
@@ -348,7 +345,7 @@ function DetailRow({ icon, tone, label, value, onClick, disabled }: RowProps) {
       onClick={onClick}
       disabled={disabled}
       className={
-        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-black/5 transition-all duration-200 " +
+        "ease-apple flex items-center justify-between gap-3 rounded-2xl bg-bento-card px-4 py-3 text-left shadow-bento ring-1 ring-black/5 transition-[transform,opacity,background-color] duration-200 " +
         (disabled ? "opacity-60 " : "active:scale-[0.99] hover:bg-bento-card/90")
       }
     >

@@ -17,7 +17,13 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hours / 24)} д назад`;
 }
 
-export function TrashPage() {
+interface Props {
+  /** Called after a successful restore so App.tsx can invalidate the
+   *  list/board/calendar/notes caches and reconcile the badges. */
+  onMutated?: () => void;
+}
+
+export function TrashPage({ onMutated }: Props) {
   const [items, setItems] = useState<TrashItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<string | null>(null);
@@ -44,6 +50,7 @@ export function TrashPage() {
       await apiClient.restoreTrashItem(item.kind, item.id);
       haptic("success");
       setItems((prev) => prev.filter((i) => !(i.kind === item.kind && i.id === item.id)));
+      onMutated?.();
     } catch {
       haptic("error");
     } finally {
@@ -116,6 +123,16 @@ interface SectionProps {
 }
 
 function TrashSection({ title, items, pending, onRestore, onDelete }: SectionProps) {
+  // Two-tap hard delete: the first tap arms the button («Точно
+  // удалить?»), the second within 3s actually deletes. Cheaper than a
+  // confirm sheet and keeps the destructive action deliberate.
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (confirmKey === null) return;
+    const t = window.setTimeout(() => setConfirmKey(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [confirmKey]);
+
   return (
     <section>
       <header className="mb-2 px-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-tg-hint">
@@ -143,19 +160,35 @@ function TrashSection({ title, items, pending, onRestore, onDelete }: SectionPro
                 <button
                   disabled={disabled}
                   onClick={() => onRestore(item)}
-                  className="ease-apple flex h-8 w-8 items-center justify-center rounded-xl text-tg-link transition-all duration-200 active:scale-[0.90] disabled:opacity-40"
+                  className="ease-apple flex h-11 w-11 items-center justify-center rounded-xl text-tg-link transition-all duration-200 active:scale-[0.90] disabled:opacity-40"
                   title="Восстановить"
                 >
                   <RotateCcw size={16} strokeWidth={2.25} />
                 </button>
-                <button
-                  disabled={disabled}
-                  onClick={() => onDelete(item)}
-                  className="ease-apple flex h-8 w-8 items-center justify-center rounded-xl text-rose-500 transition-all duration-200 active:scale-[0.90] disabled:opacity-40"
-                  title="Удалить навсегда"
-                >
-                  <Trash2 size={16} strokeWidth={2.25} />
-                </button>
+                {confirmKey === key ? (
+                  <button
+                    disabled={disabled}
+                    onClick={() => {
+                      setConfirmKey(null);
+                      onDelete(item);
+                    }}
+                    className="ease-apple min-h-11 shrink-0 rounded-xl bg-rose-500 px-3 text-[13px] font-semibold text-white transition-all duration-200 active:scale-[0.96] disabled:opacity-40"
+                  >
+                    Точно удалить?
+                  </button>
+                ) : (
+                  <button
+                    disabled={disabled}
+                    onClick={() => {
+                      haptic("warn");
+                      setConfirmKey(key);
+                    }}
+                    className="ease-apple flex h-11 w-11 items-center justify-center rounded-xl text-rose-500 transition-all duration-200 active:scale-[0.90] disabled:opacity-40"
+                    title="Удалить навсегда"
+                  >
+                    <Trash2 size={16} strokeWidth={2.25} />
+                  </button>
+                )}
               </div>
             </div>
           );

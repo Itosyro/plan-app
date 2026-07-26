@@ -1,7 +1,7 @@
 """Courier — формирование ответа пользователю после обработки сообщения.
 
 Ответ состоит из двух частей:
-1. Подтверждение (рандомно): ~50% из шаблонов, ~50% через LLM (llama-3.1-8b-instant)
+1. Подтверждение (рандомно): ~50% из шаблонов, ~50% через LLM (лёгкая модель из registry)
 2. Резюме сделанного — детерминированно из персистнутых записей (без LLM)
 
 PR-E (бот-карточка): резюме теперь не вшито в текст, а живёт в
@@ -36,7 +36,6 @@ from typing import Literal
 
 import instructor
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from groq import AsyncGroq
 
 from app.ai.models import get_models
 from app.ai.router import GroqKeyRouter, call_with_rotation
@@ -162,8 +161,8 @@ async def generate_courier_reply(
 
     async def _do_call(r: GroqKeyRouter) -> CourierReply:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().courier,

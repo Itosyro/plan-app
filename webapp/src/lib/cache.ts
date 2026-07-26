@@ -17,7 +17,14 @@
 
 const store = new Map<string, unknown>();
 
-type Listener = () => void;
+// What a listener ping means:
+//   "mutate"     — the cache already holds the new value; repaint from
+//                  it, do NOT refetch (a GET here would race the still
+//                  in-flight PATCH/DELETE and could resurrect
+//                  pre-mutation data).
+//   "invalidate" — the entry was dropped; refetch from the network.
+export type CacheEvent = "mutate" | "invalidate";
+type Listener = (event: CacheEvent) => void;
 const exactListeners = new Map<string, Set<Listener>>();
 const prefixListeners = new Map<string, Set<Listener>>();
 
@@ -47,21 +54,21 @@ export function invalidate(key: string, opts: InvalidateOpts = {}): void {
     // a mutation invalidates the more specific "cal:2026-05".
     for (const [listenerKey, set] of exactListeners) {
       if (listenerKey.startsWith(key)) {
-        for (const fn of set) fn();
+        for (const fn of set) fn("invalidate");
       }
     }
     for (const [listenerPrefix, set] of prefixListeners) {
       if (listenerPrefix.startsWith(key) || key.startsWith(listenerPrefix)) {
-        for (const fn of set) fn();
+        for (const fn of set) fn("invalidate");
       }
     }
     return;
   }
   store.delete(key);
-  exactListeners.get(key)?.forEach((fn) => fn());
+  exactListeners.get(key)?.forEach((fn) => fn("invalidate"));
   for (const [listenerPrefix, set] of prefixListeners) {
     if (key.startsWith(listenerPrefix)) {
-      for (const fn of set) fn();
+      for (const fn of set) fn("invalidate");
     }
   }
 }
@@ -89,21 +96,21 @@ export function mutateCache<T>(
       if (!k.startsWith(key)) continue;
       const next = updater(store.get(k) as T | undefined);
       store.set(k, next);
-      exactListeners.get(k)?.forEach((fn) => fn());
+      exactListeners.get(k)?.forEach((fn) => fn("mutate"));
     }
     for (const [listenerPrefix, set] of prefixListeners) {
       if (listenerPrefix.startsWith(key) || key.startsWith(listenerPrefix)) {
-        for (const fn of set) fn();
+        for (const fn of set) fn("mutate");
       }
     }
     return;
   }
   const next = updater(store.get(key) as T | undefined);
   store.set(key, next);
-  exactListeners.get(key)?.forEach((fn) => fn());
+  exactListeners.get(key)?.forEach((fn) => fn("mutate"));
   for (const [listenerPrefix, set] of prefixListeners) {
     if (key.startsWith(listenerPrefix)) {
-      for (const fn of set) fn();
+      for (const fn of set) fn("mutate");
     }
   }
 }

@@ -128,6 +128,9 @@ from .tasks import (
     rename_category as rename_category,
 )
 from .tasks import (
+    restore_task as restore_task,
+)
+from .tasks import (
     schedule_reminders as schedule_reminders,
 )
 from .tasks import (

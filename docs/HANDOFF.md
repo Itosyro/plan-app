@@ -2,6 +2,8 @@
 
 > Этот файл — **единственное**, что нужно прочитать, чтобы войти в курс дела. Всё остальное (`PLAN.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `IDEAS.md`) — детализация.
 >
+> **Самый свежий контекст (2026-07-26, аудит-круг 1):** прочти верхнюю запись `docs/PROGRESS.md` и `docs/audit/2026-07-26-audit.md`. Дельта в одну строку: большой многоагентный аудит → 57 подтверждённых багов, все криты исправлены (таймзоны голосового флоу, potеря подзадач в purge_trash, initData TTL, гонка кэша Mini App, пикер даты, excalidraw-чанк), модели мигрированы на `openai/gpt-oss-20b/120b` + instructor Mode.TOOLS (llama отключают в августе 2026 — откат невозможен после этого), 630 тестов. Работает **goal-loop**: каждые ~5 часов новый круг аудита свежим взглядом (скилл `.claude/skills/audit-loop`, следующий аудит-файл — `docs/audit/<дата>-audit-round2.md`). Юсуф разрешил полный автоном: пуш → PR → зелёный CI → squash-merge → deploy-check, без подтверждений.
+>
 > **Самый свежий контекст (2026-05-24, после PR #110):** прочти верхние 5 записей `docs/PROGRESS.md` — это #106..#110 — и шапку `docs/ROADMAP.md` § «Status». Дельта поверх v20 handoff в одной строке:
 >
 > - **#106 security hotfix** — initData TTL 24h → 10min, JSON-escape пользовательского ввода в classifier-промпте, `max_length` на ClassifierResult.

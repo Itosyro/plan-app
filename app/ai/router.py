@@ -36,6 +36,7 @@ class GroqKeyRouter:
 
     keys: list[str]
     _index: int = field(default=0, init=False, repr=False)
+    _clients: dict[int, AsyncGroq] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.keys:
@@ -53,7 +54,21 @@ class GroqKeyRouter:
         self._index += 1
 
     def async_client(self) -> AsyncGroq:
-        return AsyncGroq(api_key=self.current_key)
+        """Return a cached ``AsyncGroq`` client for the current key.
+
+        Creating ``AsyncGroq`` per call meant a fresh httpx pool and TLS
+        handshake on every LLM request; clients are lazy-cached per key
+        instead. ``instructor.from_groq`` stays per-call at the call
+        sites — it is a thin stateless wrapper over this client.
+        """
+        # Лениво кэшируем клиент на ключ — event loop у бота один,
+        # поэтому блокировка не нужна.
+        key_id = self.current_key_id
+        client = self._clients.get(key_id)
+        if client is None:
+            client = AsyncGroq(api_key=self.current_key)
+            self._clients[key_id] = client
+        return client
 
 
 def _is_recoverable_groq_error(exc: BaseException) -> bool:

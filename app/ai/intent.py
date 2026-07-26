@@ -4,7 +4,7 @@ Recognises phrases like «сделал йогу», «удали пробежку
 and returns a structured ``EditIntent`` with the detected action and
 target task query.
 
-Uses ``llama-3.1-8b-instant`` via Groq with ``instructor`` for
+Uses the light registry model via Groq with ``instructor`` for
 structured detection — same pattern as ``reorder.py``.
 """
 
@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 import instructor
-from groq import AsyncGroq
 
 from app.ai._safety import wrap_untrusted
 from app.ai.models import get_models
@@ -54,8 +53,8 @@ async def detect_intent(
 
     async def _do_call(r: GroqKeyRouter) -> EditIntent:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().intent,

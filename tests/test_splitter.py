@@ -2,36 +2,22 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import respx
 
 from app.ai.router import GroqKeyRouter
 from app.ai.schemas import SplitterResult
 from app.ai.splitter import split_message
+from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
 
 
-def _groq_json(units: list[dict[str, str]]) -> dict[str, object]:
-    """Fake Groq chat.completions JSON payload."""
-    body = json.dumps({"units": units})
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 1700000000,
-        "model": "llama-3.1-8b-instant",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": body}, "finish_reason": "stop"}
-        ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
-    }
-
-
 def _mock_groq(units: list[dict[str, str]]) -> None:
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=respx.MockResponse(200, json=_groq_json(units)),
+        return_value=respx.MockResponse(
+            200, json=groq_tool_response("SplitterResult", {"units": units})
+        ),
     )
 
 

@@ -14,14 +14,12 @@ via a ``GROQ_MODEL_<STAGE>`` environment variable so production can
 roll a new model without a code change. When OpenRouter keys land,
 the same env hooks point individual stages at OpenRouter IDs.
 
-The live defaults are the proven Llama line: ``llama-3.1-8b-instant``
-for the tight loop stages (splitter/intent/reorder/courier/task_splitter)
-and ``llama-3.3-70b-versatile`` for the heavy stages (classifier/critic)
-where one wrong call cascades. An earlier iteration pointed the heavy
-stages at ``openai/gpt-oss-*`` reasoning models, but those broke
-``instructor`` structured output on Groq (every message errored) and
-were reverted — see the History note above the defaults below before
-swapping them again.
+The live defaults are ``openai/gpt-oss-20b`` for the tight loop stages
+(splitter/intent/reorder/courier/task_splitter) and
+``openai/gpt-oss-120b`` for the heavy stages (classifier/critic) where
+one wrong call cascades. Groq deprecated the previous Llama defaults
+(shutdown August 2026) — see the History note above the defaults below
+before swapping models again.
 """
 
 from __future__ import annotations
@@ -52,28 +50,31 @@ class ModelRegistry:
     critic: str
 
 
-# Defaults — battle-tested Groq production models that play cleanly
-# with ``instructor`` JSON/structured-output mode.
+# History — прочитай перед любой сменой моделей:
 #
-# History: WS1 briefly switched the heavy stages to ``openai/gpt-oss-*``
-# (reasoning models). In production those broke EVERY classify call —
-# gpt-oss models emit ``<reasoning>`` tokens around their output and
-# don't honour instructor's JSON mode cleanly, so the Pydantic parse
-# failed on every voice/text message and the bot replied with a
-# generic error. Reverted to the proven Llama line:
-#   • ``llama-3.3-70b-versatile`` — 128K ctx, native JSON mode + tool
-#     use, current Groq production (NOT deprecated as of 2026-06).
-#   • ``llama-3.1-8b-instant`` — fast light-stage model, current
-#     production (the sanctioned replacement for llama3-8b-8192).
-# ``qwen-qwq-32b`` (the old critic) stays gone — Groq withdrew it.
-# The critic now shares the 70B model.
+# • Май 2026 (откат в PR #171): первая попытка перейти на
+#   ``openai/gpt-oss-*`` сломала ВСЕ вызовы. Причина была не в самих
+#   моделях, а в связке с ``instructor.Mode.JSON``: gpt-oss — reasoning-
+#   модели и эмитят reasoning-токены вокруг ответа в ``message.content``,
+#   поэтому Pydantic-парс контента падал на каждом сообщении.
+#   Откатились тогда на Llama.
 #
-# Every default is still env-overridable (``GROQ_MODEL_<STAGE>``), so
-# gpt-oss / kimi / a future OpenRouter id can be A/B'd in one place
-# WITHOUT a redeploy once verified to work with structured output.
+# • 17 июня 2026: Groq объявил deprecation ``llama-3.1-8b-instant`` и
+#   ``llama-3.3-70b-versatile`` с отключением к августу 2026. Откат на
+#   llama-модели после августа НЕВОЗМОЖЕН — этой опции больше нет.
+#
+# • Сейчас: снова gpt-oss, но все instructor-колсайты переведены на
+#   ``instructor.Mode.TOOLS`` — схема передаётся как tool, ответ
+#   парсится из ``tool_calls[0].function.arguments`` (gpt-oss
+#   поддерживает tool use на Groq), reasoning-токены в ``content``
+#   парсингу больше не мешают. Это и есть отличие от майской попытки.
+#
+# Env-override ``GROQ_MODEL_<STAGE>`` остаётся аварийным рычагом: любую
+# стадию можно перевести на другой model id без редеплоя (но только на
+# модель, которая умеет tool use).
 _WHISPER_DEFAULT = "whisper-large-v3"
-_LIGHT_DEFAULT = "llama-3.1-8b-instant"
-_HEAVY_DEFAULT = "llama-3.3-70b-versatile"
+_LIGHT_DEFAULT = "openai/gpt-oss-20b"
+_HEAVY_DEFAULT = "openai/gpt-oss-120b"
 
 
 @lru_cache(maxsize=1)

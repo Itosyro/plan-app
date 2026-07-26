@@ -1,6 +1,6 @@
 """Splitter — split a user message into atomic intent units.
 
-Uses ``llama-3.1-8b-instant`` via Groq with ``instructor`` for structured
+Uses the light registry model via Groq with ``instructor`` for structured
 output. The prompt lives in ``app/ai/prompts/splitter.md``.
 
 Phase 2.1: called from the text router, results are logged but **not**
@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 
 import instructor
-from groq import AsyncGroq
 
 from app.ai._safety import wrap_untrusted
 from app.ai.models import get_models
@@ -54,8 +53,8 @@ async def split_message(
 
     async def _do_call(r: GroqKeyRouter) -> SplitterResult:
         client = instructor.from_groq(
-            AsyncGroq(api_key=r.current_key),
-            mode=instructor.Mode.JSON,
+            r.async_client(),
+            mode=instructor.Mode.TOOLS,
         )
         return await client.chat.completions.create(
             model=get_models().splitter,

@@ -308,7 +308,7 @@ function MonthCell({ dateKey, day, inMonth, isToday, isSelected, tasks, onSelect
       type="button"
       onClick={onSelect}
       className={
-        "ease-apple flex min-h-[58px] flex-col items-stretch gap-0.5 rounded-xl p-1 text-left transition-all duration-150 active:scale-[0.96] " +
+        "ease-apple flex min-h-[58px] flex-col items-stretch gap-0.5 rounded-xl p-1 text-left transition-[transform,background-color,opacity] duration-150 active:scale-[0.96] " +
         (isOver
           ? "bg-tg-button/20 ring-2 ring-tg-button"
           : isSelected
@@ -461,8 +461,11 @@ function WeekEvent({ task, time, onOpen }: { task: Task; time: string | null; on
     disabled: isDone,
   });
   const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "none" as const }
-    : { touchAction: "none" as const };
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "manipulation" as const }
+    : // "manipulation", not "none": these rows sit in the page scroll flow —
+      // "none" kills vertical scrolling started on them in Telegram WebView.
+      // Drag still works via the delayed PointerSensor (same as TaskCard).
+      { touchAction: "manipulation" as const };
   return (
     <button
       ref={setNodeRef}
@@ -586,7 +589,7 @@ function NavButton({ dir, onClick, label }: { dir: "prev" | "next"; onClick: () 
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-all duration-150 hover:bg-bento active:scale-90"
+      className="ease-apple flex h-9 w-9 items-center justify-center rounded-full text-tg-hint transition-[transform,background-color] duration-150 hover:bg-bento active:scale-90"
     >
       <Icon size={20} strokeWidth={2.25} aria-hidden />
     </button>
@@ -628,8 +631,11 @@ function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
     disabled: isDone,
   });
   const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "none" as const }
-    : { touchAction: "none" as const };
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50, touchAction: "manipulation" as const }
+    : // "manipulation", not "none": these rows sit in the page scroll flow —
+      // "none" kills vertical scrolling started on them in Telegram WebView.
+      // Drag still works via the delayed PointerSensor (same as TaskCard).
+      { touchAction: "manipulation" as const };
   return (
     <button
       ref={setNodeRef}
@@ -639,7 +645,7 @@ function DraggableTaskRow({ task, time, onOpen }: DraggableTaskRowProps) {
       type="button"
       onClick={() => onOpen(task.id)}
       className={
-        "ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-all duration-150 active:scale-[0.99] " +
+        "ease-apple flex items-center gap-3 rounded-2xl bg-bento-card p-3 text-left ring-1 ring-black/5 transition-[transform,box-shadow] duration-150 active:scale-[0.99] " +
         (isDragging ? "shadow-bento-lg" : "shadow-bento")
       }
     >

@@ -45,7 +45,6 @@ export default defineConfig({
           if (id.includes("/react") || id.includes("/scheduler/")) {
             return "react-vendor";
           }
-          if (id.includes("@excalidraw")) return "excalidraw";
           // IMPORTANT: NO catch-all "vendor" here. Excalidraw pulls in
           // huge transitive deps (mermaid, roughjs, …) that DON'T match
           // "@excalidraw". A catch-all would sweep them into a single

@@ -68,7 +68,7 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
       {...attributes}
       {...listeners}
       className={
-        "ease-apple touch-manipulation rounded-3xl bg-bento-card p-4 ring-1 ring-black/5 transition-all duration-200 " +
+        "ease-apple touch-manipulation rounded-3xl bg-bento-card p-4 ring-1 ring-black/5 transition-[transform,box-shadow,opacity] duration-200 " +
         (isDone ? "opacity-50 " : "opacity-100 ") +
         (isDragging ? "shadow-bento-lg" : "shadow-bento")
       }
@@ -93,7 +93,7 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
             });
           }}
           className={
-            "ease-spring mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-all duration-300 " +
+            "ease-spring mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] transition-[transform,border-color,background-color] duration-300 " +
             (isDone
               ? "scale-100 border-emerald-500 bg-emerald-500 text-white"
               : "scale-100 border-tg-hint/40 bg-bento-card hover:border-emerald-400 active:scale-90")
@@ -111,7 +111,7 @@ export function TaskCard({ task, tz, onDone, onOpen, onReopen }: Props) {
             onOpen(task.id);
           }}
           disabled={isDone}
-          className="ease-apple -m-1 min-w-0 flex-1 rounded-2xl p-1 text-left transition-all duration-150 active:scale-[0.995]"
+          className="ease-apple -m-1 min-w-0 flex-1 rounded-2xl p-1 text-left transition-transform duration-150 active:scale-[0.995]"
         >
           <div className="flex items-start gap-2">
             {priorityTone && (

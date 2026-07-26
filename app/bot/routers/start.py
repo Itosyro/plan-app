@@ -79,12 +79,12 @@ def create_router() -> Router:
             existing_name = user.display_name or ""
             existing_tz = user.tz or ""
 
-        # FSM enters the tz state immediately — the keyboard is the
-        # primary input, but we also want the text-fallback path for
-        # the unlikely case the keyboard fails to render.
-        await state.set_state(Onboarding.timezone)
-
         if already_onboarded:
+            # НЕ включаем FSM: шаблон обещает «просто пиши задачи как
+            # обычно», а состояние ``Onboarding.timezone`` съедало бы
+            # следующее сообщение («купи молоко») с ONBOARDING_BAD_TZ и
+            # молча глотало голосовые. Кнопки таймзоны работают без
+            # состояния; текстовый фоллбек включит «Указать другой ✏️».
             await message.answer(
                 ONBOARDING_ALREADY_DONE.format(
                     name=existing_name or "друг",
@@ -93,6 +93,11 @@ def create_router() -> Router:
                 reply_markup=tz_keyboard(),
             )
         else:
+            # Новый юзер: FSM enters the tz state immediately — the
+            # keyboard is the primary input, but we also want the
+            # text-fallback path for the unlikely case the keyboard
+            # fails to render.
+            await state.set_state(Onboarding.timezone)
             await message.answer(
                 ONBOARDING_GREETING,
                 reply_markup=tz_keyboard(),
@@ -123,10 +128,11 @@ def create_router() -> Router:
             await callback.answer("Неверный формат.", show_alert=True)
             return
 
-        # "Указать другой" — drop into the free-text fallback. State
-        # already says ``Onboarding.timezone`` from /start, so the next
-        # plain-text message lands in ``onb_timezone_text`` below.
+        # "Указать другой" — drop into the free-text fallback. Состояние
+        # ставим здесь (а не в /start): для уже онбордженного юзера /start
+        # больше не включает FSM, чтобы не съедать обычные сообщения.
         if payload == "custom":
+            await state.set_state(Onboarding.timezone)
             await callback.answer()
             if isinstance(callback.message, Message):
                 await callback.message.answer(ONBOARDING_ASK_CUSTOM_TZ)
@@ -192,6 +198,25 @@ def create_router() -> Router:
 
         tz_input = message.text.strip()
         if not is_valid_timezone(tz_input):
+            async with session_scope() as session:
+                user, _ = await get_or_create_user(session, telegram_id=message.from_user.id)
+                already_onboarded = user.onboarded_at is not None
+            # Страховка: онбордженный юзер, застрявший в tz-состоянии,
+            # пишет обычную мысль («купи молоко») — выходим из визарда
+            # вместо ONBOARDING_BAD_TZ. «Похоже на таймзону» = есть «/»
+            # и нет пробелов (опечатку вроде Europe/Moskow переспросим).
+            looks_like_tz = "/" in tz_input and " " not in tz_input
+            if already_onboarded and not looks_like_tz:
+                # ponytail: не гоняем текст в пайплайн отсюда (нужна вся
+                # обвязка text.py: placeholder, groq, payload) — просим
+                # отправить ещё раз.
+                await state.clear()
+                await message.answer(
+                    "Понял, продолжаем как обычно. Отправь это сообщение ещё раз — "
+                    "разберу его как задачу. Часовой пояс можно сменить через /start."
+                )
+                logger.info("onboarding.tz_fallback_exit", user_id=message.from_user.id)
+                return
             await message.answer(ONBOARDING_BAD_TZ)
             return
 

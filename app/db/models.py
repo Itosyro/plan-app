@@ -201,10 +201,18 @@ class Task(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
     # PR-Subtasks: nullable self-FK so a Task can be a child of another
-    # Task. ``ON DELETE CASCADE`` is set in the migration so deleting a
-    # parent removes its children with it. Top-level tasks have
-    # ``parent_id IS NULL``.
-    parent_id: int | None = Field(default=None, foreign_key="tasks.id", index=True)
+    # Task. ``ON DELETE CASCADE`` declared here *and* in migration 0013
+    # so the SQLite test schema (built from models via ``create_all``)
+    # matches prod Postgres. Top-level tasks have ``parent_id IS NULL``.
+    parent_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("tasks.id", ondelete="CASCADE"),
+            index=True,
+            nullable=True,
+        ),
+    )
     category_id: int | None = Field(default=None, foreign_key="categories.id")
     horizon_id: int | None = Field(default=None, foreign_key="horizons.id")
     title: str = Field(max_length=256)
@@ -265,7 +273,18 @@ class Board(SQLModel, table=True):
     __tablename__ = "boards"
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
+    # ``ondelete='CASCADE'``: user-owned data dies with the user (policy
+    # from migration 0007). Declared in the model + migration 0019 —
+    # migration 0018 originally created the FK without a policy, which
+    # made user deletion fail on Postgres.
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
     name: str = Field(default="Без названия", max_length=128)
     scene_json: dict[str, Any] | None = Field(
         default=None,
@@ -379,7 +398,16 @@ class TaskEditSnapshot(SQLModel, table=True):
             nullable=False,
         ),
     )
-    user_id: int = Field(foreign_key="users.id", index=True)
+    # ``ondelete='CASCADE'``: см. Board.user_id — migration 0011 создала
+    # FK без политики, чинится в migration 0019.
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
     field: str = Field(max_length=32)
     old_value: str | None = Field(default=None)
     new_value: str | None = Field(default=None)

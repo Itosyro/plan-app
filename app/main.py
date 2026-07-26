@@ -39,6 +39,7 @@ from app.api.routers import timezones as api_timezones
 from app.api.routers import trash as api_trash
 from app.bot import build_dispatcher
 from app.bot.services import claim_update
+from app.bot.services.inbox import release_update
 from app.db.base import dispose_engine, init_engine, session_scope
 from app.db.models import User
 from app.shared.config import Settings, get_settings
@@ -129,7 +130,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 secret_token=settings.telegram_webhook_secret,
                 drop_pending_updates=True,
             )
-            logger.info("bot.webhook.set", url=settings.webhook_url)
+            # Полный webhook_url содержит секретный path-сегмент — в лог
+            # идёт только база, иначе секрет утекает при каждом старте.
+            logger.info("bot.webhook.set", base_url=settings.webhook_base_url)
             if settings.miniapp_url:
                 # ``setChatMenuButton`` is per-user and global; calling
                 # it without ``chat_id`` updates the default menu so
@@ -191,6 +194,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispose_engine()
 
     app = FastAPI(title="plan-app", version="0.1.0", lifespan=lifespan)
+
+    # Максимум тела для /api. Самый тяжёлый легитимный запрос — сцена
+    # Excalidraw (роутер досок сам режет её на 5 МБ, но только ПОСЛЕ
+    # полного чтения и парсинга тела). Отсекаем по Content-Length до
+    # чтения: Telegram WebView всегда шлёт заголовок, chunked без
+    # Content-Length от Mini App не приходит.
+    max_api_body_bytes = 6 * 1024 * 1024
+
+    @app.middleware("http")
+    async def limit_api_body_size(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Reject oversized /api requests before the body is read."""
+        if request.url.path.startswith("/api"):
+            content_length = request.headers.get("content-length")
+            if (
+                content_length is not None
+                and content_length.isdigit()
+                and int(content_length) > max_api_body_bytes
+            ):
+                return Response(status_code=413, content="payload too large")
+        return await call_next(request)
 
     @app.middleware("http")
     async def security_headers(
@@ -342,7 +367,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 kind=kind,
             )
 
-        await dp.feed_update(bot=bot, update=update)
+        try:
+            await dp.feed_update(bot=bot, update=update)
+        except Exception:
+            # Claim поставлен, а диспатч упал — без отката claim'а ретрай
+            # Telegram того же update_id посчитается дубликатом и
+            # сообщение пользователя пропадёт навсегда. Освобождаем
+            # claim и отдаём 500, чтобы Telegram доставил заново.
+            logger.exception("webhook.dispatch_failed", update_id=update.update_id)
+            async with session_scope() as session:
+                await release_update(session, update_id=update.update_id)
+            raise
         return {"ok": True}
 
     return app
