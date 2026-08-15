@@ -64,6 +64,10 @@ def init_sentry(settings: Settings) -> bool:
         # webhook secret. Strip both.
         send_default_pii=False,
         max_request_body_size="never",
+        # Локальные переменные в трейсе — это ``Settings`` с токеном бота
+        # и содержимое ``.env`` в кадре сборки бэкапа. Одно исключение в
+        # этих местах отправило бы секреты наружу.
+        include_local_variables=False,
     )
     _initialised = True
     logger.info(

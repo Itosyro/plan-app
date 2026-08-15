@@ -172,8 +172,9 @@ class NoteUpdateIn(BaseModel):
     Every field is optional; only the supplied fields are mutated. The
     handler validates each value explicitly rather than ``setattr``-ing
     in a loop, matching ``TaskUpdateIn`` (defensive-programming G-1).
-    Empty string in ``body`` clears the field; ``None`` means «don't
-    touch this key».
+    Empty string in ``body`` clears the field; an explicit
+    ``category_id: null`` clears the category (the handler reads
+    ``model_fields_set``, so an omitted key still means «don't touch»).
     """
 
     model_config = ConfigDict(extra="forbid")

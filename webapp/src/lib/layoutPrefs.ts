@@ -82,15 +82,6 @@ export function serializeLayoutPrefs(prefs: LayoutPrefs): string {
   return JSON.stringify(prefs);
 }
 
-export function isDefaultLayoutPrefs(prefs: LayoutPrefs): boolean {
-  return (
-    prefs.groupBy === DEFAULT_LAYOUT_PREFS.groupBy &&
-    prefs.sortBy === DEFAULT_LAYOUT_PREFS.sortBy &&
-    prefs.filterPriority === DEFAULT_LAYOUT_PREFS.filterPriority &&
-    prefs.filterDue === DEFAULT_LAYOUT_PREFS.filterDue
-  );
-}
-
 // ── Filter ────────────────────────────────────────────────────────────
 
 const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };

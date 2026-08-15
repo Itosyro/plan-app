@@ -32,9 +32,13 @@ from app.workers.keepalive import (
 @respx.mock
 async def test_loop_pings_url_until_stopped() -> None:
     """One ping cycle should hit ``url`` then stop on ``stop_event``."""
-    route = respx.get("https://example.test/healthz").mock(
-        return_value=httpx.Response(200, text="ok"),
-    )
+    pinged = asyncio.Event()
+
+    def _ok(_request: httpx.Request) -> httpx.Response:
+        pinged.set()
+        return httpx.Response(200, text="ok")
+
+    route = respx.get("https://example.test/healthz").mock(side_effect=_ok)
     stop = asyncio.Event()
     task = asyncio.create_task(
         run_keepalive_loop(
@@ -45,8 +49,8 @@ async def test_loop_pings_url_until_stopped() -> None:
             timeout=1.0,
         ),
     )
-    # Let the loop settle past initial_delay + one tick.
-    await asyncio.sleep(0.1)
+    # Wait for the ping itself, not for a wall-clock guess at when it lands.
+    await asyncio.wait_for(pinged.wait(), timeout=2)
     stop.set()
     await asyncio.wait_for(task, timeout=1.0)
     assert route.called
@@ -58,11 +62,13 @@ async def test_loop_pings_url_until_stopped() -> None:
 async def test_loop_swallows_errors() -> None:
     """A failing request must not kill the loop — next tick retries."""
     counter = {"n": 0}
+    retried = asyncio.Event()
 
     def _flaky(_request: httpx.Request) -> httpx.Response:
         counter["n"] += 1
         if counter["n"] == 1:
             raise httpx.ConnectError("boom")
+        retried.set()
         return httpx.Response(200, text="ok")
 
     respx.get("https://example.test/healthz").mock(side_effect=_flaky)
@@ -77,7 +83,8 @@ async def test_loop_swallows_errors() -> None:
             timeout=1.0,
         ),
     )
-    await asyncio.sleep(0.15)
+    # Block on the retry itself instead of guessing how long two ticks take.
+    await asyncio.wait_for(retried.wait(), timeout=2)
     stop.set()
     await asyncio.wait_for(task, timeout=1.0)
     # First call raised, loop kept going → at least two attempts total.
@@ -88,16 +95,20 @@ async def test_loop_swallows_errors() -> None:
 @respx.mock
 async def test_start_and_stop_round_trip() -> None:
     """``start_keepalive`` returns a runnable task; ``stop_keepalive`` joins."""
-    route = respx.get("https://example.test/healthz").mock(
-        return_value=httpx.Response(200, text="ok"),
-    )
+    pinged = asyncio.Event()
+
+    def _ok(_request: httpx.Request) -> httpx.Response:
+        pinged.set()
+        return httpx.Response(200, text="ok")
+
+    route = respx.get("https://example.test/healthz").mock(side_effect=_ok)
     task, stop = start_keepalive(
         "https://example.test/healthz",
         interval=0.05,
         initial_delay=0.01,
         timeout=1.0,
     )
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(pinged.wait(), timeout=2)
     await stop_keepalive(task, stop, grace=1.0)
     assert task.done()
     assert route.called

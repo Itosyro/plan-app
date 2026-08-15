@@ -18,6 +18,7 @@ Phase 5 wiring:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -118,8 +119,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        import asyncio
-
         scheduler_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
         keepalive_handle: tuple[asyncio.Task[None], asyncio.Event] | None = None
         polling_task: asyncio.Task[None] | None = None
@@ -140,8 +139,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # в Telegram исходящими запросами. Webhook обязательно
             # снимаем: пока он зарегистрирован, Telegram отвечает на
             # getUpdates ошибкой 409 и бот молча не получает сообщений.
-            await bot.delete_webhook(drop_pending_updates=True)
+            #
+            # ``drop_pending_updates=False`` — самый частый простой здесь
+            # это переезд на другой сервер. Telegram держит недоставленное
+            # сутки; выбрасывать эту очередь значит терять сообщения,
+            # которые пользователь написал, пока сервер переезжал.
+            await bot.delete_webhook(drop_pending_updates=False)
             polling_task = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
+
+            def _log_polling_exit(task: asyncio.Task[None]) -> None:
+                """Polling died on its own — say so instead of going quiet."""
+                if task.cancelled():
+                    return
+                exc = task.exception()
+                if exc is not None:
+                    logger.error("bot.polling.crashed", error=str(exc)[:300])
+                else:
+                    logger.warning("bot.polling.stopped")
+
+            polling_task.add_done_callback(_log_polling_exit)
+            _app.state.polling_task = polling_task
             logger.info("bot.polling.start")
             if settings.miniapp_url:
                 try:
@@ -288,6 +305,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # the routers can access it via Request.app.state.bot. Tests pass a
     # fake bot or None — the router gates on this.
     app.state.bot = bot
+    # Заполняется в lifespan при ``BOT_MODE=polling``; ``/healthz``
+    # смотрит на неё, чтобы «ok» не означало «жив только веб-сервер».
+    app.state.polling_task = None
 
     # The auth dependency reads ``Settings`` via ``Depends(get_settings)``;
     # because ``get_settings`` is ``lru_cache``-d at module level it would
@@ -321,7 +341,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/healthz", tags=["meta"])
-    async def healthz() -> dict[str, object]:
+    async def healthz(request: Request) -> dict[str, object]:
         """Liveness + light diagnostics.
 
         Render's probe only looks at HTTP 200, but humans (and the
@@ -333,9 +353,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from app.ai.models import get_models
 
         models = get_models()
+        # ``None`` — режим webhook (о живости бота говорит сам Telegram).
+        # В polling'е это единственный способ отличить «работает» от
+        # «веб-сервер жив, а бот умер полчаса назад».
+        polling_task: asyncio.Task[None] | None = request.app.state.polling_task
         return {
             "status": "ok",
             "env": settings.env,
+            "polling_alive": None if polling_task is None else not polling_task.done(),
             "groq_keys_configured": len(settings.groq_keys_list),
             "sentry_enabled": settings.sentry_dsn is not None,
             "models": {

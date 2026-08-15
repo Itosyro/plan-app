@@ -27,6 +27,7 @@ from app.bot.courier_templates import (
     ONBOARDING_BAD_TZ,
     ONBOARDING_DONE,
     ONBOARDING_GREETING,
+    miniapp_aware,
 )
 from app.bot.onboarding import (
     label_for_iana,
@@ -107,7 +108,7 @@ def create_router() -> Router:
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
         """Static help message."""
-        await message.answer(HELP)
+        await message.answer(miniapp_aware(HELP))
 
     @router.callback_query(F.data.startswith("onb:tz:"))
     async def onb_tz_callback(callback: CallbackQuery, state: FSMContext) -> None:
@@ -167,7 +168,7 @@ def create_router() -> Router:
             await state.clear()
             if isinstance(callback.message, Message):
                 await callback.message.answer(
-                    ONBOARDING_DONE.format(name=existing_name, tz=label),
+                    miniapp_aware(ONBOARDING_DONE).format(name=existing_name, tz=label),
                 )
             logger.info(
                 "onboarding.complete_re",
@@ -236,7 +237,7 @@ def create_router() -> Router:
                 await complete_onboarding(session, user2, display_name=existing_name, tz=tz_input)
             await state.clear()
             await message.answer(
-                ONBOARDING_DONE.format(name=existing_name, tz=label),
+                miniapp_aware(ONBOARDING_DONE).format(name=existing_name, tz=label),
             )
             logger.info(
                 "onboarding.complete_re_text",
@@ -281,7 +282,7 @@ def create_router() -> Router:
 
         await state.clear()
         label = label_for_iana(tz_iana)
-        await message.answer(ONBOARDING_DONE.format(name=name, tz=label))
+        await message.answer(miniapp_aware(ONBOARDING_DONE).format(name=name, tz=label))
         logger.info(
             "onboarding.complete",
             user_id=message.from_user.id,

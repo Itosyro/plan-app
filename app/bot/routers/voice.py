@@ -18,7 +18,7 @@ from aiogram.types import Message
 from app.ai.models import get_models
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
-from app.bot.courier_templates import NOT_ONBOARDED, PIPELINE_FAILED
+from app.bot.courier_templates import NOT_ONBOARDED, pipeline_failed
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._message_payload import TextPayload, VoicePayload, resolve_effective_payload
@@ -277,7 +277,7 @@ def create_router() -> Router:
                 else:
                     with contextlib.suppress(Exception):
                         await flag_needs_review(inbox_id, review_enabled=review_enabled)
-                    failed_text = PIPELINE_FAILED
+                    failed_text = pipeline_failed()
                 try:
                     await placeholder.edit_text(failed_text)
                 except Exception:

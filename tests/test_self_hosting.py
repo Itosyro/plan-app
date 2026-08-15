@@ -31,11 +31,13 @@ class _SpyBot:
 
     def __init__(self) -> None:
         self.deleted_webhook = False
+        self.delete_webhook_kwargs: dict[str, Any] = {}
         self.set_webhook_calls = 0
         self.menu_calls = 0
 
     async def delete_webhook(self, **kwargs: Any) -> None:
         self.deleted_webhook = True
+        self.delete_webhook_kwargs = kwargs
 
     async def set_webhook(self, **kwargs: Any) -> None:
         self.set_webhook_calls += 1
@@ -110,6 +112,34 @@ def test_polling_mode_clears_any_registered_webhook(
     with TestClient(app):
         pass
     assert spy_bot.deleted_webhook is True
+
+
+def test_polling_keeps_updates_queued_during_downtime(
+    polling_app: tuple[Any, _SpyBot, _SpyDispatcher],
+) -> None:
+    """Сообщения, написанные пока сервер переезжал, не выбрасываются.
+
+    Telegram держит недоставленные апдейты сутки. ``drop_pending_updates``
+    стёр бы очередь на старте — а самый частый простой у этого деплоя
+    как раз переезд на другой сервер.
+    """
+    app, spy_bot, _spy_dp = polling_app
+    with TestClient(app):
+        pass
+    assert spy_bot.delete_webhook_kwargs.get("drop_pending_updates") is False
+
+
+def test_env_server_example_boots() -> None:
+    """Шаблон ``.env.server.example`` должен собираться в Settings как есть.
+
+    Незаполненные ключи в нём выглядят как ``KEY=``; для числовых полей
+    pydantic видит пустую строку и валится ValidationError — то есть
+    первая же установка уходила в цикл перезапусков ещё до логов.
+    """
+    example = Path(__file__).resolve().parent.parent / ".env.server.example"
+    settings = Settings(_env_file=example)  # type: ignore[call-arg]
+    assert settings.owner_telegram_id is None
+    assert settings.auto_backup_hours == 24.0
 
 
 def test_polling_is_stopped_on_shutdown(
@@ -189,7 +219,7 @@ def test_dockerfile_from_lines_are_parseable() -> None:
     обязательной. Тест дешёвый, а класс поломки тихий.
     """
     dockerfile = Path(__file__).resolve().parent.parent / "Dockerfile"
-    for lineno, line in enumerate(dockerfile.read_text().splitlines(), start=1):
+    for lineno, line in enumerate(dockerfile.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.startswith("FROM"):
             continue
         parts = line.split()

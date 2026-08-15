@@ -86,13 +86,6 @@ class ResolvedTime(BaseModel):
     horizon_hint: str | None = None
 
 
-class ReminderInfo(BaseModel):
-    """Extracted reminder from user text (pure Python, no LLM)."""
-
-    fire_at: datetime
-    original_text: str
-
-
 # ── Phase 2.3 ────────────────────────────────────────────────────────
 
 

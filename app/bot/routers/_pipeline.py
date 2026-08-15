@@ -37,6 +37,7 @@ from app.ai.router import GroqKeyRouter
 from app.ai.schemas import ClassifierResult, ResolvedTime
 from app.ai.splitter import split_message
 from app.ai.time_resolver import resolve_time
+from app.bot.courier_templates import app_or
 from app.bot.edit_executor import EDIT_INTENTS_ALL, execute_edit, touch_last_task
 from app.bot.services import (
     get_user_categories,
@@ -425,10 +426,12 @@ async def _run_pipeline_inner(
         # Все пункты потеряны (rate-limit/timeout) — сырьё осталось только
         # во «Входящих», без флага оно пропадало из ревью-таба Mini-App.
         await flag_needs_review(inbox_id, review_enabled=review_enabled)
-        return (
+        return app_or(
             "Не смог разобрать сообщение, но оно сохранено целиком — "
             "лежит во «Входящих» в приложении. "
-            "Можно заглянуть туда или прислать мне ещё раз."
+            "Можно заглянуть туда или прислать мне ещё раз.",
+            "Не смог разобрать сообщение, но оно сохранено целиком. "
+            "Пришли его мне ещё раз — попробую снова.",
         ), None
 
     # Critic: review classifications that need it (only survivors). Critic
@@ -606,7 +609,10 @@ async def _run_pipeline_inner(
     )
 
     if review_flagged:
-        review_note = "📥 Отложил на проверку — загляни во «Входящие» в приложении."
+        review_note = app_or(
+            "📥 Отложил на проверку — загляни во «Входящие» в приложении.",
+            "📥 В части сообщения я не уверен — проверь, всё ли записал верно.",
+        )
         text_reply = f"{text_reply}\n\n{review_note}" if text_reply else review_note
 
     # If we lost units to classifier failures (rate-limit, timeout)
@@ -614,8 +620,9 @@ async def _run_pipeline_inner(
     # thought; pretending nothing was dropped silently loses items.
     if classify_failures > 0 and survivors:
         word = _plural_ru(classify_failures, "пункт", "пункта", "пунктов")
-        partial_note = (
-            f"⚠️ {classify_failures} {word} не разобрал — они лежат во «Входящих» в приложении."
+        partial_note = app_or(
+            f"⚠️ {classify_failures} {word} не разобрал — они лежат во «Входящих» в приложении.",
+            f"⚠️ {classify_failures} {word} не разобрал — пришли их ещё раз.",
         )
         text_reply = f"{text_reply}\n\n{partial_note}" if text_reply else partial_note
 

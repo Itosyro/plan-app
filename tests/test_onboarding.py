@@ -28,6 +28,7 @@ from app.bot.services import (
     is_valid_timezone,
 )
 from app.db.models import User
+from app.shared.config import Settings
 
 # ── tz_keyboard / label / parse helpers ──────────────────────────────
 
@@ -195,18 +196,52 @@ def test_help_only_lists_commands_that_exist() -> None:
     )
 
 
-def test_help_explains_the_mini_app_and_inbox() -> None:
+def _set_miniapp(monkeypatch: pytest.MonkeyPatch, url: str | None) -> None:
+    """Pretend the deploy does (``url``) or doesn't (``None``) host the Mini-App."""
+    monkeypatch.setattr(
+        courier_templates,
+        "get_settings",
+        lambda: Settings(webhook_base_url=None, miniapp_url_override=url),
+    )
+
+
+def test_help_explains_the_mini_app_and_inbox(monkeypatch: pytest.MonkeyPatch) -> None:
     """The pipeline routinely tells users to «открой Входящие в
     приложении» — /help has to say what that app is and how to open it.
     """
-    help_text = courier_templates.HELP
+    _set_miniapp(monkeypatch, "https://example.com/app/")
+    help_text = courier_templates.miniapp_aware(courier_templates.HELP)
     assert "приложени" in help_text
     assert "Входящие" in help_text
     assert "Открыть план" in help_text  # the actual menu-button label
 
 
-def test_onboarding_done_mentions_the_app() -> None:
-    assert "приложении" in courier_templates.ONBOARDING_DONE
+def test_onboarding_done_mentions_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_miniapp(monkeypatch, "https://example.com/app/")
+    done = courier_templates.miniapp_aware(courier_templates.ONBOARDING_DONE)
+    assert "приложении" in done
+
+
+def test_texts_drop_the_app_when_it_is_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Self-hosted deploys have no public HTTPS → ``app/main.py`` never
+    calls ``set_chat_menu_button``, so the «Открыть план» button simply
+    isn't there. Neither text may point at it — but everything else in
+    them stays verbatim.
+    """
+    _set_miniapp(monkeypatch, None)
+
+    for text in (courier_templates.HELP, courier_templates.ONBOARDING_DONE):
+        adapted = courier_templates.miniapp_aware(text)
+        assert "Открыть план" not in adapted
+        assert "приложени" not in adapted
+
+    help_text = courier_templates.miniapp_aware(courier_templates.HELP)
+    assert "/reminders" in help_text
+    assert "/backup" in help_text
+
+    done = courier_templates.miniapp_aware(courier_templates.ONBOARDING_DONE)
+    assert "{name}" in done and "{tz}" in done  # placeholders survive .format
+    assert "Скидывай мысли голосом или текстом — разложу по полкам." in done
 
 
 def test_pipeline_failed_is_honest() -> None:

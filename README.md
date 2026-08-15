@@ -6,19 +6,41 @@ You send a voice message or text — the bot transcribes it (Whisper), splits it
 
 - **Bot**: [@daylirobot](https://t.me/daylirobot) (id `8642044324`)
 - **Production**: <https://plan-app-t6nx.onrender.com> (Render Free, in-process scheduler)
+- **Self-hosted**: one container on your own VPS — see [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md)
 - **Owner**: [@Itosyro](https://github.com/Itosyro)
+
+## Run it on your own server
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Itosyro/plan-app/main/scripts/install.sh | bash
+```
+
+Docker + a Telegram token + a Groq key, nothing else: no domain, no TLS,
+no managed database (`BOT_MODE=polling`, SQLite file, migrations on boot).
+Moving to a different server: `/backup` in the chat hands you an archive
+with `.env` + the database, and the same install command takes that
+archive as its argument on the new box. Details:
+[`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md).
 
 ## Status
 
-**Audit round 1 — closed (2026-07-26).** A 15-agent audit with adversarial
-verification found 57 confirmed bugs; all 7 Critical and 27 of 29 Important
-are fixed in `main` (PR #187). Full report: [`docs/audit/2026-07-26-audit.md`](docs/audit/2026-07-26-audit.md).
+**Server-migration wave — closed (2026-08-16).** The bot is meant to live on
+a VPS rented by the week, so moving it is now routine: `/backup` in the chat
+hands you an archive (`.env` + a live SQLite snapshot), and one `install.sh`
+command brings it up on the new box. The same wave closed an audit round —
+an empty value in `.env` crashed startup, boot migrations silenced every log,
+the archive allow-list failed open above ~64 KB, stale WAL files swallowed
+restored data, Russian search never worked on SQLite, and `purge_trash` was
+called from nowhere. See the top entry of [`docs/PROGRESS.md`](docs/PROGRESS.md).
 
-- `uv run pytest -q` → **630 passed**
+Earlier: **audit rounds 1 and 2** (2026-07-26/27) — 57 + 30 confirmed findings,
+reports in [`docs/audit/`](docs/audit/).
+
+- `uv run pytest -q` → **698 passed**
 - `uv run ruff format --check .` / `uv run ruff check .` / `uv run mypy app` — clean
 - `webapp`: `npx tsc --noEmit` + `npm run build` — clean
 - 19 Alembic migrations
-- ~14 100 LOC in `app/`, ~14 200 LOC in `tests/` (53 test files), ~10 600 LOC in `webapp/src/`
+- ~14 800 LOC in `app/`, ~16 200 LOC in `tests/` (58 test files), ~11 100 LOC in `webapp/src/`
 
 The project now runs a **goal loop**: every ~5 hours a fresh-eyes audit round
 re-examines the system, fixes what it finds, and merges autonomously (see
@@ -33,7 +55,7 @@ see [`docs/plans/2026-07-26-audit-improvements.md`](docs/plans/2026-07-26-audit-
 3. **Persist** — `Task` / `Note` / `AiRun` / `TaskEvent` rows (tasks support subtasks via `parent_id`); if the intent has a `due_at`, `Reminder` rows are scheduled at offsets from `UserSettings.default_reminder_offsets` (defaults: 60 min and 15 min before). Messages producing ≥2 items or anything low-confidence are flagged `needs_review` for the Mini-App «Входящие» tab.
 4. **Reply** — Courier picks a confirmation phrase: 50/50 between `app/bot/courier_templates.py` and the light model. Source and tone are user-configurable via `/settings`.
 5. **Background** — in-process scheduler ticks every 60 s: `tick_reminders` (sends pending reminders, skips/cancels ones whose task is already done, retries up to `MAX_REMINDER_ATTEMPTS=3` then marks `failed`); `tick_digests` (morning/evening digests, gate flipped after a successful send and committed per user); `purge_trash` (24 h retention).
-6. **Commands** — `/today`, `/tomorrow`, `/week`, `/month`, `/year`, `/someday`, `/notes`, `/categories`, `/settings`. Inline buttons on task cards: ✅ done / ✏️ change category / 🗑 delete / move to another horizon.
+6. **Commands** — `/today`, `/tomorrow`, `/week`, `/month`, `/year`, `/someday`, `/notes`, `/reminders`, `/categories`, `/settings`, `/backup` (owner-only, self-hosted). Inline buttons on task cards: ✅ done / ✏️ change category / 🗑 delete / move to another horizon.
 7. **Voice editing** — «отметь X», «перенеси X на пятницу», «напомни о X в 15:00», «переименуй…», category and note intents — all resolved against existing tasks, with undo snapshots.
 8. **Mini App** — 5 tabs (Задачи / Заметки / Календарь / Входящие / Настройки) + boards (Excalidraw), kanban, drag-n-drop, search, trash and completed screens. Auth via Telegram `initData`.
 
@@ -42,7 +64,7 @@ see [`docs/plans/2026-07-26-audit-improvements.md`](docs/plans/2026-07-26-audit-
 - **Python 3.12** (see `.python-version`)
 - **aiogram 3** — Telegram bot (webhook with double-secret idempotency)
 - **FastAPI** — single web service (bot webhook + `/api` REST + Mini-App static bundle at `/app`)
-- **SQLModel + Alembic** — database layer (PostgreSQL on Supabase in prod, SQLite in tests)
+- **SQLModel + Alembic** — database layer (PostgreSQL on Supabase for the managed deploy, SQLite for self-hosting and tests)
 - **Pydantic v2** — validation
 - **groq-sdk + instructor** (`Mode.TOOLS`) — Groq LLM client with structured output
 - **dateparser, pymorphy3, razdel** — Russian NLP
@@ -62,7 +84,7 @@ app/
   workers/    scheduler.py (tick_reminders / tick_digests / purge_trash) + runner.py (in-process loop) + keepalive
   shared/     config / logging / time / sentry / constants
 webapp/       Telegram Mini App (React + Vite + Tailwind); built bundle is served at /app
-tests/        pytest suite (630 tests, 53 files)
+tests/        pytest suite (698 tests, 58 files)
 alembic/      database migrations (19)
 memory/       user "stream of consciousness" archive (for future DSPy optimization)
 docs/         project documentation (incl. docs/audit/ — audit rounds, docs/plans/ — plans)
@@ -84,7 +106,7 @@ uv sync
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy app
-uv run pytest -q   # → 630 passed
+uv run pytest -q   # → 698 passed
 
 # 4. Mini App (optional — needed for the /app route and its two tests)
 cd webapp && npm ci && npx tsc --noEmit && npm run build && cd ..
@@ -107,8 +129,9 @@ Read in this order if you're new:
 5. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components, data flow, schema.
 6. [`docs/ROADMAP.md`](docs/ROADMAP.md) — phased implementation plan + current status.
 7. [`docs/plans/`](docs/plans/) — per-wave plans (latest: the audit-loop wave + the mobile-app path).
-8. [`docs/IDEAS.md`](docs/IDEAS.md) — future ideas, open questions.
-9. [`.agents/skills/CATALOG.md`](.agents/skills/CATALOG.md) — index of the development skills.
+8. [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md) — running (and moving) it on your own VPS.
+9. [`docs/IDEAS.md`](docs/IDEAS.md) — future ideas, open questions.
+10. [`.agents/skills/CATALOG.md`](.agents/skills/CATALOG.md) — index of the development skills.
 
 ## Contributing / development conventions
 

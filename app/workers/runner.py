@@ -19,9 +19,10 @@ import contextlib
 
 from aiogram import Bot
 
+from app.backup import maybe_send_auto_backup
 from app.bot.digest import tick_digests
 from app.shared.logging import get_logger
-from app.workers.scheduler import tick_reminders
+from app.workers.scheduler import purge_trash, tick_reminders
 
 logger = get_logger(__name__)
 
@@ -47,9 +48,20 @@ async def run_scheduler_loop(
             try:
                 rem = await tick_reminders(bot)
                 dig = await tick_digests(bot)
-                logger.debug("scheduler.loop.tick", reminders=rem, digests=dig)
+                # Корзина чистится только здесь: отдельный worker-процесс
+                # (``python -m app.workers.scheduler``) не запускается ни
+                # на Render, ни на своём сервере — оба гоняют этот цикл.
+                # Без вызова 24-часовое удержание не наступало никогда.
+                trash = await purge_trash()
+                logger.debug("scheduler.loop.tick", reminders=rem, digests=dig, trash=trash)
             except Exception as exc:
                 logger.exception("scheduler.loop.tick_failed", error=str(exc)[:200])
+            # Отдельный try: сбой автобэкапа (Telegram, диск) не должен
+            # уносить с собой напоминания следующего тика.
+            try:
+                await maybe_send_auto_backup(bot)
+            except Exception as exc:
+                logger.exception("scheduler.loop.backup_failed", error=str(exc)[:200])
             await _sleep_or_stop(stop_event, interval)
     finally:
         logger.info("scheduler.loop.stop")

@@ -176,7 +176,7 @@ async def test_full_chain_persist_then_reminder_then_morning_digest(
     bot = _RecordingBot()
     result = await tick_reminders(bot, now=naive_due)
 
-    assert result == {"sent": 2, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (2, 0, 0)
     assert len(bot.calls) == 2
     for call in bot.calls:
         assert call["chat_id"] == 4001
@@ -306,16 +306,16 @@ async def test_reminder_marked_failed_after_max_attempts_then_skipped(
         assert rem.last_error is not None
         if attempt < MAX_REMINDER_ATTEMPTS:
             assert rem.status == "pending"
-            assert result == {"sent": 0, "retry": 1, "failed": 0}
+            assert (result["sent"], result["retry"], result["failed"]) == (0, 1, 0)
         else:
             assert rem.status == "failed"
-            assert result == {"sent": 0, "retry": 0, "failed": 1}
+            assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 1)
 
     # Recovery: even when the bot now succeeds, a failed reminder is dead.
     bot.fail = False
     bot.calls = []
     result = await tick_reminders(bot, now=now + timedelta(hours=1))
-    assert result == {"sent": 0, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 0)
     assert bot.calls == []
     await session.refresh(rem)
     assert rem.status == "failed"

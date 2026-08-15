@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.bot import courier_templates
 from app.bot.routers.callbacks import horizon_list_keyboard
 from app.bot.routers.commands import (
     HORIZON_PAGE_SIZE,
@@ -25,6 +26,7 @@ from app.bot.services import (
     mark_task_done,
 )
 from app.db.models import Category, Note, Task
+from app.shared.config import Settings
 
 # ── Service tests ────────────────────────────────────────────────────
 
@@ -290,10 +292,31 @@ def test_format_task_list_overflow_message_shown_when_paged() -> None:
     result = _format_task_list(visible, "Сегодня", "UTC", total_count=42)
     assert "Показано 5 из 42" in result
     assert "/search" not in result
-    assert "приложении" in result
     # The literal "Всего: 5" line should be replaced by the
     # overflow message — never both.
     assert "Всего:" not in result
+
+
+def test_format_task_list_overflow_hint_matches_the_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overflow hint points at the Mini App only when there is one.
+
+    Self-hosted deploys usually have no public HTTPS host, so no menu
+    button is registered — sending the user to «приложение» would be a
+    dead end (the project rule: never promise what the deploy lacks).
+    """
+    visible = [Task(id=1, user_id=1, title="Task", priority="medium", category_id=1, horizon_id=1)]
+
+    monkeypatch.setattr(
+        courier_templates,
+        "get_settings",
+        lambda: Settings(env="test", miniapp_url_override="https://example.test/app/"),
+    )
+    assert "приложении" in _format_task_list(visible, "Сегодня", "UTC", total_count=42)
+
+    monkeypatch.setattr(courier_templates, "get_settings", lambda: Settings(env="test"))
+    assert "приложени" not in _format_task_list(visible, "Сегодня", "UTC", total_count=42)
 
 
 def test_format_task_list_no_overflow_when_total_equals_visible() -> None:
