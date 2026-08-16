@@ -29,14 +29,14 @@ a VPS rented by the week, so moving it is now routine: `/backup` in the chat
 hands you an archive (`.env` + a live SQLite snapshot), and one `install.sh`
 command brings it up on the new box. The same wave closed an audit round —
 an empty value in `.env` crashed startup, boot migrations silenced every log,
-the archive allow-list failed open above ~64 KB, stale WAL files swallowed
+the archive allow-list failed open once the member listing outgrew the pipe buffer, stale WAL files swallowed
 restored data, Russian search never worked on SQLite, and `purge_trash` was
 called from nowhere. See the top entry of [`docs/PROGRESS.md`](docs/PROGRESS.md).
 
 Earlier: **audit rounds 1 and 2** (2026-07-26/27) — 57 + 30 confirmed findings,
 reports in [`docs/audit/`](docs/audit/).
 
-- `uv run pytest -q` → **698 passed**
+- `uv run pytest -q` → **700 passed** (702 with the Mini-App bundle built)
 - `uv run ruff format --check .` / `uv run ruff check .` / `uv run mypy app` — clean
 - `webapp`: `npx tsc --noEmit` + `npm run build` — clean
 - 19 Alembic migrations
@@ -84,7 +84,7 @@ app/
   workers/    scheduler.py (tick_reminders / tick_digests / purge_trash) + runner.py (in-process loop) + keepalive
   shared/     config / logging / time / sentry / constants
 webapp/       Telegram Mini App (React + Vite + Tailwind); built bundle is served at /app
-tests/        pytest suite (698 tests, 58 files)
+tests/        pytest suite (700 tests, 58 files)
 alembic/      database migrations (19)
 memory/       user "stream of consciousness" archive (for future DSPy optimization)
 docs/         project documentation (incl. docs/audit/ — audit rounds, docs/plans/ — plans)
@@ -106,7 +106,7 @@ uv sync
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy app
-uv run pytest -q   # → 698 passed
+uv run pytest -q   # → 700 passed
 
 # 4. Mini App (optional — needed for the /app route and its two tests)
 cd webapp && npm ci && npx tsc --noEmit && npm run build && cd ..

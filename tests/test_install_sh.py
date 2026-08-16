@@ -119,8 +119,17 @@ def run_install(tmp_path: Path, install_dir: Path, cmd_log: Path) -> Runner:
         'for a in "$@"; do dst="$a"; done\n'
         f'mkdir -p "$dst" && cp -a \'{repo.as_posix()}/.\' "$dst/"\n',
     )
-    # info / compose version / pull / up -d / logs — всё успешно.
-    _stub(stub_bin / "docker", f"printf 'docker %s\\n' \"$*\" >>'{log}'\n")
+    # info / compose version / pull / up -d / logs — всё успешно. На
+    # ``compose down`` дополнительно отмечаем, есть ли уже копия базы:
+    # так тест видит ПОРЯДОК (гасим до того, как копируем), а не только
+    # сам факт вызова.
+    _stub(
+        stub_bin / "docker",
+        f"printf 'docker %s\\n' \"$*\" >>'{log}'\n"
+        '[ "$1 $2" = "compose down" ] || exit 0\n'
+        f"if ls data/plan.db.bak.* >/dev/null 2>&1; then printf 'down:after_copy\\n' >>'{log}';"
+        f" else printf 'down:before_copy\\n' >>'{log}'; fi\n",
+    )
     # healthz отвечает сразу и телом, похожим на настоящее: скрипт ждёт
     # именно ``polling_alive``, пустой ответ гонял бы его все 30 кругов.
     _stub(
@@ -270,6 +279,33 @@ def test_restore_keeps_a_copy_of_the_previous_database(
     backups = list((install_dir / "data").glob("plan.db.bak.*"))
     assert len(backups) == 1
     assert backups[0].read_bytes() == previous
+
+
+def test_restore_stops_the_container_and_clears_stale_wal(
+    run_install: Runner, install_dir: Path, cmd_log: Path, tmp_path: Path
+) -> None:
+    """Re-restore on a live install: stop first, then touch the database.
+
+    Two silent failure modes in one scenario. A ``-wal`` left over from
+    the previous database is replayed by SQLite into whatever ``plan.db``
+    sits next to it — the restored data vanishes while
+    ``integrity_check`` still says «ok». And a rollback copy taken while
+    the container is up misses everything not yet checkpointed, which is
+    precisely what that ``-wal`` holds.
+    """
+    first = _archive(tmp_path / "one", "TELEGRAM_BOT_TOKEN=123:abc\n")
+    second = _archive(tmp_path / "two", "TELEGRAM_BOT_TOKEN=123:abc\n")
+
+    assert run_install(first.as_posix()).returncode == 0
+    stale = install_dir / "data" / "plan.db-wal"
+    stale.write_bytes(b"stale wal from the previous database")
+
+    assert run_install(second.as_posix()).returncode == 0
+
+    assert not stale.exists()
+    log = cmd_log.read_text(encoding="utf-8")
+    assert "down:before_copy" in log
+    assert "down:after_copy" not in log
 
 
 def test_stale_plan_uid_is_replaced_not_appended(

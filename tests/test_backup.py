@@ -15,6 +15,7 @@ from app.backup import build_backup, maybe_send_auto_backup, sqlite_path
 from app.bot.courier_templates import BACKUP_FORBIDDEN, BACKUP_PRIVATE_ONLY
 from app.bot.routers import commands
 from app.bot.routers.commands import create_router
+from app.db.migrate import run_migrations
 from app.shared.config import Settings
 
 
@@ -78,6 +79,53 @@ def test_build_backup_packs_env_and_live_database(tmp_path: Path) -> None:
         check.close()
 
 
+def test_round_trip_on_the_real_schema(tmp_path: Path) -> None:
+    """Old server → archive → new server: the database still answers as itself.
+
+    The unit test above uses a toy table; this one runs the actual
+    migration chain, switches the file into WAL (what the app does on
+    every connect) and snapshots it with a live connection open — the
+    exact shape of a real ``/backup``. It pins the two things the owner
+    would notice on the new box: the schema version travels, and so do
+    the rows.
+    """
+    db_path = tmp_path / "plan.db"
+    run_migrations(f"sqlite:///{db_path.as_posix()}")
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "INSERT INTO users (telegram_id, tz, created_at) VALUES (7, 'Europe/Moscow', ?)",
+        ("2026-08-16T00:00:00",),
+    )
+    conn.commit()
+    expected_head = conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("TELEGRAM_BOT_TOKEN=123:abc\n", encoding="utf-8", newline="")
+    try:
+        _filename, blob = build_backup(db_path, env_path)
+    finally:
+        conn.close()
+
+    restored_dir = tmp_path / "new-server"
+    restored_dir.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+        member = tar.extractfile("data/plan.db")
+        assert member is not None
+        (restored_dir / "plan.db").write_bytes(member.read())
+
+    restored = sqlite3.connect(restored_dir / "plan.db")
+    try:
+        assert restored.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            expected_head,
+        )
+        assert restored.execute("SELECT telegram_id, tz FROM users").fetchall() == [
+            (7, "Europe/Moscow")
+        ]
+    finally:
+        restored.close()
+
+
 def test_build_backup_requires_env_file(tmp_path: Path) -> None:
     """No ``.env`` → fail loudly; a half-archive would lose the keys."""
     db_path = tmp_path / "plan.db"
@@ -135,12 +183,21 @@ def _settings(tmp_path: Path, owner: int | None) -> Settings:
     )
 
 
+@pytest.fixture
+def _sqlite_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A self-hosted-looking install: a real DB file and a real ``.env``."""
+    sqlite3.connect(tmp_path / "plan.db").close()
+    (tmp_path / ".env").write_text("TELEGRAM_BOT_TOKEN=123:abc\n", encoding="utf-8", newline="")
+    monkeypatch.setattr(app_backup, "ENV_FILE", tmp_path / ".env")
+    return tmp_path
+
+
 @pytest.mark.asyncio
 async def test_backup_without_owner_configured_reports_own_id(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    _sqlite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Unset ``OWNER_TELEGRAM_ID`` → no archive, but tell them what to set."""
-    monkeypatch.setattr(commands, "get_settings", lambda: _settings(tmp_path, None))
+    monkeypatch.setattr(commands, "get_settings", lambda: _settings(_sqlite_home, None))
     message = _FakeMessage(user_id=555)
     await _backup_handler()(message)
     assert message.documents == []
@@ -148,9 +205,16 @@ async def test_backup_without_owner_configured_reports_own_id(
 
 
 @pytest.mark.asyncio
-async def test_backup_refuses_non_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A stranger must never receive the bot token and the Groq keys."""
-    monkeypatch.setattr(commands, "get_settings", lambda: _settings(tmp_path, 111))
+async def test_backup_refuses_non_owner(
+    _sqlite_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stranger must never receive the bot token and the Groq keys.
+
+    Runs against a fully provisioned install (real DB file, real
+    ``.env``): otherwise «no document» proves nothing — there would be
+    nothing to pack even with the gate removed.
+    """
+    monkeypatch.setattr(commands, "get_settings", lambda: _settings(_sqlite_home, 111))
     message = _FakeMessage(user_id=222)
     await _backup_handler()(message)
     assert message.documents == []
@@ -224,15 +288,6 @@ class _RecordingBot:
     ) -> None:
         self.sent.append(chat_id)
         self.captions.append(caption)
-
-
-@pytest.fixture
-def _sqlite_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A self-hosted-looking install: a real DB file and a real ``.env``."""
-    sqlite3.connect(tmp_path / "plan.db").close()
-    (tmp_path / ".env").write_text("TELEGRAM_BOT_TOKEN=123:abc\n", encoding="utf-8", newline="")
-    monkeypatch.setattr(app_backup, "ENV_FILE", tmp_path / ".env")
-    return tmp_path
 
 
 @pytest.mark.asyncio

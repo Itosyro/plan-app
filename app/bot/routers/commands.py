@@ -342,15 +342,18 @@ def create_router() -> Router:
             await message.answer(BACKUP_PRIVATE_ONLY)
             return
         settings = get_settings()
+        # Сначала «есть ли что паковать»: на управляемом деплое (внешний
+        # Postgres) совет «допиши OWNER_TELEGRAM_ID и перезапусти
+        # docker compose» бессмыслен — там нет ни файла базы, ни compose.
+        db_path = sqlite_path(settings.database_url)
+        if db_path is None or not db_path.exists():
+            await message.answer(BACKUP_NOT_SQLITE)
+            return
         if settings.owner_telegram_id is None:
             await message.answer(BACKUP_NOT_CONFIGURED.format(tg_id=message.from_user.id))
             return
         if message.from_user.id != settings.owner_telegram_id:
             await message.answer(BACKUP_FORBIDDEN)
-            return
-        db_path = sqlite_path(settings.database_url)
-        if db_path is None or not db_path.exists():
-            await message.answer(BACKUP_NOT_SQLITE)
             return
 
         # sqlite3 + gzip держат GIL — уводим в поток, чтобы не морозить
