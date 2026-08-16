@@ -122,7 +122,8 @@ async def patch_note(
     """Mutate a note. Only supplied fields change.
 
     Empty string in ``body`` clears the note body; missing key keeps it.
-    Changing ``category_id`` validates ownership of the target category.
+    Explicit ``category_id: null`` clears the category; a missing key
+    keeps it. Setting one validates ownership of the target category.
     """
     if user.id is None:
         raise RuntimeError("authenticated user has no id")
@@ -139,19 +140,23 @@ async def patch_note(
             note.title = body.title
         if body.body is not None:
             note.body = body.body or None
-        if body.category_id is not None:
-            cat_result = await session.exec(
-                select(Category).where(
-                    Category.id == body.category_id,
-                    Category.user_id == user.id,
+        # ``category_id`` distinguishes an explicit null (clear the
+        # category — «Без категории») from an omitted key (no change),
+        # same as ``PATCH /api/tasks/{id}``. A bare ``is not None``
+        # check would lose that intent.
+        if "category_id" in body.model_fields_set:
+            if body.category_id is not None:
+                cat_result = await session.exec(
+                    select(Category).where(
+                        Category.id == body.category_id,
+                        Category.user_id == user.id,
+                    )
                 )
-            )
-            cat = cat_result.first()
-            if cat is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="category not found",
-                )
+                if cat_result.first() is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="category not found",
+                    )
             note.category_id = body.category_id
 
         await session.flush()

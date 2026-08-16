@@ -10,10 +10,14 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.bot.services import get_or_create_user
+from app.db.base import session_scope
 from app.db.models import Reminder, Task
 from app.workers.scheduler import (
     MAX_REMINDER_ATTEMPTS,
+    STALE_REMINDER_HOURS,
+    TRASH_RETENTION_HOURS,
     _format_reminder,
+    purge_trash,
     tick_reminders,
 )
 
@@ -93,7 +97,7 @@ async def test_tick_sends_due_reminders(session: AsyncSession) -> None:
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 1, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (1, 0, 0)
     assert len(bot.calls) == 1
     assert bot.calls[0][0] == 900
     rows = list((await session.exec(select(Reminder))).all())
@@ -111,7 +115,7 @@ async def test_tick_skips_future_reminders(session: AsyncSession) -> None:
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 0, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 0)
     assert bot.calls == []
     rows = list((await session.exec(select(Reminder))).all())
     assert rows[0].status == "pending"
@@ -131,7 +135,7 @@ async def test_tick_skips_already_sent(session: AsyncSession) -> None:
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 0, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 0)
     assert bot.calls == []
 
 
@@ -143,7 +147,7 @@ async def test_tick_retries_on_failure(session: AsyncSession) -> None:
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 0, "retry": 1, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 1, 0)
     await session.refresh(rem)
     assert rem.status == "pending"
     assert rem.attempts == 1
@@ -164,7 +168,7 @@ async def test_tick_marks_failed_after_max_attempts(session: AsyncSession) -> No
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 0, "retry": 0, "failed": 1}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 1)
     await session.refresh(rem)
     assert rem.status == "failed"
     assert rem.attempts == MAX_REMINDER_ATTEMPTS
@@ -180,7 +184,7 @@ async def test_tick_processes_multiple_reminders(session: AsyncSession) -> None:
 
     result = await tick_reminders(bot, now=now)
 
-    assert result == {"sent": 2, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (2, 0, 0)
     assert len(bot.calls) == 2
 
 
@@ -207,7 +211,7 @@ async def test_tick_does_not_resend_on_crash_after_send(session: AsyncSession) -
     bot1 = _FakeBot()
 
     first = await tick_reminders(bot1, now=now)
-    assert first == {"sent": 1, "retry": 0, "failed": 0}
+    assert (first["sent"], first["retry"], first["failed"]) == (1, 0, 0)
     assert len(bot1.calls) == 1
 
     # Independent bot for the second tick — verifies that no row is
@@ -215,7 +219,7 @@ async def test_tick_does_not_resend_on_crash_after_send(session: AsyncSession) -
     # session (tick_reminders opens its own session_scope).
     bot2 = _FakeBot()
     second = await tick_reminders(bot2, now=now)
-    assert second == {"sent": 0, "retry": 0, "failed": 0}
+    assert (second["sent"], second["retry"], second["failed"]) == (0, 0, 0)
     assert bot2.calls == []
 
 
@@ -241,7 +245,7 @@ async def test_tick_atomic_claim_skips_already_processing(
     )
     bot = _FakeBot()
     result = await tick_reminders(bot, now=now)
-    assert result == {"sent": 0, "retry": 0, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (0, 0, 0)
     assert bot.calls == []
     await session.refresh(rem)
     assert rem.status == "processing"
@@ -271,7 +275,7 @@ async def test_tick_processes_third_row_when_second_send_fails(
 
     bot = _PickyBot()
     result = await tick_reminders(bot, now=now)
-    assert result == {"sent": 2, "retry": 1, "failed": 0}
+    assert (result["sent"], result["retry"], result["failed"]) == (2, 1, 0)
     assert sorted(c[0] for c in bot.calls) == [920, 922]
 
     for r in (rem_a, rem_b, rem_c):
@@ -280,3 +284,86 @@ async def test_tick_processes_third_row_when_second_send_fails(
     assert rem_b.status == "pending"  # reverted from 'processing' for retry
     assert rem_b.attempts == 1
     assert rem_c.status == "sent"
+
+
+# ── Downtime storm ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_tick_cancels_stale_reminders_instead_of_sending(
+    session: AsyncSession,
+) -> None:
+    """The first tick after a long outage must not spam obsolete reminders.
+
+    The VPS is rented by the week and the bot migrates to a new server
+    every ~7 days, so ticks routinely resume hours late. Reminders
+    overdue by more than ``STALE_REMINDER_HOURS`` are cancelled in one
+    UPDATE; anything fresher still fires normally.
+    """
+    now = datetime(2026, 5, 8, 12, 0)
+    stale = await _seed(
+        session,
+        telegram_id=930,
+        fire_at=now - timedelta(hours=STALE_REMINDER_HOURS, minutes=1),
+    )
+    fresh = await _seed(session, telegram_id=931, fire_at=now - timedelta(minutes=30))
+    bot = _FakeBot()
+
+    result = await tick_reminders(bot, now=now)
+
+    assert [chat_id for chat_id, _ in bot.calls] == [931]
+    assert result["sent"] == 1
+    assert result["cancelled_stale"] == 1
+    await session.refresh(stale)
+    await session.refresh(fresh)
+    assert stale.status == "cancelled"
+    assert fresh.status == "sent"
+
+
+# ── Orphaned dependents after a hard delete ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_purge_deletes_reminders_so_no_ghost_fires(
+    session: AsyncSession,
+) -> None:
+    """A purged task must take its reminders with it — no ghost sends.
+
+    Self-hosted prod is SQLite, where the FK cascades don't exist
+    (``PRAGMA foreign_keys`` is off, migrations 0007/0019 are
+    PostgreSQL-only), so ``purge_trash`` used to leave the reminder
+    behind. SQLite then reuses the freed rowid for the next task, the
+    orphan re-joins that brand-new task and the user gets «⏰ Напоминаю»
+    about something they never scheduled.
+    """
+    now = datetime(2026, 5, 8, 12, 0)
+    rem = await _seed(
+        session,
+        telegram_id=940,
+        title="Старая удалённая",
+        fire_at=now - timedelta(minutes=30),
+    )
+    user_id, task_id = rem.user_id, rem.task_id
+    task = (await session.exec(select(Task).where(Task.id == task_id))).first()
+    assert task is not None
+    task.deleted_at = now - timedelta(hours=TRASH_RETENTION_HOURS + 1)
+    session.add(task)
+    await session.commit()
+
+    assert (await purge_trash(now=now))["tasks"] == 1
+    assert list((await session.exec(select(Reminder))).all()) == []
+
+    # Ловушка: rowid освободился → новая задача получает id удалённой.
+    # Отдельная сессия — как в проде, чтобы не тащить в identity map
+    # тестовой сессии удалённую задачу с тем же id.
+    async with session_scope() as writer:
+        new_task = Task(user_id=user_id, title="Новая невинная задача")
+        writer.add(new_task)
+        await writer.flush()
+        assert new_task.id == task_id
+
+    bot = _FakeBot()
+    result = await tick_reminders(bot, now=now)
+
+    assert bot.calls == []
+    assert result["sent"] == 0

@@ -27,6 +27,9 @@ from app.shared.time import to_epoch, utcnow_epoch, utcnow_naive
 # it regresses (UTC-5/-4 -> epoch off by ~4-5h).
 _NON_UTC_TZ = "America/New_York"
 
+# ``time.tzset`` is POSIX-only; on Windows the process TZ can't be flipped.
+pytestmark = pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset() is POSIX-only")
+
 
 @pytest.fixture
 def non_utc_tz() -> Iterator[None]:

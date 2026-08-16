@@ -21,6 +21,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.ai.router import GroqKeyRouter
+from app.bot import courier_templates
 from app.bot.routers._pipeline import (
     _plural_ru,
     flag_needs_review,
@@ -28,6 +29,7 @@ from app.bot.routers._pipeline import (
 )
 from app.bot.services import get_or_create_category, get_or_create_user
 from app.db.models import InboxEntry, Note, Task
+from app.shared.config import Settings
 from tests._groq_mock import groq_tool_response
 
 _FAKE_KEYS = ["gsk_test_key_1"]
@@ -102,6 +104,21 @@ class _CallTracker:
         resp = self._responses[self._index]
         self._index += 1
         return httpx.Response(200, json=resp)
+
+
+@pytest.fixture(autouse=True)
+def _with_miniapp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the e2e flows as a deploy that *has* the Mini App.
+
+    Bot replies point at «Входящие» only when a Mini-App URL is
+    configured (``courier_templates.app_or``); without this the e2e
+    expectations would silently drift to the self-hosted wording.
+    """
+    monkeypatch.setattr(
+        courier_templates,
+        "get_settings",
+        lambda: Settings(webhook_base_url=None, miniapp_url_override="https://example.test/app/"),
+    )
 
 
 # ── e2e: single task ─────────────────────────────────────────────────

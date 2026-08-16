@@ -183,7 +183,9 @@ export function NoteDetail({
     onClose();
   }, [note, titleDraft, bodyDraft, createNote, onClose]);
 
-  const categoryId = note?.category_id ?? draftCategoryId;
+  // ``??`` не годится: у сохранённой заметки со снятой категорией
+  // ``category_id === null`` — и подпись откатилась бы к черновику.
+  const categoryId = note !== null ? note.category_id : draftCategoryId;
   const categoryLabel = useMemo(() => {
     if (categoryId === null || categoryId === undefined) return "Без категории";
     const hit = categories.find((c) => c.id === categoryId);
@@ -286,7 +288,7 @@ export function NoteDetail({
               label="Категория"
               value={categoryLabel}
               onClick={() => setShowCategorySheet(true)}
-              disabled={pending === "category_id" || categories.length === 0}
+              disabled={pending === "category_id"}
             />
           </section>
 
@@ -313,16 +315,19 @@ export function NoteDetail({
         onClose={() => setShowCategorySheet(false)}
         title="Категория"
         options={[
-          // «Без категории» only while drafting: the API contract can't
-          // clear category_id on a saved note (PATCH skips ``None``), so
-          // showing it there would be a silent no-op.
-          ...(note === null ? [{ value: "", label: "Без категории" }] : []),
+          { value: "", label: "Без категории" },
           ...categories.map((c) => ({ value: String(c.id), label: c.name })),
         ]}
         value={categoryId === null || categoryId === undefined ? "" : String(categoryId)}
         onSelect={(value) => {
           if (value === "") {
-            setDraftCategoryId(null);
+            // PATCH с явным null снимает категорию (бэкенд смотрит на
+            // model_fields_set), у черновика просто чистим состояние.
+            if (note === null) {
+              setDraftCategoryId(null);
+            } else if (note.category_id !== null) {
+              void patch("category_id", { category_id: null });
+            }
             return;
           }
           const id = Number.parseInt(value, 10);

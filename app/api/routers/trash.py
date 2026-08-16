@@ -5,13 +5,22 @@ from __future__ import annotations
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete
 from sqlmodel import select
 
 from app.api.auth import current_user
 from app.api.schemas import TrashCountsOut, TrashItemOut, TrashKind
 from app.bot.services import restore_task
 from app.db.base import session_scope
-from app.db.models import Category, Note, Task, User
+from app.db.models import (
+    Category,
+    Note,
+    Reminder,
+    Task,
+    TaskEditSnapshot,
+    TaskEvent,
+    User,
+)
 
 router = APIRouter()
 
@@ -192,6 +201,15 @@ async def hard_delete_item(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="task has active subtasks",
                 )
+            # Зависимые строки чистим руками, как в ``purge_trash``: на
+            # SQLite (self-hosted прод) каскада нет вообще, а забытое
+            # pending-напоминание после переиспользования rowid выстрелит
+            # призраком по новой задаче с тем же id.
+            await session.exec(delete(Reminder).where(Reminder.task_id == item_id))  # type: ignore[arg-type]
+            await session.exec(delete(TaskEvent).where(TaskEvent.task_id == item_id))  # type: ignore[arg-type]
+            await session.exec(
+                delete(TaskEditSnapshot).where(TaskEditSnapshot.task_id == item_id),  # type: ignore[arg-type]
+            )
             await session.delete(task)
             await session.flush()
         else:

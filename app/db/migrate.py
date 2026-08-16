@@ -30,9 +30,13 @@ def run_migrations(database_url: str) -> None:
     """Upgrade the database at *database_url* to ``head``.
 
     Synchronous by nature (Alembic's runner is sync) — callers inside an
-    event loop must hand this to an executor. ``env.py`` resolves the URL
-    from ``Settings`` itself, so we only pass it explicitly to keep the
-    intent readable and to make the call testable with an override.
+    event loop must hand this to an executor.
+
+    Caveat worth knowing before you rely on the argument: ``env.py``
+    resolves the URL as ``Settings.database_url or <ini value>``, so
+    whenever ``DATABASE_URL`` is set in the environment (always, in the
+    container) *it* wins and this parameter is only documentation. Both
+    are the same value in every current caller.
     """
     cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_PROJECT_ROOT / "alembic"))

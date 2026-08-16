@@ -22,7 +22,7 @@ from aiogram.types import Message
 
 from app.ai.whisper import transcribe_voice
 from app.bot import reactions
-from app.bot.courier_templates import NOT_ONBOARDED, PIPELINE_FAILED
+from app.bot.courier_templates import NOT_ONBOARDED, pipeline_failed
 from app.bot.quote_replies import reply_to
 from app.bot.rate_limit import get_rate_limiter
 from app.bot.routers._message_payload import (
@@ -283,9 +283,9 @@ def create_router() -> Router:
                 with contextlib.suppress(Exception):
                     await flag_needs_review(inbox_id, review_enabled=review_enabled)
                 try:
-                    await placeholder.edit_text(PIPELINE_FAILED)
+                    await placeholder.edit_text(pipeline_failed())
                 except Exception:
-                    await message.answer(PIPELINE_FAILED)
+                    await message.answer(pipeline_failed())
 
         task = asyncio.create_task(_background())
         task.add_done_callback(log_task_exception)

@@ -6,11 +6,24 @@ notes, and category summaries.  Inline-button actions come in Phase 3b.
 
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, Message
 
-from app.bot.courier_templates import NOT_ONBOARDED
+from app.backup import TELEGRAM_DOCUMENT_LIMIT, build_backup, sqlite_path
+from app.bot.courier_templates import (
+    BACKUP_CAPTION,
+    BACKUP_FAILED,
+    BACKUP_FORBIDDEN,
+    BACKUP_NOT_CONFIGURED,
+    BACKUP_NOT_SQLITE,
+    BACKUP_PRIVATE_ONLY,
+    BACKUP_TOO_BIG,
+    NOT_ONBOARDED,
+    app_or,
+)
 from app.bot.reminder_view import format_reminder_list
 from app.bot.routers.callbacks import horizon_list_keyboard, reminder_list_keyboard
 from app.bot.services import (
@@ -23,6 +36,7 @@ from app.bot.services import (
 )
 from app.db.base import session_scope
 from app.db.models import Category, Note, Task
+from app.shared.config import get_settings
 from app.shared.logging import get_logger
 from app.shared.time import format_due_local, plural_ru
 
@@ -97,10 +111,13 @@ def _format_task_list(
 
     shown = len(tasks)
     if total_count is not None and total_count > shown:
-        lines.append(
-            f"\nПоказано {shown} из {total_count}. "
-            "Остальные — в приложении, кнопка «Открыть план» рядом с полем ввода."
+        # Без мини-аппа отсылать «смотри в приложении» некуда — остаётся
+        # честное «столько-то не поместилось».
+        where_rest = app_or(
+            "Остальные — в приложении, кнопка «Открыть план» рядом с полем ввода.",
+            "Остальные покажу, когда разберёшься с этими.",
         )
+        lines.append(f"\nПоказано {shown} из {total_count}. {where_rest}")
     else:
         lines.append(f"\nВсего: {shown}")
     return "\n".join(lines)
@@ -308,5 +325,54 @@ def create_router() -> Router:
             )
         else:
             await message.answer(text)
+
+    @router.message(Command("backup"))
+    async def cmd_backup(message: Message) -> None:
+        """Send the owner a ``.env`` + database archive for server migration.
+
+        Owner-only: the archive carries the bot token and the Groq keys.
+        Self-hosted (SQLite) deploys only — on a managed Postgres there
+        is no file to pack.
+        """
+        if message.from_user is None:
+            return
+        if message.chat.type != "private":
+            # Ответ уходит туда, откуда пришла команда: в группе архив с
+            # токеном и ключами увидели бы все участники.
+            await message.answer(BACKUP_PRIVATE_ONLY)
+            return
+        settings = get_settings()
+        # Сначала «есть ли что паковать»: на управляемом деплое (внешний
+        # Postgres) совет «допиши OWNER_TELEGRAM_ID и перезапусти
+        # docker compose» бессмыслен — там нет ни файла базы, ни compose.
+        db_path = sqlite_path(settings.database_url)
+        if db_path is None or not db_path.exists():
+            await message.answer(BACKUP_NOT_SQLITE)
+            return
+        if settings.owner_telegram_id is None:
+            await message.answer(BACKUP_NOT_CONFIGURED.format(tg_id=message.from_user.id))
+            return
+        if message.from_user.id != settings.owner_telegram_id:
+            await message.answer(BACKUP_FORBIDDEN)
+            return
+
+        # sqlite3 + gzip держат GIL — уводим в поток, чтобы не морозить
+        # приём апдейтов на время упаковки.
+        try:
+            filename, blob = await asyncio.to_thread(build_backup, db_path)
+        except Exception as exc:
+            # Молчание в ответ на команду-страховку хуже любой ошибки:
+            # владелец решит, что архив ушёл, и снесёт сервер.
+            logger.exception("backup.failed")
+            await message.answer(BACKUP_FAILED.format(error=str(exc)[:200]))
+            return
+        if len(blob) > TELEGRAM_DOCUMENT_LIMIT:
+            await message.answer(BACKUP_TOO_BIG.format(mb=len(blob) // (1024 * 1024)))
+            return
+        await message.answer_document(
+            BufferedInputFile(blob, filename=filename),
+            caption=BACKUP_CAPTION.format(filename=filename),
+        )
+        logger.info("backup.sent", size_bytes=len(blob))
 
     return router

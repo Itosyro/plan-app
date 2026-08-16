@@ -16,13 +16,13 @@ import asyncio
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from sqlalchemy import update
+from sqlalchemy import delete, update
 from sqlalchemy.engine import CursorResult
 from sqlmodel import select
 
 from app.bot.digest import tick_digests
 from app.db.base import dispose_engine, init_engine, session_scope
-from app.db.models import Note, Reminder, Task, User
+from app.db.models import Note, Reminder, Task, TaskEditSnapshot, TaskEvent, User
 from app.shared.config import get_settings
 from app.shared.logging import configure_logging, get_logger
 from app.shared.time import format_due_local, utcnow_naive
@@ -31,6 +31,14 @@ logger = get_logger(__name__)
 
 MAX_REMINDER_ATTEMPTS = 3
 REMINDER_BATCH_SIZE = 100
+# Простой в несколько часов — штатное событие (владелец арендует VPS
+# понедельно и переезжает на новый сервер раз в ~7 дней), поэтому первый
+# тик после возврата обязан молчать про всё, что протухло: напоминание,
+# опоздавшее больше чем на пол-суток, юзеру уже не помогает, а сотня
+# «⏰ Напоминаю» за одну секунду упирается во flood-лимит Telegram и
+# часть строк уходит в retry/failed. 6 часов ≈ рабочий день или ночь:
+# опоздание внутри этого окна ещё имеет смысл, за ним — нет.
+STALE_REMINDER_HOURS = 6
 
 
 def _format_reminder(task: Task, user_tz: str) -> str:
@@ -73,6 +81,10 @@ async def tick_reminders(
        state-flip, the row is left in ``status='processing'`` and a
        human cleanup is required. We deliberately don't auto-revert
        (we can't tell whether Telegram delivered the message).
+
+    Reminders overdue by more than :data:`STALE_REMINDER_HOURS` are
+    cancelled instead of sent, so the first tick after a long outage
+    doesn't dump a burst of obsolete messages on the user.
     """
     cutoff = now if now is not None else utcnow_naive()
     sent = retry = failed = 0
@@ -97,6 +109,23 @@ async def tick_reminders(
         assert isinstance(cancel_result, CursorResult)
         if cancel_result.rowcount:
             logger.info("reminders.cancelled_done", count=cancel_result.rowcount)
+
+        # Тот же приём для протухших: гасим одним UPDATE, до выборки —
+        # иначе после многочасового даунтайма батч из 100 строк уедет в
+        # Telegram пачкой (см. STALE_REMINDER_HOURS).
+        stale_result = await session.exec(
+            update(Reminder)
+            .where(
+                Reminder.status == "pending",  # type: ignore[arg-type]
+                Reminder.fire_at < cutoff - timedelta(hours=STALE_REMINDER_HOURS),  # type: ignore[arg-type]
+            )
+            .values(status="cancelled"),
+        )
+        await session.commit()
+        assert isinstance(stale_result, CursorResult)
+        cancelled_stale = stale_result.rowcount
+        if cancelled_stale:
+            logger.info("reminders.cancelled_stale", count=cancelled_stale)
 
         rows = list(
             (
@@ -168,7 +197,7 @@ async def tick_reminders(
 
     if sent or retry or failed:
         logger.info("reminders.tick", sent=sent, retry=retry, failed=failed)
-    return {"sent": sent, "retry": retry, "failed": failed}
+    return {"sent": sent, "retry": retry, "failed": failed, "cancelled_stale": cancelled_stale}
 
 
 TRASH_RETENTION_HOURS = 24
@@ -178,8 +207,11 @@ PURGE_BATCH_SIZE = 200
 async def purge_trash(*, now: datetime | None = None) -> dict[str, int]:
     """Permanently delete soft-deleted records older than 24 hours.
 
-    Tasks are deleted via ``session.delete`` so the FK CASCADE
-    on ``reminders`` and ``task_events`` cleans up dependents.
+    Dependent rows are deleted explicitly rather than left to the FK
+    ``ON DELETE CASCADE``: the self-hosted SQLite deployment has no
+    cascade at all (``PRAGMA foreign_keys`` is off and migrations
+    0007/0019 apply the policies on PostgreSQL only). Notes have no
+    dependents — nothing references ``notes.id``.
     """
     cutoff = (now if now is not None else utcnow_naive()) - timedelta(hours=TRASH_RETENTION_HOURS)
     purged_tasks = 0
@@ -209,6 +241,17 @@ async def purge_trash(*, now: datetime | None = None) -> dict[str, int]:
                 )
             ).all()
         )
+        task_ids = [t.id for t in stale_tasks if t.id is not None]
+        if task_ids:
+            # Без каскада осиротевшие строки живут вечно, а SQLite
+            # переиспользует освободившийся rowid — забытое pending-
+            # напоминание тут же прилипает к НОВОЙ задаче с тем же id и
+            # стреляет призраком. Чистим детей до родителя.
+            await session.exec(delete(Reminder).where(Reminder.task_id.in_(task_ids)))  # type: ignore[attr-defined]
+            await session.exec(delete(TaskEvent).where(TaskEvent.task_id.in_(task_ids)))  # type: ignore[attr-defined]
+            await session.exec(
+                delete(TaskEditSnapshot).where(TaskEditSnapshot.task_id.in_(task_ids)),  # type: ignore[attr-defined]
+            )
         for task in stale_tasks:
             await session.delete(task)
             purged_tasks += 1

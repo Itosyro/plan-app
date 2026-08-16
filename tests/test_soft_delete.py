@@ -30,7 +30,14 @@ from app.bot.services import (
     get_or_create_user,
 )
 from app.db.base import session_scope
-from app.db.models import Note, Task, UserSettings
+from app.db.models import (
+    Note,
+    Reminder,
+    Task,
+    TaskEditSnapshot,
+    TaskEvent,
+    UserSettings,
+)
 from app.main import create_app
 from app.shared.config import Settings
 from app.shared.time import utcnow_naive
@@ -347,6 +354,53 @@ async def test_hard_delete_from_trash(
     # Gone from DB.
     async with session_scope() as session:
         assert (await session.exec(select(Task).where(Task.id == task_id))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_removes_task_dependents(
+    aclient: httpx.AsyncClient,
+    seeded_two_users: tuple[int, int],
+) -> None:
+    """«Удалить навсегда» must take reminders / events / snapshots along.
+
+    Self-hosted prod is SQLite: ``PRAGMA foreign_keys`` is off and the
+    ``ON DELETE CASCADE`` policies land on PostgreSQL only (migrations
+    0007/0019 skip other dialects), so the dependents outlived the task
+    forever — and a leftover pending reminder can fire for whatever new
+    task inherits the reused rowid.
+    """
+    user_a_id, _ = seeded_two_users
+    h = {"X-Telegram-Init-Data": _build_init_data(_TG_USER_A)}
+
+    tasks = (await aclient.get("/api/tasks", headers=h)).json()
+    task_id = tasks[0]["id"]
+    async with session_scope() as session:
+        session.add(Reminder(user_id=user_a_id, task_id=task_id, fire_at=utcnow_naive()))
+        session.add(TaskEvent(task_id=task_id, kind="created"))
+        session.add(
+            TaskEditSnapshot(
+                task_id=task_id,
+                user_id=user_a_id,
+                field="title",
+                old_value="Task A",
+                new_value="Task A2",
+            )
+        )
+        await session.flush()
+
+    await aclient.delete(f"/api/tasks/{task_id}", headers=h)
+    resp = await aclient.delete(f"/api/trash/task/{task_id}", headers=h)
+    assert resp.status_code == 204
+
+    async with session_scope() as session:
+        rems = await session.exec(select(Reminder).where(Reminder.task_id == task_id))
+        assert list(rems.all()) == []
+        events = await session.exec(select(TaskEvent).where(TaskEvent.task_id == task_id))
+        assert list(events.all()) == []
+        snaps = await session.exec(
+            select(TaskEditSnapshot).where(TaskEditSnapshot.task_id == task_id)
+        )
+        assert list(snaps.all()) == []
 
 
 @pytest.mark.asyncio

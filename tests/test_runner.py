@@ -19,6 +19,26 @@ class _FakeBot:
     """Sentinel — runner only forwards `bot` into the tick functions."""
 
 
+@pytest.fixture(autouse=True)
+def _stub_side_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralise the ticks that would touch the DB / Telegram.
+
+    ``purge_trash`` and ``maybe_send_auto_backup`` run in the same loop;
+    without an engine they'd raise into the loop's ``except`` on every
+    iteration and drown the real assertions in noise. Tests that care
+    about them override these stubs.
+    """
+
+    async def _no_trash(**_: Any) -> dict[str, int]:
+        return {"tasks": 0, "notes": 0}
+
+    async def _no_backup(_: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(runner_mod, "purge_trash", _no_trash)
+    monkeypatch.setattr(runner_mod, "maybe_send_auto_backup", _no_backup)
+
+
 @pytest.mark.asyncio
 async def test_loop_calls_tick_functions_then_stops(monkeypatch: pytest.MonkeyPatch) -> None:
     rem_calls: list[Any] = []
@@ -98,6 +118,71 @@ async def test_start_and_stop_inproc_scheduler(monkeypatch: pytest.MonkeyPatch) 
 
     assert task.done()
     assert "rem" in seen and "dig" in seen
+
+
+@pytest.mark.asyncio
+async def test_loop_purges_trash_and_offers_auto_backup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both side ticks are actually wired into the loop.
+
+    ``purge_trash`` used to exist only in the standalone worker entry
+    point, which nothing runs — the documented 24-hour trash retention
+    therefore never happened. ``maybe_send_auto_backup`` is the weekly
+    server-swap insurance. A fix that isn't called is not a fix.
+    """
+    seen: list[str] = []
+
+    async def fake_tick(_: Any) -> dict[str, int]:
+        return {}
+
+    async def fake_purge(**_: Any) -> dict[str, int]:
+        seen.append("trash")
+        return {"tasks": 0, "notes": 0}
+
+    async def fake_backup(_: Any) -> bool:
+        seen.append("backup")
+        return False
+
+    monkeypatch.setattr(runner_mod, "tick_reminders", fake_tick)
+    monkeypatch.setattr(runner_mod, "tick_digests", fake_tick)
+    monkeypatch.setattr(runner_mod, "purge_trash", fake_purge)
+    monkeypatch.setattr(runner_mod, "maybe_send_auto_backup", fake_backup)
+
+    stop = asyncio.Event()
+    task = asyncio.create_task(run_scheduler_loop(_FakeBot(), stop, interval=0.05))
+    await asyncio.sleep(0.02)
+    stop.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert "trash" in seen and "backup" in seen
+
+
+@pytest.mark.asyncio
+async def test_backup_failure_does_not_stop_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broken auto-backup must not take reminders down with it."""
+    counter = {"reminders": 0}
+
+    async def count_reminders(_: Any) -> dict[str, int]:
+        counter["reminders"] += 1
+        return {}
+
+    async def boom_backup(_: Any) -> bool:
+        raise RuntimeError("telegram is down")
+
+    monkeypatch.setattr(runner_mod, "tick_reminders", count_reminders)
+    monkeypatch.setattr(runner_mod, "tick_digests", lambda _: _empty())
+    monkeypatch.setattr(runner_mod, "maybe_send_auto_backup", boom_backup)
+
+    stop = asyncio.Event()
+    task = asyncio.create_task(run_scheduler_loop(_FakeBot(), stop, interval=0.01))
+    await asyncio.sleep(0.05)
+    stop.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert counter["reminders"] >= 2
+
+
+async def _empty() -> dict[str, int]:
+    return {}
 
 
 @pytest.mark.asyncio

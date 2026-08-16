@@ -25,7 +25,13 @@ from app.shared.config import get_settings
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # ``disable_existing_loggers=False`` — иначе миграции глушат всё, что
+    # уже успело завести логгер. На self-hosted схема поднимается прямо
+    # в старте приложения (``AUTO_MIGRATE``), то есть после uvicorn и
+    # aiogram: с дефолтом ``True`` бот на неверном токене молча уходил
+    # в бесконечный ретрай, а ``docker compose logs`` — единственная
+    # диагностика в инструкции — показывал пустоту.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def _resolve_url() -> str:
