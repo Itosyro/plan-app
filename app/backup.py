@@ -91,7 +91,7 @@ MARKER_NAME = ".last_backup"
 AUTO_BACKUP_CAPTION = (
     "🧳 Автобэкап (.env + база). Если сервер пропадёт, на новом хватит одной команды:\n"
     "curl -fsSL https://raw.githubusercontent.com/Itosyro/plan-app/main/scripts/install.sh"
-    " | bash -s ИМЯ_ЭТОГО_ФАЙЛА\n\n"
+    " | bash -s {filename}\n\n"
     "Внутри ключи — никому не пересылай."
 )
 
@@ -136,7 +136,7 @@ async def maybe_send_auto_backup(
     await bot.send_document(
         chat_id=settings.owner_telegram_id,
         document=BufferedInputFile(blob, filename=filename),
-        caption=AUTO_BACKUP_CAPTION,
+        caption=AUTO_BACKUP_CAPTION.format(filename=filename),
     )
     logger.info("backup.auto.sent", size_bytes=len(blob))
     return True

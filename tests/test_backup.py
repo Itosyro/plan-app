@@ -217,9 +217,13 @@ async def test_backup_reports_failure_instead_of_going_silent(
 class _RecordingBot:
     def __init__(self) -> None:
         self.sent: list[int] = []
+        self.captions: list[str] = []
 
-    async def send_document(self, *, chat_id: int, **_: object) -> None:
+    async def send_document(
+        self, *, chat_id: int, document: object = None, caption: str = "", **_: object
+    ) -> None:
         self.sent.append(chat_id)
+        self.captions.append(caption)
 
 
 @pytest.fixture
@@ -242,6 +246,10 @@ async def test_auto_backup_sends_once_per_interval(
     now = 1_000_000.0
     assert await maybe_send_auto_backup(bot, settings=settings, now=now) is True
     assert bot.sent == [111]
+    # Подпись — единственная инструкция, доступная когда сервера уже нет:
+    # в ней должно стоять реальное имя файла, а не плейсхолдер.
+    assert "plan-backup-" in bot.captions[0]
+    assert ".tgz" in bot.captions[0]
 
     assert await maybe_send_auto_backup(bot, settings=settings, now=now + 3600) is False
     assert bot.sent == [111]
